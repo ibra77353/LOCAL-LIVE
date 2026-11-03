@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#071a33">
+  <title>البرنس لايف | BRINCE Live</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/style.css">
+  <!-- المكتبة المحلية هي الأساس؛ يُستخدم CDN فقط إذا كان الملف المحلي غير متاح. -->
+  <script src="/vendor/hls.min.js"></script>
+  <script>if (!window.Hls) document.write('<script src="https://cdn.jsdelivr.net/npm/hls.js@1"><\/script>');</script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><img class="brand-logo" src="/logo.png" alt="شعار البرنس لايف"><div><h1 id="siteName">البرنس لايف</h1><span>BRINCE LIVE · بث محلي</span></div></div>
+    <div class="live"><i></i> شبكة محلية</div>
+  </header>
+  <main>
+    <section class="intro">
+      <p class="eyebrow">البث المباشر المحلي</p>
+      <h2>أهلاً بكم في <em>البرنس لايف</em></h2>
+      <p id="ticker">أهلاً بكم في البرنس لايف — البث المباشر المحلي</p>
+    </section>
+    <section class="player-card">
+      <div id="channel-list" class="channel-list" aria-label="قائمة القنوات"></div>
+      <div class="player-head">
+        <div><strong id="current-channel-name">مباريات</strong><small id="state">جارٍ فحص حالة البث…</small></div>
+        <span class="quality">360p · HLS</span>
+      </div>
+      <div class="video-wrap">
+        <video id="video" controls autoplay playsinline></video>
+        <div id="placeholder" class="placeholder" role="button" tabindex="0" aria-label="طلب تشغيل البث">
+          <div class="play-icon">▶</div>
+          <b>البث غير متاح حاليًا</b>
+          <span>يرجى المحاولة لاحقًا.</span>
+        </div>
+      </div>
+      <div class="player-foot">
+        <span id="source">البث المباشر</span>
+        <div class="viewer-controls">
+          <button id="reload" class="secondary" type="button">إعادة تحميل</button>
+          <button id="mute" class="secondary" type="button">كتم الصوت</button>
+          <button id="fullscreen" class="secondary" type="button">ملء الشاشة</button>
+          <button id="cpuSaver" class="secondary" type="button" aria-pressed="false">توفير الموارد</button>
+        </div>
+      </div>
+    </section>
+    <footer>البرنس لايف · البث متاح عبر الشبكة المحلية.</footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
