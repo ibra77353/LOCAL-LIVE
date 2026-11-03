@@ -17,7 +17,7 @@
       </div>
       <div class="live-strip" id="live-strip"><i></i><span id="live-label">جارٍ فحص البث</span></div>
       <nav class="nav" aria-label="القائمة الرئيسية">
-        <a class="nav-link active" href="#overview"><span class="nav-icon">▦</span> نظرة عامة</a>
+        <a class="nav-link active" href="#overview" aria-current="page"><span class="nav-icon">▦</span> نظرة عامة</a>
         <a class="nav-link" href="#controls"><span class="nav-icon">▶</span> التحكم بالبث</a>
         <a class="nav-link" href="#sources"><span class="nav-icon">⌁</span> حالة المصدر</a>
         <a class="nav-link" href="#network-access"><span class="nav-icon">⌘</span> عناوين الشبكة</a>
@@ -27,7 +27,7 @@
         <a class="nav-link" href="#logs-section"><span class="nav-icon">≡</span> سجل الخادم</a>
       </nav>
       <div class="sidebar-bottom">
-        <a class="side-action" href="/" target="_blank" rel="noopener">↗ صفحة المشاهدين</a>
+        <a class="side-action" href="/">↗ صفحة المشاهدين</a>
         <span class="local-note"><i></i> نظام بث محلي</span>
       </div>
     </aside>
@@ -38,7 +38,7 @@
         <a class="viewer-button" href="/" target="_blank" rel="noopener">مشاهدة الموقع <span>↗</span></a>
       </header>
 
-      <section id="overview">
+      <section id="overview" class="is-active">
         <div class="section-heading"><div><span class="eyebrow">الحالة الحالية</span><h2>ملخص البث</h2></div><span class="refresh-note"><i></i> تحديث تلقائي كل 3 ثوانٍ</span></div>
         <div class="stats-grid">
           <article class="stat-card state-card"><div class="stat-top"><span class="stat-icon">●</span><span class="stat-caption">حالة FFmpeg</span></div><b id="running" class="stat-value">—</b><small>حالة محرك البث</small></article>
@@ -163,10 +163,5 @@
     </main>
   </div>
   <script src="/admin.js"></script>
-  <script>
-    document.querySelectorAll('.nav-link').forEach(link => link.addEventListener('click', () => {
-      document.querySelectorAll('.nav-link').forEach(item => item.classList.toggle('active', item === link));
-    }));
-  </script>
 </body>
 </html>

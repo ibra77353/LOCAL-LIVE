@@ -543,6 +543,10 @@ function serveStatic(req, res) {
     return;
   }
 
+  // صفحة الإدارة محمية دائماً: أي تهجئة مشفّرة للمسار (مثل /admin%2Ehtml) تصل
+  // إلى admin.html دون المرور بفحص المسار الحرفي أعلاه، فتتطلب المصادقة هنا.
+  if (path.basename(fullPath).toLowerCase() === 'admin.html' && !requireAdmin(req, res)) return;
+
   fs.readFile(fullPath, (err, data) => {
     if (err) {
       res.writeHead(err.code === 'ENOENT' ? 404 : 500);

@@ -432,6 +432,38 @@ $('channel-select')?.addEventListener('change', event => loadChannel(event.targe
 $('source-select')?.addEventListener('change', event => loadSource(event.target.value));
 for (const action of ['start','stop','restart']) $('channel-'+action)?.addEventListener('click', async () => { const id=$('channel-form').dataset.channelId; if(!id)return; try{const r=await api(`/api/channels/${encodeURIComponent(id)}/${action}`,'POST',{});showMessage(r.message||'تم تنفيذ الأمر.',false,'channel-message');}catch(e){showMessage(e.message,true,'channel-message');} refreshStatus(); });
 
+// التنقل بين أقسام لوحة الإدارة داخل مساحة المحتوى نفسها: يُعرض قسم واحد فقط،
+// ويُزامَن الرابط النشط معه، دون فتح تبويب أو نافذة جديدة ودون إعادة تحميل الصفحة.
+const adminNavLinks = Array.from(document.querySelectorAll('.nav-link'));
+const adminSections = Array.from(document.querySelectorAll('.main > section'));
+
+function activateAdminSection(target, options = {}) {
+  const link = adminNavLinks.includes(target)
+    ? target
+    : adminNavLinks.find(item => item.getAttribute('href') === `#${target}`) || adminNavLinks[0];
+  if (!link) return;
+  const section = document.getElementById((link.getAttribute('href') || '').slice(1));
+  if (!section) return;
+  for (const item of adminSections) item.classList.toggle('is-active', item === section);
+  for (const item of adminNavLinks) {
+    item.classList.toggle('active', item === link);
+    if (item === link) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  }
+  if (options.updateHash !== false && location.hash !== link.hash) history.replaceState(null, '', link.hash);
+  if (options.scroll !== false) {
+    if (window.matchMedia('(max-width:700px)').matches) link.scrollIntoView({ block: 'nearest', inline: 'center' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+adminNavLinks.forEach(link => link.addEventListener('click', event => {
+  event.preventDefault();
+  activateAdminSection(link);
+}));
+window.addEventListener('hashchange', () => activateAdminSection(location.hash.slice(1), { updateHash: false }));
+activateAdminSection(location.hash.slice(1) || 'overview', { updateHash: false, scroll: false });
+
 $('refresh-network')?.addEventListener('click', loadNetworkInterfaces);
 loadNetworkInterfaces();
 loadSettings();

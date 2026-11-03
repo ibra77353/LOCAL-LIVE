@@ -34,3 +34,9 @@
 .settings-hint{color:#9fb3c1;font-size:13px}
 @media(max-width:760px){.settings-dialog .settings-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.settings-dialog .settings-form{grid-template-columns:1fr}.settings-dialog .settings-form .wide{grid-column:auto}.editor-dialog{padding:16px;max-height:92vh}}
+
+/* In-panel admin navigation: one section at a time inside the main content area */
+.main>section{display:none}
+.main>section.is-active{display:block;animation:admin-section-in .18s ease-out}
+@keyframes admin-section-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.main>section.is-active{animation:none}}
