@@ -79,13 +79,13 @@
           <label>نوع المصدر<select name="type"><option value="usb">جهاز USB محلي</option><option value="http-hls">رابط بث شبكي (HTTP/HLS)</option><option value="rtsp">كاميرا شبكية RTSP</option></select></label>
           <label>اسم المصدر<input name="name" maxlength="100" required></label>
           <label id="stream-url-field" class="wide" hidden>رابط البث الشبكي<input name="streamUrl" type="url" maxlength="4096" placeholder="http://192.168.1.20:8080/live.m3u8" autocomplete="off"><small>يدعم HTTP وHTTPS، بما فيها روابط HLS التي تنتهي غالبًا بـ .m3u8. يجب أن يستطيع FFmpeg الوصول إلى الرابط من جهاز الخادم.</small></label>
-          <label id="video-device-field">جهاز الفيديو في DirectShow<select name="videoDevice"><option value="">افحص الأجهزة أولًا…</option></select></label>
+          <label id="video-device-field">جهاز الفيديو في DirectShow<select name="videoDevice"><option value="">جارٍ فحص الأجهزة…</option></select></label>
           <label id="audio-device-field">جهاز الصوت في DirectShow<select name="audioDevice"><option value="">بدون صوت</option></select></label>
-          <label id="video-size-field">دقة الالتقاط المدعومة<select name="videoSize"><option value="1280x720">1280×720 (افتراضي)</option></select></label>
-          <label id="fps-field">معدل التقاط الإطارات<select name="fps"><option value="30">30 FPS</option></select></label>
-          <label id="pixel-format-field">تنسيق الفيديو المدعوم<select name="pixelFormat"><option value="mjpeg">MJPEG</option><option value="yuyv422">YUYV422</option></select></label>
+          <label id="video-size-field">دقة الالتقاط المدعومة<select name="videoSize"><option value="" disabled selected>اختر جهازاً لعرض الدقات المدعومة</option></select></label>
+          <label id="fps-field">معدل التقاط الإطارات<select name="fps"><option value="" disabled selected>اختر جهازاً لعرض المعدلات المدعومة</option></select></label>
+          <label id="pixel-format-field">تنسيق الفيديو المدعوم<select name="pixelFormat"><option value="" disabled selected>اختر جهازاً لعرض الصيغ المدعومة</option></select></label>
           <label class="check-label"><input type="checkbox" name="enabled"> المصدر مفعّل</label>
-          <div class="wide form-actions"><button id="source-devices" class="btn btn-secondary" type="button">اكتشاف الأجهزة</button><button id="source-auto-config" class="btn btn-auto" type="button">ضبط تلقائي لأفضل إعدادات</button><button id="test-source" class="btn btn-secondary" type="button">اختبار الفيديو/المصدر</button><button id="test-audio" class="btn btn-secondary" type="button">اختبار الصوت</button><button class="btn btn-start" type="submit">حفظ مصدر الالتقاط</button><span id="source-message" role="status"></span></div>
+          <div class="wide form-actions"><button id="source-devices" class="btn btn-secondary" type="button">إعادة فحص الأجهزة</button><button id="source-auto-config" class="btn btn-auto" type="button">ضبط تلقائي لأفضل إعدادات</button><button id="test-source" class="btn btn-secondary" type="button">اختبار الفيديو/المصدر</button><button id="test-audio" class="btn btn-secondary" type="button">اختبار الصوت</button><button class="btn btn-start" type="submit">حفظ مصدر الالتقاط</button><span id="source-message" role="status"></span></div>
         </form></dialog>
       </section>
 

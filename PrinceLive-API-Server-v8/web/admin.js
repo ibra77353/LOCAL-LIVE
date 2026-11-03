@@ -95,21 +95,18 @@ async function loadChannel(selectedId) {
   } catch(error){showMessage(`تعذر تحميل بيانات القناة: ${error.message}`,true,'channel-message');}
 }
 
-function fillDeviceSelect(select, devices, selectedValue, emptyLabel) {
-  const previous = selectedValue == null ? select.value : String(selectedValue);
+// قوائم الأجهزة تُبنى حصراً من نتيجة فحص FFmpeg الحالية: لا تُضاف أسماء محفوظة
+// أو تجريبية، والجهاز المقطوع يختفي من القائمة بعد إعادة الفحص.
+function fillDeviceSelect(select, devices, selectedValue, emptyLabel, disableWhenEmpty = false) {
+  const previous = selectedValue == null ? '' : String(selectedValue);
+  const values = (Array.isArray(devices) ? devices : []).filter(Boolean);
   select.replaceChildren();
   if (emptyLabel !== null) {
     const empty = document.createElement('option');
     empty.value = '';
     empty.textContent = emptyLabel;
+    if (disableWhenEmpty && !values.length) empty.disabled = true;
     select.append(empty);
-  }
-  const values = Array.isArray(devices) ? devices : [];
-  if (previous && !values.includes(previous)) {
-    const saved = document.createElement('option');
-    saved.value = previous;
-    saved.textContent = `${previous} (القيمة المحفوظة؛ لم تظهر في الفحص الأخير)`;
-    select.append(saved);
   }
   for (const device of values) {
     const option = document.createElement('option');
@@ -117,21 +114,26 @@ function fillDeviceSelect(select, devices, selectedValue, emptyLabel) {
     option.textContent = device;
     select.append(option);
   }
-  if (previous) select.value = previous;
-  else if (emptyLabel !== null) select.value = '';
+  select.value = values.includes(previous) ? previous : '';
+  return { devices: values, keptPrevious: values.includes(previous) };
 }
 
+// تُعرض فقط القيم التي أعلنها الجهاز فعلياً؛ لا تُضاف قيمة محفوظة أو افتراضية غير مدعومة.
 function fillOptions(select, values, selectedValue, labelForEmpty) {
-  const previous = selectedValue == null ? select.value : String(selectedValue);
-  select.replaceChildren();
+  const previous = selectedValue == null ? '' : String(selectedValue);
   const unique = [...new Set((values || []).map(v => String(v)).filter(Boolean))];
+  select.replaceChildren();
   if (!unique.length) {
-    const option = document.createElement('option'); option.value = previous || ''; option.textContent = previous || labelForEmpty || 'غير متاح'; select.append(option);
-  } else {
-    for (const value of unique) { const option = document.createElement('option'); option.value = value; option.textContent = value; select.append(option); }
-    if (previous && !unique.includes(previous)) { const saved = document.createElement('option'); saved.value = previous; saved.textContent = `${previous} (القيمة المحفوظة)`; select.append(saved); }
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = labelForEmpty || 'غير متاح';
+    option.disabled = true;
+    select.append(option);
+    select.value = '';
+    return;
   }
-  if (previous) select.value = previous;
+  for (const value of unique) { const option = document.createElement('option'); option.value = value; option.textContent = value; select.append(option); }
+  select.value = unique.includes(previous) ? previous : '';
 }
 
 function updateSourceTypeFields() {
@@ -208,11 +210,56 @@ ${result.note || ''}`;
 async function refreshCaptureDevices(selectedVideo, selectedAudio) {
   const result = await api('/api/devices');
   const form = $('source-form');
-  fillDeviceSelect(form.elements.namedItem('videoDevice'), result.devices?.video || [], selectedVideo, 'اختر جهاز الفيديو…');
-  fillDeviceSelect(form.elements.namedItem('audioDevice'), result.devices?.audio || [], selectedAudio, 'بدون صوت');
+  const video = (result.devices?.video || []).filter(Boolean);
+  const audio = (result.devices?.audio || []).filter(Boolean);
+  const videoChoice = fillDeviceSelect(
+    form.elements.namedItem('videoDevice'), video, selectedVideo,
+    video.length ? 'اختر جهاز الفيديو…' : 'لم يتم العثور على أجهزة فيديو متصلة', true
+  );
+  fillDeviceSelect(form.elements.namedItem('audioDevice'), audio, selectedAudio, 'بدون صوت');
+  const lines = [
+    video.length ? `أجهزة الفيديو المكتشفة: ${video.join(' | ')}` : 'لم يتم العثور على أجهزة فيديو متصلة',
+    audio.length ? `أجهزة الصوت المكتشفة: ${audio.join(' | ')}` : 'لم يتم العثور على أجهزة صوت متصلة'
+  ];
+  if (selectedVideo && !videoChoice.keptPrevious) lines.push('الجهاز المحفوظ سابقاً غير متصل الآن، لذلك لا يظهر في القائمة.');
+  if (result.note) lines.push(result.note);
   $('device-output').hidden = false;
-  $('device-output').textContent = result.output || result.note || 'اكتمل فحص الأجهزة.';
+  $('device-output').textContent = lines.join('\n') + (result.output ? `\n\n${result.output}` : '');
+  await loadDeviceCapabilities(form.elements.namedItem('videoDevice').value);
   return result;
+}
+
+// يقرأ FFmpeg قدرات الجهاز المختار (الدقات، الصيغ، معدلات الإطارات) ويملأ القوائم بها فقط.
+async function loadDeviceCapabilities(device) {
+  const form = $('source-form');
+  const sizeSelect = form.elements.namedItem('videoSize');
+  const pixelSelect = form.elements.namedItem('pixelFormat');
+  const fpsSelect = form.elements.namedItem('fps');
+  captureModes = [];
+  if (!device) {
+    fillOptions(sizeSelect, [], '', 'اختر جهازاً لعرض الدقات المدعومة');
+    fillOptions(pixelSelect, [], '', 'اختر جهازاً لعرض الصيغ المدعومة');
+    fillOptions(fpsSelect, [], '', 'اختر جهازاً لعرض المعدلات المدعومة');
+    return;
+  }
+  const audioDevice = getField(form, 'audioDevice');
+  $('device-output').hidden = false;
+  $('device-output').textContent = `جارٍ قراءة قدرات الجهاز: ${device}`;
+  try {
+    const result = await api(`/api/devices/capabilities?videoDevice=${encodeURIComponent(device)}${audioDevice ? `&audioDevice=${encodeURIComponent(audioDevice)}` : ''}`);
+    const caps = result.capabilities || {};
+    captureModes = Array.isArray(caps.modes) ? caps.modes : [];
+    if (!caps.videoSizes?.length) throw new Error('لم يعلن الجهاز أي دقة مدعومة عبر FFmpeg.');
+    fillOptions(sizeSelect, caps.videoSizes, getField(form, 'videoSize'), 'لا توجد دقات مدعومة');
+    fillOptions(pixelSelect, caps.pixelFormats, getField(form, 'pixelFormat'), 'لم يعلن الجهاز صيغة');
+    updateCaptureModeOptions();
+    $('device-output').textContent = `قدرات الجهاز: ${device}\nالدقات المدعومة: ${caps.videoSizes.join(', ')}\nمعدلات الإطارات: ${caps.frameRates.join(', ') || 'لم تعلن'}\nالصيغ: ${caps.pixelFormats.join(', ') || 'لم يحددها FFmpeg'}`;
+  } catch (error) {
+    fillOptions(sizeSelect, [], '', 'لم تُقرأ قدرات الجهاز');
+    fillOptions(pixelSelect, [], '', 'لم تُقرأ قدرات الجهاز');
+    fillOptions(fpsSelect, [], '', 'لم تُقرأ قدرات الجهاز');
+    $('device-output').textContent = `تعذر قراءة قدرات الجهاز: ${error.message}`;
+  }
 }
 
 async function loadNetworkInterfaces() {
@@ -331,7 +378,7 @@ $('source-form').elements.namedItem('videoSize').addEventListener('change',updat
 $('source-form').elements.namedItem('pixelFormat').addEventListener('change',updateCaptureModeOptions);
 $('source-form').elements.namedItem('fps').addEventListener('change',updateCaptureModeOptions);
 $('source-auto-config')?.addEventListener('click',autoConfigureCapture);
-$('source-devices')?.addEventListener('click',async()=>{try{await refreshCaptureDevices(getField($('source-form'),'videoDevice'),getField($('source-form'),'audioDevice'));showMessage('تم تحديث الأجهزة المكتشفة.',false,'source-message');}catch(e){showMessage(e.message,true,'source-message');}});
+$('source-devices')?.addEventListener('click',async()=>{try{const result=await refreshCaptureDevices(getField($('source-form'),'videoDevice'),getField($('source-form'),'audioDevice'));const video=result.devices?.video||[],audio=result.devices?.audio||[];showMessage(video.length?`تم العثور على ${video.length} جهاز فيديو و${audio.length} جهاز صوت.`:'لم يتم العثور على أجهزة فيديو متصلة. وصّل جهازاً ثم أعد الفحص.',!video.length,'source-message');}catch(e){showMessage(`تعذر فحص الأجهزة: ${e.message}`,true,'source-message');}});
 
 $('test-source')?.addEventListener('click',async()=>{
   const form=$('source-form'); if(['http-hls','rtsp'].includes(getField(form,'type'))){const button=$('test-source');button.disabled=true;try{const r=await api('/api/sources/test','POST',{streamUrl:getField(form,'streamUrl')});form.dataset.videoTestSignature=sourceInputSignature(form);showMessage(r.result?.output||'نجح اختبار المصدر الشبكي.',false,'source-message');}catch(e){showMessage(e.message,true,'source-message');}finally{button.disabled=false;}return;}
@@ -420,8 +467,16 @@ $('new-source')?.addEventListener('click', () => {
   const form = $('source-form'); form.reset(); delete form.dataset.sourceId; delete form.dataset.originalInputSignature; delete form.dataset.videoTestSignature; delete form.dataset.audioTestSignature; $('source-dialog-title').textContent='إضافة مصدر';
   setField(form,'type','usb'); setField(form,'enabled',true);
   updateSourceTypeFields();
-  showMessage('أدخل بيانات المصدر ثم احفظه. ستُنشأ قناة مرتبطة به تلقائياً.', false, 'source-message');
+  showMessage('جارٍ فحص الأجهزة المتصلة…', false, 'source-message');
   $('source-dialog').showModal();
+  // فحص فعلي عند فتح نافذة الإضافة: القوائم تُبنى من أجهزة FFmpeg الحالية فقط.
+  refreshCaptureDevices('', '').then(result => {
+    const video = result.devices?.video || [];
+    showMessage(
+      video.length ? `تم العثور على ${video.length} جهاز فيديو متصل. اختر الجهاز ثم احفظ.` : 'لم يتم العثور على أجهزة فيديو متصلة. وصّل جهازاً ثم اضغط «إعادة فحص الأجهزة».',
+      !video.length, 'source-message'
+    );
+  }).catch(error => showMessage(`تعذر فحص الأجهزة: ${error.message}`, true, 'source-message'));
 });
 $('edit-source')?.addEventListener('click',()=>{if(!$('source-form').dataset.sourceId)return showMessage('لا يوجد مصدر محدد.',true,'source-message');$('source-dialog-title').textContent='تعديل مصدر';$('source-dialog').showModal();});
 $('delete-source')?.addEventListener('click',async()=>{const id=$('source-form').dataset.sourceId;if(!id)return;if(!await askConfirmation('حذف المصدر المحدد؟ يجب حذف القناة المرتبطة به أولاً.','تأكيد حذف المصدر'))return;try{await api(`/api/sources/${encodeURIComponent(id)}`,'DELETE');await loadSource();await loadChannel();refreshStatus();showMessage('تم حذف المصدر.');}catch(e){showMessage(e.message,true,'source-message');}});
@@ -465,6 +520,8 @@ window.addEventListener('hashchange', () => activateAdminSection(location.hash.s
 activateAdminSection(location.hash.slice(1) || 'overview', { updateHash: false, scroll: false });
 
 $('refresh-network')?.addEventListener('click', loadNetworkInterfaces);
+// تغيير جهاز الفيديو يعيد قراءة قدراته الفعلية من FFmpeg.
+$('source-form')?.elements.namedItem('videoDevice')?.addEventListener('change', event => { loadDeviceCapabilities(event.target.value); });
 loadNetworkInterfaces();
 loadSettings();
 loadChannel();

@@ -13,32 +13,6 @@
     "capLevelToPlayerSize": true,
     "cpuSaverDefault": false
   },
-  "sources": [
-    {
-      "id": "src_local_usb",
-      "name": "مصدر USB المحلي",
-      "type": "usb",
-      "videoDevice": "USB Video",
-      "audioDevice": "Digital Audio Interface (2- USB Digital Audio)",
-      "videoSize": "1280x720",
-      "fps": 30,
-      "pixelFormat": "mjpeg",
-      "enabled": true
-    }
-  ],
-  "channels": [
-    {
-      "id": "ch_local",
-      "name": "مباريات",
-      "category": "رياضة",
-      "sourceId": "src_local_usb",
-      "cover": "",
-      "enabled": true,
-      "quality": "360p",
-      "fps": 20,
-      "bitrate": "500k",
-      "autoStart": false,
-      "url": "/hls/index.m3u8"
-    }
-  ]
+  "sources": [],
+  "channels": []
 }

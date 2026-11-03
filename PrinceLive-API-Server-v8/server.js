@@ -53,8 +53,8 @@ let cpuPercent = null;
 // API model: persisted locally in data.json. This release runs one capture pipeline
 // (one physical DirectShow input) and exposes it as a configurable channel.
 const DATA_PATH = path.resolve(process.env.DATA_FILE || path.join(ROOT, 'data.json'));
+// الإعدادات فقط هي الافتراضية؛ لا تُنشأ مصادر أو قنوات تلقائياً عند أول تشغيل.
 function defaultData() {
-  const sourceId = 'src_local_usb';
   return {
     settings: {
       siteName: cfg.siteName || 'البرنس لايف',
@@ -88,8 +88,8 @@ function defaultData() {
       idleStopEnabled: !!cfg.idleStopEnabled,
       idleStopMinutes: Number(cfg.idleStopMinutes) || 2,
     },
-    sources: [{ id: sourceId, name: 'مصدر USB المحلي', type: 'usb', videoDevice: cfg.videoDevice || 'USB Video', audioDevice: cfg.audioDevice || '', videoSize: cfg.videoSize || '1280x720', fps: Number(cfg.captureFps) || 30, pixelFormat: cfg.inputPixelFormat || 'mjpeg', enabled: true }],
-    channels: [{ id: 'ch_local', name: 'مباريات', category: 'رياضة', sourceId, cover: '', enabled: true, quality: `${Number(cfg.outputHeight)||360}p`, fps: Number(cfg.outputFps)||20, bitrate: cfg.videoBitrate || '500k', autoStart: false, url: '/hls/index.m3u8' }]
+    sources: [],
+    channels: []
   };
 }
 function readData() {
@@ -397,7 +397,7 @@ function listDevices(res) {
           ok: true,
           devices: { video, audio },
           output: output || (err ? err.message : 'لم تظهر أجهزة'),
-          note: err && !output ? `تعذر تشغيل فحص FFmpeg: ${err.message}` : 'قوائم الفيديو والصوت مستخرجة من أجهزة DirectShow التي يعرضها FFmpeg.'
+          note: err && !output ? `تعذر تشغيل فحص FFmpeg: ${err.message}` : (video.length || audio.length ? 'قوائم الفيديو والصوت مستخرجة من أجهزة DirectShow التي يعرضها FFmpeg.' : 'لم يعرض FFmpeg أي جهاز DirectShow متصل.')
         });
       } else {
         console.log(output || (err ? err.message : 'لم تظهر أجهزة'));
@@ -742,7 +742,7 @@ const server = http.createServer(async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
     for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn','sortOrder']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
-    channel.url = `/hls/${channel.sourceId}/index.m3u8`;
+    channel.url = `/hls/${channel.id}/index.m3u8`;
     writeData(data); return send(res, 200, { ok: true, channel: publicChannel(channel) });
   }
   if (channelMatch && req.method === 'DELETE') {
