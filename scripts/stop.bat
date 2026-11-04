@@ -20,7 +20,7 @@ for /f "tokens=2" %%P in ('node scripts\ports.js 2^>nul') do set "API_PORT=%%P"
 if not defined API_PORT set "API_PORT=3001"
 
 echo Requesting stream stop through the local API (port %API_PORT%)...
-node -e "const http=require('http'),fs=require('fs');let token='';try{token=fs.readFileSync('run/control.token','utf8').trim()}catch{};if(!token){console.log('run/control.token missing: Node may not be running');process.exit(0)}const r=http.request({host:'127.0.0.1',port:(()=>{let p=3001;try{p=Number(require('./data.json').settings.port)||p}catch{}return p})(),path:'/api/stop',method:'POST',timeout:8000,headers:{'X-Control-Token':token,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.on('timeout',()=>{console.log('API timeout after 8s: stopping Node anyway');r.destroy()});r.end();"
+node -e "const http=require('http'),fs=require('fs');let token='';try{token=fs.readFileSync('run/control.token','utf8').trim()}catch{};if(!token){console.log('run/control.token missing: Node may not be running');process.exit(0)}const r=http.request({host:'127.0.0.1',port:%API_PORT%,path:'/api/stop',method:'POST',timeout:15000,headers:{'X-Control-Token':token,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.on('timeout',()=>{console.log('API timeout after 15s: stopping Node anyway');r.destroy()});r.end();"
 echo.
 
 rem Nginx: قد يفشل -s quit إذا كان ملف nginx\logs\nginx.pid قديماً (بعد إغلاق قسري سابق)،

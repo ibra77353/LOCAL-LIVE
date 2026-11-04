@@ -314,18 +314,32 @@ const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const RUN_DIR = path.join(ROOT, 'run');
 const CONTROL_TOKEN_FILE = path.join(RUN_DIR, 'control.token');
 const CONTROL_TOKEN = crypto.randomBytes(24).toString('hex');
+// عدّاد جلسات محفوظ في run/session.epoch: يزداد عند تسجيل الخروج فتُبطل كل الرموز
+// الصادرة قبل ذلك فوراً بدل أن تبقى صالحة حتى انتهاء مدة الـ12 ساعة.
+const SESSION_EPOCH_FILE = path.join(RUN_DIR, 'session.epoch');
+function readSessionEpoch() {
+  try { return Math.max(0, Number(fs.readFileSync(SESSION_EPOCH_FILE, 'utf8').trim()) || 0); } catch { return 0; }
+}
+let sessionEpoch = readSessionEpoch();
+function bumpSessionEpoch() {
+  sessionEpoch++;
+  try { fs.mkdirSync(RUN_DIR, { recursive: true }); fs.writeFileSync(SESSION_EPOCH_FILE, String(sessionEpoch)); }
+  catch (err) { logLine(`تعذر حفظ عدّاد الجلسات: ${err.message}`); }
+}
 function sessionKey() {
   const account = adminAccount();
   return crypto.createHash('sha256').update(`prince-live-session:${account.user}:${account.hash}:${account.salt}`).digest();
 }
 function issueSessionToken() {
   const exp = String(Date.now() + ADMIN_SESSION_TTL_MS);
-  return `${exp}.${crypto.createHmac('sha256', sessionKey()).update(exp).digest('hex')}`;
+  const payload = `${exp}.${sessionEpoch}`;
+  return `${payload}.${crypto.createHmac('sha256', sessionKey()).update(payload).digest('hex')}`;
 }
 function isValidSessionToken(token) {
-  const [exp, mac] = String(token || '').split('.');
-  if (!exp || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
-  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(exp).digest('hex'));
+  const [exp, epoch, mac] = String(token || '').split('.');
+  if (!exp || !epoch || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
+  if (Number(epoch) !== sessionEpoch) return false;
+  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(`${exp}.${epoch}`).digest('hex'));
 }
 function parseCookies(req) {
   const out = {};
@@ -714,6 +728,9 @@ function startChannel(channelId) {
     runtime.lastExit=`code=${code}; signal=${signal||''}`;
     runtime.proc=null;
     logLine(`[${channel.name}] انتهى FFmpeg: ${runtime.lastExit} — ${runtime.stopping ? 'إيقاف مطلوب يدوياً' : 'خروج غير متوقع'}${runtime.forceTranscode ? ' | نسخ قسري بعد فشل' : ''}`);
+    // بعد الإيقاف لا تُترك مقاطع/قوائم HLS قديمة على القرص، وإلا بقي المشاهدون
+    // يستطيعون تشغيل بث متوقف أو محتوى قديم من الملفات المتبقية.
+    if (runtime.stopping) clearChannelHls(channel);
     // خطأ إعداد (preset/دقة/صيغة/مُرمِّز) يتكرر مع كل محاولة، فلا فائدة من حلقة إعادة التشغيل.
     if (code !== 0 && !runtime.stopping && !runtime.paramError && isEncoderParamError(runtime.lastStderr)) {
       runtime.paramError = true;
@@ -744,9 +761,17 @@ function stopChannel(channelId, origin = '') {
   const label = channel ? channel.name : 'قناة غير معروفة';
   const context = origin ? ` — الطالب: ${origin}` : '';
   const rt = streams.get(channelId);
-  if (!rt) { logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية تشغيل مسجّلة، القناة متوقفة أصلاً`); return {ok:true,message:'القناة متوقفة بالفعل',channelId}; }
+  if (!rt) {
+    logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية تشغيل مسجّلة، القناة متوقفة أصلاً`);
+    if (channel) clearChannelHls(channel);
+    return {ok:true,message:'القناة متوقفة بالفعل',channelId};
+  }
   rt.stopping=true;clearTimeout(rt.restartTimer);rt.restartTimer=null;
-  if (!rt.proc) { logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية FFmpeg نشطة | آخر خروج: ${rt.lastExit || 'لا يوجد'}`); return {ok:true,message:'القناة متوقفة بالفعل',channelId}; }
+  if (!rt.proc) {
+    logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية FFmpeg نشطة | آخر خروج: ${rt.lastExit || 'لا يوجد'}`);
+    if (channel) clearChannelHls(channel);
+    return {ok:true,message:'القناة متوقفة بالفعل',channelId};
+  }
   const proc=rt.proc;
   const uptimeSec = rt.startedAt ? Math.round((Date.now() - new Date(rt.startedAt).getTime()) / 1000) : null;
   try {
@@ -998,6 +1023,14 @@ function serveHls(req, res, pathname) {
     res.writeHead(400); res.end('Bad Request'); return;
   }
   const relative = decoded.replace(/^\/hls\/?/, '');
+  // لا تُخدم ملفات قناة متوقفة أو محذوفة: تمنع بقاء بث قديم متاحاً بعد الإيقاف.
+  const ownerId = relative.split(/[\\/]/)[0];
+  const owner = data.channels.find(c => c.id === ownerId);
+  if (!owner || !streams.get(owner.id)?.proc) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end('HLS stream is not available');
+    return;
+  }
   const fullPath = path.resolve(HLS_DIR, relative);
   if (!fullPath.startsWith(HLS_DIR + path.sep) && fullPath !== HLS_DIR) {
     res.writeHead(403); res.end('Forbidden'); return;
@@ -1105,6 +1138,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, user: adminAccount().user });
   }
   if (url.pathname === '/api/logout' && req.method === 'POST') {
+    bumpSessionEpoch();
     clearAdminSession(res);
     return send(res, 200, { ok: true, message: 'تم تسجيل الخروج' });
   }
