@@ -28,6 +28,7 @@
   "port": 3001,
   "nginxPort": 80,
   "autoRestartCrashed": true,
+  "hideCosmeticLogs": true,
   "maxRestarts": 20,
   "restartBackoffMs": 5000,
   "idleStopEnabled": false,

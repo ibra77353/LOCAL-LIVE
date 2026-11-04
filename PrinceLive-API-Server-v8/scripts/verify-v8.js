@@ -50,7 +50,7 @@ if (mismatched.length) failures.push(`اختلاف بين settings.json وdata.j
 // 4) حقول قسم الإعدادات: S_KEYS في admin.js ↔ id="s_*" في admin.html ↔ بيانات data.json
 const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'ticker', 'tickerEnabled', 'x264Preset',
   'port', 'nginxPort',
-  'x264Threads', 'x264QualityMode', 'hlsTime', 'hlsListSize', 'gopSeconds', 'startupQueueDelayMs', 'autoRestartCrashed',
+  'x264Threads', 'x264QualityMode', 'hlsTime', 'hlsListSize', 'gopSeconds', 'startupQueueDelayMs', 'autoRestartCrashed', 'hideCosmeticLogs',
   'playerMaxBufferLength', 'playerBackBufferLength', 'playerLiveSyncDuration', 'capLevelToPlayerSize',
   'cpuSaverDefault', 'ffmpegPath', 'nginxPath', 'streamUserAgent', 'idleStopEnabled', 'idleStopMinutes',
   'sourceFailStopMinutes', 'blockedStopMinutes', 'logoImage', 'logoPosition', 'logoSizePct', 'logoOpacityPct'];

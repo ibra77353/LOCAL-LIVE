@@ -16,6 +16,7 @@
     "gopSeconds": 2,
     "startupQueueDelayMs": 8000,
     "autoRestartCrashed": true,
+    "hideCosmeticLogs": true,
     "playerMaxBufferLength": 20,
     "playerBackBufferLength": 10,
     "playerLiveSyncDuration": 4,

@@ -72,7 +72,7 @@ async function boot() {
 // ---------------- Settings ----------------
 const S_KEYS = ['siteName','siteNameLatin','logo','phone','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
-  'x264Threads','x264QualityMode','hlsTime','hlsListSize','gopSeconds','startupQueueDelayMs','autoRestartCrashed',
+  'x264Threads','x264QualityMode','hlsTime','hlsListSize','gopSeconds','startupQueueDelayMs','autoRestartCrashed','hideCosmeticLogs',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','nginxPath','streamUserAgent','idleStopEnabled','idleStopMinutes',
   'sourceFailStopMinutes','blockedStopMinutes','logoImage','logoPosition','logoSizePct','logoOpacityPct'];

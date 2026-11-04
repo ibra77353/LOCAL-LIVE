@@ -136,6 +136,8 @@
           <label>GOP بالثواني<input class="input" id="s_gopSeconds" type="number" min="1" max="10"></label>
           <label>تأخير طابور التشغيل عند الإقلاع (مللي ثانية)<input class="input" id="s_startupQueueDelayMs" type="number" min="0" step="1000"></label>
           <label class="switch-row"><input type="checkbox" id="s_autoRestartCrashed"> إعادة تشغيل القناة تلقائياً عند الانهيار</label>
+          <label class="switch-row"><input type="checkbox" id="s_hideCosmeticLogs"> إخفاء التحذيرات التجميلية من سجل القناة</label>
+          <p class="sub" style="margin-top:-4px">يخفي سطوراً لا تعني فشلاً: «deprecated pixel format»، «Guessed Channel Layout»، وإنذارات MJPEG عند إيقاف البطاقة. تُبقى الأخطاء الحقيقية (الجهاز مشغول، تعذر الفتح، انقطاع المصدر) ظاهرة دائماً.</p>
           <label class="switch-row"><input type="checkbox" id="s_idleStopEnabled"> إيقاف القنوات المستمرة تلقائياً عند عدم وجود مشاهدين (توفير الموارد)</label>
           <label>إيقاف بعد (دقائق بلا مشاهدين)<input class="input" id="s_idleStopMinutes" type="number" min="1" max="60"></label>
           <p class="sub" style="margin-top:-4px">تنطبق فقط على القنوات المستمرة (بلا جدولة وقتية) والمفعّلة. تعمل القناة تلقائياً من جديد فور فتح أحد المشاهدين لها.</p>

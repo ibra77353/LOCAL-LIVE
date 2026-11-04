@@ -90,6 +90,7 @@ function defaultData() {
       hlsDeleteThreshold: Number(cfg.hlsDeleteThreshold) || 4,
       port: Number(cfg.port)||3001, nginxPort: Number(cfg.nginxPort)||80,
       autoRestartCrashed: cfg.autoRestart !== false,
+      hideCosmeticLogs: cfg.hideCosmeticLogs !== false,
       maxRestarts: Number(cfg.maxRestarts) || 20,
       restartBackoffMs: Number(cfg.restartDelayMs) || 5000,
       idleStopEnabled: !!cfg.idleStopEnabled,
@@ -347,6 +348,22 @@ function appendChannelLog(channelId, message) {
   channelLogs.set(channelId, ((channelLogs.get(channelId) || '') + line + '\n').slice(-40000));
 }
 
+// تحذيرات FFmpeg الشكلية (لا تعني فشلاً): تظهر عند كل تشغيل/إيقاف لبطاقة التقاط
+// MJPEG، وتُخفى من السجل عند تفعيل «إخفاء التحذيرات التجميلية» في الإعدادات.
+const COSMETIC_FFMPEG_RE = /deprecated pixel format used|Guessed Channel Layout|Found EOI before any SOF|No JPEG data found in image|message repeated \d+ times/i;
+// «Error submitting packet to decoder» يُعد شكلياً فقط حين يكون نتيجة الإطار المقطوع
+// من بطاقة MJPEG نفسها، لا حين يأتي منفرداً (حينها قد يعني مصدراً تالفاً فعلاً).
+const MJPEG_CONTEXT_RE = /mjpeg|Found EOI|No JPEG data/i;
+function isCosmeticFfmpegLine(line) {
+  const l = String(line).trim();
+  return COSMETIC_FFMPEG_RE.test(l) || (/Error submitting packet to decoder/i.test(l) && MJPEG_CONTEXT_RE.test(l));
+}
+// FFmpeg يرسل عدة سطور في دفعة واحدة، لذلك نفلتر سطراً بسطر: تُحذف السطور
+// التجميلية فقط ويبقى أي سطر خطأ حقيقي في نفس الدفعة ظاهراً.
+function filterCosmeticFfmpegLines(chunk) {
+  return String(chunk).split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !isCosmeticFfmpegLine(l)).join('\n');
+}
+
 // فحص خفيف: هل هناك خدمة تستمع فعلياً على منفذ Nginx؟
 let nginxListening = false;
 function probeNginxPort() {
@@ -531,7 +548,11 @@ function startChannel(channelId) {
   try { runtime.proc=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']}); }
   catch(e) { runtime.lastExit=e.message; return {ok:false,message:e.message}; }
   const proc=runtime.proc; runtime.startedAt=new Date().toISOString();
-  proc.stderr.on('data',b=>{const m=b.toString().trim();if(m){logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);}});
+  proc.stderr.on('data',b=>{
+    let m=b.toString().trim(); if(!m) return;
+    if(data.settings.hideCosmeticLogs===true){ m=filterCosmeticFfmpegLines(m); if(!m) return; }
+    logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);
+  });
   proc.on('error',e=>{runtime.lastExit=e.message;runtime.proc=null;logLine(`[${channel.name}] تعذر تشغيل FFmpeg: ${e.message}`);scheduleChannelRestart(channelId);});
   proc.on('exit',(code,signal)=>{
     runtime.lastExit=`code=${code}; signal=${signal||''}`;
@@ -904,7 +925,7 @@ const server = http.createServer(async (req, res) => {
       if (value.length > (key === 'ticker' ? 500 : (['ffmpegPath','ffprobePath','nginxPath'].includes(key) ? 1000 : 300))) return apiError(res,400,`قيمة ${key} أطول من المسموح`);
       data.settings[key] = value;
     }
-    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','x264QualityMode','autoRestartCrashed','idleStopEnabled'];
+    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','x264QualityMode','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs'];
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
