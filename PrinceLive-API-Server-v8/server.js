@@ -328,6 +328,29 @@ function setAdminSession(req, res) {
 function clearAdminSession(res) {
   res.setHeader('Set-Cookie', `${ADMIN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
+// تغيير كلمة المرور: يُكتب salt/hash الجديدان في config.json فقط (لا يمسّ data.json)،
+// وتُلغى كل الجلسات القديمة تلقائياً لأن مفتاح التوقيع مشتق من hash+salt.
+function setAdminPassword(password) {
+  const user = adminAccount().user;
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 32).toString('hex');
+  let stored;
+  try {
+    stored = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+  } catch (err) {
+    throw new Error(`تعذر قراءة config.json: ${err.message}`);
+  }
+  stored.admin = { ...(stored.admin || {}), user, salt, hash };
+  delete stored.admin.defaultPassword;
+  delete stored.adminUsername;
+  delete stored.adminPassword;
+  const temp = CONFIG_PATH + '.tmp';
+  fs.writeFileSync(temp, JSON.stringify(stored, null, 2) + '\n', 'utf8');
+  fs.renameSync(temp, CONFIG_PATH);
+  cfg.admin = stored.admin;
+  delete cfg.adminUsername;
+  delete cfg.adminPassword;
+}
 function clientIp(req) {
   return String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
 }
@@ -1054,6 +1077,29 @@ const server = http.createServer(async (req, res) => {
       maxRestarts:data.settings.maxRestarts, restartDelayMs:data.settings.restartBackoffMs
     });
     writeData(data); syncNginxPorts(); return send(res, 200, { ok: true, settings: data.settings, message: 'تم حفظ الإعدادات. تغييرات المنافذ تتطلب إعادة تشغيل Node.js وNginx، وتغييرات الترميز تتطلب إعادة تشغيل القنوات.' });
+  }
+  // تغيير كلمة مرور اللوحة: يتحقق من الحالية ثم يحفظ hash جديداً ويعيد فتح جلسة للمستخدم الحالي.
+  if (url.pathname === '/api/settings/password' && req.method === 'POST') {
+    const ip = clientIp(req);
+    if (loginBlocked(ip)) return apiError(res, 429, 'محاولات كثيرة؛ انتظر 10 دقائق ثم أعد المحاولة');
+    let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const current = String(body.current || '');
+    const next = String(body.next || '');
+    if (!current || !next) return apiError(res, 400, 'كلمة المرور الحالية والجديدة مطلوبتان');
+    if (next.length < 6) return apiError(res, 400, 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل');
+    if (!isAdminPassword(current)) {
+      noteLoginFailure(ip);
+      logLine(`فشل تغيير كلمة المرور (كلمة حالية خاطئة): ${clientInfo(req)}`);
+      // 403 لا 401: 401 في الواجهة يعني «انتهت الجلسة» فيُخرج المستخدم للدخول.
+      return apiError(res, 403, 'كلمة المرور الحالية غير صحيحة');
+    }
+    if (next === current) return apiError(res, 400, 'كلمة المرور الجديدة يجب أن تختلف عن الحالية');
+    try { setAdminPassword(next); }
+    catch (e) { return apiError(res, 500, `تعذر حفظ كلمة المرور: ${e.message}`); }
+    loginFailures.delete(ip);
+    setAdminSession(req, res);
+    logLine(`تم تغيير كلمة مرور لوحة التحكم: ${clientInfo(req)}`);
+    return send(res, 200, { ok: true, message: 'تم تغيير كلمة المرور' });
   }
   if (url.pathname === '/api/channels' && req.method === 'POST') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }

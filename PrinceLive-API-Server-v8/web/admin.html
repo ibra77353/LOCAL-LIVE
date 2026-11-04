@@ -220,6 +220,13 @@
           
         </div>
         <div class="card">
+          <h3>الأمان</h3>
+          <p class="hint">تُحفظ كلمة المرور مشفّرة (scrypt + salt) في config.json، وتُغلق بعد تغييرها الجلسات المفتوحة على الأجهزة الأخرى.</p>
+          <label>كلمة المرور الحالية<input class="input" id="pw_current" type="password" autocomplete="current-password"></label>
+          <label>كلمة المرور الجديدة<input class="input" id="pw_next" type="password" autocomplete="new-password"></label>
+          <button class="btn" onclick="changePassword()">تغيير كلمة المرور</button>
+        </div>
+        <div class="card">
           <h3>النسخ الاحتياطي</h3>
           <p class="hint">احفظ نسخة من كل الإعدادات (القنوات، المصادر، الإعلانات، الصور، إعدادات النظام) في ملف واحد، أو استرجع نسخة سابقة.</p>
           <button class="btn btn-primary" onclick="downloadBackup()">⬇ حفظ نسخة احتياطية</button>

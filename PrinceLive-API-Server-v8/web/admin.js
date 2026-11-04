@@ -29,8 +29,9 @@ async function api(path, opts) {
     opts.body = JSON.stringify(opts.body);
   }
   const r = await fetch('/api' + path, opts);
-  if (r.status === 401) { showLogin(); throw new Error('انتهت الجلسة، سجّل الدخول مجدداً'); }
   const j = await r.json().catch(() => ({}));
+  // 401 على /login تعني بيانات دخول خاطئة، لا جلسة منتهية — نُظهر رسالة الخادم.
+  if (r.status === 401 && path !== '/login') { showLogin(); throw new Error('انتهت الجلسة، سجّل الدخول مجدداً'); }
   if (!r.ok || j.ok === false) throw new Error(j.message || 'حدث خطأ غير متوقع');
   return j;
 }
@@ -62,6 +63,18 @@ $('#logoutBtn').addEventListener('click', async () => {
   try { await api('/logout', { method: 'POST' }); } catch (e) { /* الخروج محلياً يكفي */ }
   location.reload();
 });
+
+async function changePassword() {
+  const current = $('#pw_current').value;
+  const next = $('#pw_next').value;
+  if (!current || !next) { toast('أدخل كلمة المرور الحالية والجديدة', true); return; }
+  try {
+    await api('/settings/password', { method: 'POST', body: { current, next } });
+    $('#pw_current').value = '';
+    $('#pw_next').value = '';
+    toast('تم تغيير كلمة المرور');
+  } catch (e) { toast(e.message, true); }
+}
 
 // ---------------- Navigation ----------------
 $$('.nav-btn').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
