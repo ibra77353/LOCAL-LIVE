@@ -69,6 +69,7 @@ function defaultData() {
       ticker: cfg.ticker || 'أهلاً بكم في البرنس لايف — البث المباشر المحلي',
       tickerEnabled: cfg.tickerEnabled !== false,
       logo: cfg.logo || 'logo.png',
+      theme: cfg.theme || 'default',
       autoStartOnDemand: !!cfg.autoStartOnDemand,
       playerMaxBufferLength: Number(cfg.playerMaxBufferLength) || 20,
       playerBackBufferLength: Number(cfg.playerBackBufferLength) || 10,
@@ -82,6 +83,7 @@ function defaultData() {
       outputFps: Number(cfg.outputFps) || 20,
       gopSeconds: Number(cfg.gopSeconds) || 2,
       startupQueueDelayMs: Number(cfg.startupQueueDelayMs) || 8000,
+      startupConcurrency: Number(cfg.startupConcurrency) || 1,
       x264Preset: cfg.preset || 'veryfast',
       x264Threads: Number(cfg.threads) || 2,
       hlsTime: Number(cfg.hlsTime) || 2,
@@ -960,8 +962,8 @@ const server = http.createServer(async (req, res) => {
 
   // Public API used by viewer.js. Public endpoints expose no filesystem paths.
   if (url.pathname === '/api/public/settings' && req.method === 'GET') {
-    const {siteName,siteNameLatin,logo,ticker,tickerEnabled,phone,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault}=data.settings;
-    return send(res, 200, { ok: true, settings: {siteName,siteNameLatin,logo:publicAsset(logo),ticker,tickerEnabled,phone,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault} });
+    const {siteName,siteNameLatin,logo,ticker,tickerEnabled,phone,theme,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault}=data.settings;
+    return send(res, 200, { ok: true, settings: {siteName,siteNameLatin,logo:publicAsset(logo),ticker,tickerEnabled,phone,theme,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault} });
   }
   if (url.pathname === '/api/public/channels' && req.method === 'GET') {
     return send(res, 200, { ok: true, channels: data.channels.filter(c => c.enabled !== false).sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).map(publicChannel) });
@@ -1048,7 +1050,7 @@ const server = http.createServer(async (req, res) => {
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
       outputWidth:[160,3840], outputHeight:[120,2160], outputFps:[1,60], gopSeconds:[1,10],
-      startupQueueDelayMs:[0,120000], x264Threads:[1,64], hlsTime:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
+      startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
       maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
       sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000], logoSizePct:[2,40], logoOpacityPct:[0,100]
     };
@@ -1065,6 +1067,11 @@ const server = http.createServer(async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(body,'logoPosition')) {
       if (!['top-right','top-left','bottom-right','bottom-left'].includes(String(body.logoPosition))) return apiError(res,400,'موضع الشعار غير صالح');
       data.settings.logoPosition = String(body.logoPosition);
+    }
+    if (Object.prototype.hasOwnProperty.call(body,'theme')) {
+      const allowedThemes = ['default','worldcup'];
+      if (!allowedThemes.includes(String(body.theme))) return apiError(res,400,'الثيم غير صالح');
+      data.settings.theme = String(body.theme);
     }
     Object.assign(cfg, {
       ffmpegPath:data.settings.ffmpegPath||cfg.ffmpegPath, ffprobePath:data.settings.ffprobePath||cfg.ffprobePath, nginxPath:data.settings.nginxPath||cfg.nginxPath,
@@ -1424,7 +1431,9 @@ server.listen(LISTEN_PORT, LISTEN_HOST, () => {
   for (const item of getNetworkInterfaces()) logLine(`رابط المشاهدة: ${item.url} | الواجهة: ${item.name}`);
   if (process.argv.includes('--devices')) listDevices();
   const bootChannels=data.channels.filter(c=>c.enabled!==false && (c.autoStart||c.alwaysOn));
-  bootChannels.forEach((c,i)=>setTimeout(()=>startChannel(c.id),Math.max(0,Number(data.settings.startupQueueDelayMs)||0)+i*1000));
+  // كل دورة تُشغّل startupConcurrency قناة معاً: 1 = تسلسلي كما كان، وأكثر = دفعات متزامنة بفاصل ثانية بين الدفعات.
+  const bootConcurrency=Math.max(1,Number(data.settings.startupConcurrency)||1);
+  bootChannels.forEach((c,i)=>setTimeout(()=>startChannel(c.id),Math.max(0,Number(data.settings.startupQueueDelayMs)||0)+Math.floor(i/bootConcurrency)*1000));
 });
 
 function shutdown() {

@@ -103,9 +103,9 @@ async function boot() {
 })();
 
 // ---------------- Settings ----------------
-const S_KEYS = ['siteName','siteNameLatin','logo','phone','ticker','tickerEnabled','x264Preset',
+const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
-  'x264Threads','x264QualityMode','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','outputWidth','outputHeight','outputFps','startupQueueDelayMs','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
+  'x264Threads','x264QualityMode','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','outputWidth','outputHeight','outputFps','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','autoStartOnDemand','idleStopEnabled','idleStopMinutes',
   'sourceFailStopMinutes','blockedStopMinutes','logoImage','logoPosition','logoSizePct','logoOpacityPct'];
@@ -121,6 +121,7 @@ async function loadSettings() {
   // حدّث تسميات نسب الشعار بجانب الأشرطة
   if ($('#logoSizeVal')) $('#logoSizeVal').textContent = (settings.logoSizePct ?? 10) + '٪';
   if ($('#logoOpacityVal')) $('#logoOpacityVal').textContent = (settings.logoOpacityPct ?? 50) + '٪';
+  document.body.classList.toggle('worldcup', settings.theme === 'worldcup');
   $('#brandName').textContent = settings.siteName || 'أمان لايف';
   $('#adminFooter').textContent = 'جميع الحقوق محفوظة © أمان لايف';
   const logo = $('#brandLogo');

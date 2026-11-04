@@ -132,6 +132,11 @@
           <label>رقم التواصل (يظهر تحت العنوان)<input class="input" id="s_phone"></label>
           <label class="switch-row"><input type="checkbox" id="s_tickerEnabled"> تفعيل الشريط الإخباري</label>
           <label>نص الشريط الإخباري<textarea class="input" id="s_ticker" rows="2"></textarea></label>
+          <label>الثيم
+            <select class="input" id="s_theme">
+              <option value="default">افتراضي</option>
+              <option value="worldcup">كأس العالم (worldcup)</option>
+            </select></label>
         </div>
         <div class="card">
           <h3>الأداء والبث</h3>
@@ -152,6 +157,8 @@
           <label>معدل إطارات الخرج (FPS)<input class="input" id="s_outputFps" type="number" min="1" max="60"></label>
           <p class="sub" style="margin-top:-4px">أبعاد ومعدل الإطارات الافتراضية للترميز؛ جودة القناة الواحدة تتجاوز الارتفاع، ومعدل الإطارات المضبوط في القناة يتجاوز هذه القيمة.</p>
           <label>تأخير طابور التشغيل عند الإقلاع (مللي ثانية)<input class="input" id="s_startupQueueDelayMs" type="number" min="0" step="1000"></label>
+          <label>عدد القنوات التي تُشغَّل معاً عند الإقلاع<input class="input" id="s_startupConcurrency" type="number" min="1" max="20"></label>
+          <p class="sub" style="margin-top:-4px">1 = تشغيل تسلسلي (الأكثر أماناً لكرت التقاط واحد). ارفعه فقط عندما تكون المصادر شبكية ومتصلة بسرعة كافية، فبدء عدة تحويلات FFmpeg في اللحظة نفسها يرفع استهلاك المعالج عند الإقلاع.</p>
           <label class="switch-row"><input type="checkbox" id="s_autoRestartCrashed"> إعادة تشغيل القناة تلقائياً عند الانهيار</label>
           <label>الحد الأقصى لمحاولات إعادة التشغيل التلقائي<input class="input" id="s_maxRestarts" type="number" min="0" max="100"></label>
           <label>المهلة بين محاولات إعادة التشغيل (مللي ثانية)<input class="input" id="s_restartBackoffMs" type="number" min="1000" max="120000" step="500"></label>

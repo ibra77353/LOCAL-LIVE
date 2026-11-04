@@ -27,6 +27,8 @@ async function init() {
     l.src = '/' + SETTINGS.logo.replace(/^\//, '').replace(/^srv\/uploads/, 'uploads');
     l.classList.remove('hidden');
   }
+  // الثيم يُطبَّق كصنف على body — viewer.css يعرّف body.worldcup فوق متغيرات :root.
+  document.body.classList.toggle('worldcup', SETTINGS.theme === 'worldcup');
   cpuSaver = !!SETTINGS.cpuSaverDefault || localStorage.getItem('amaan_cpu') === '1';
   $('#cpuSaver').checked = cpuSaver;
 
