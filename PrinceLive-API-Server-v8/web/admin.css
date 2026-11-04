@@ -110,11 +110,13 @@ label .input{margin-top:6px}
 .table{width:100%;border-collapse:collapse;min-width:680px}
 .table th{font-size:12.5px;color:var(--muted);text-align:right;padding:12px 14px;
   border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap}
+/* عمود الإجراءات يبقى بسطر واحد؛ الجدول يتمدد داخلياً ويلفّ أفقياً داخل .table-wrap */
+.table th:last-child,.table td:last-child{white-space:nowrap}
 .table td{padding:11px 14px;border-bottom:1px solid rgba(35,57,74,.55);vertical-align:middle;font-size:14px}
 .table tr:last-child td{border-bottom:0}
 .table tr:hover td{background:rgba(232,163,61,.04)}
 .cell-muted{color:var(--muted);font-size:12.5px;direction:ltr;text-align:left}
-.row-actions{display:flex;gap:6px;flex-wrap:wrap}
+.row-actions{display:flex;gap:6px;flex-wrap:nowrap}
 .iptv-logo{width:34px;height:34px;object-fit:contain;background:#0C151D;border-radius:6px}
 
 /* status chips — the ON AIR signature */
