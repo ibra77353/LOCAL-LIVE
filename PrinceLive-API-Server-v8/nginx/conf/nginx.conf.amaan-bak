@@ -28,12 +28,8 @@ http {
     open_file_cache_valid 10s;
     open_file_cache_min_uses 1;
     open_file_cache_errors off;
-    types {
-        application/vnd.apple.mpegurl m3u8;
-        video/mp2t ts;
-    }
     server {
-        listen 801 reuseport;
+        listen 801;
         server_name _;
 
         # قوائم m3u8 تمرّ عبر Node (خفيفة جداً) لا تُخدَم من القرص مباشرةً: هذا هو
