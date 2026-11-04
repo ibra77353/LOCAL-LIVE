@@ -9,6 +9,18 @@
 </head>
 <body>
 
+<!-- ======== Login ======== -->
+<div id="loginScreen" class="login-screen hidden">
+  <form id="loginForm" class="login-card">
+    <div class="login-mark">البرنس <span>لايف</span></div>
+    <p class="login-sub">لوحة تحكم البث المباشر</p>
+    <label>اسم المستخدم<input id="loginUser" class="input" autocomplete="username" required></label>
+    <label>كلمة المرور<input id="loginPass" class="input" type="password" autocomplete="current-password" required></label>
+    <button class="btn btn-primary btn-block" type="submit">دخول</button>
+    <p id="loginError" class="form-error"></p>
+  </form>
+</div>
+
 <div id="app" class="app hidden">
   <aside class="sidebar">
     <div class="brand" id="brandBox">

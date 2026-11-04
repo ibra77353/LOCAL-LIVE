@@ -292,7 +292,61 @@ function isAdminPassword(password) {
   } catch { return false; }
 }
 
+// جلسة لوحة التحكم: كوكي HttpOnly موقّع بمفتاح مشتق من حساب الإدارة في config.json،
+// فلا حاجة لملف أسرار إضافي، وتبقى Basic Auth مدعومة كما هي لكل الطلبات.
+const ADMIN_COOKIE = 'pl_admin';
+const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+function sessionKey() {
+  const account = adminAccount();
+  return crypto.createHash('sha256').update(`prince-live-session:${account.user}:${account.hash}:${account.salt}`).digest();
+}
+function issueSessionToken() {
+  const exp = String(Date.now() + ADMIN_SESSION_TTL_MS);
+  return `${exp}.${crypto.createHmac('sha256', sessionKey()).update(exp).digest('hex')}`;
+}
+function isValidSessionToken(token) {
+  const [exp, mac] = String(token || '').split('.');
+  if (!exp || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
+  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(exp).digest('hex'));
+}
+function parseCookies(req) {
+  const out = {};
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const index = part.indexOf('=');
+    if (index < 0) continue;
+    const name = part.slice(0, index).trim();
+    if (!name) continue;
+    try { out[name] = decodeURIComponent(part.slice(index + 1).trim()); } catch { out[name] = ''; }
+  }
+  return out;
+}
+function hasAdminSession(req) { return isValidSessionToken(parseCookies(req)[ADMIN_COOKIE]); }
+function setAdminSession(req, res) {
+  const secure = String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${ADMIN_COOKIE}=${issueSessionToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${ADMIN_SESSION_TTL_MS / 1000}${secure}`);
+}
+function clearAdminSession(res) {
+  res.setHeader('Set-Cookie', `${ADMIN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+function clientIp(req) {
+  return String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
+}
+// حد بسيط لمحاولات الدخول الفاشلة: 8 محاولات لكل عنوان خلال 10 دقائق.
+const loginFailures = new Map();
+function loginBlocked(ip) {
+  const record = loginFailures.get(ip);
+  if (!record) return false;
+  if (Date.now() - record.first > 10 * 60 * 1000) { loginFailures.delete(ip); return false; }
+  return record.count >= 8;
+}
+function noteLoginFailure(ip) {
+  const record = loginFailures.get(ip);
+  if (!record || Date.now() - record.first > 10 * 60 * 1000) loginFailures.set(ip, { count: 1, first: Date.now() });
+  else record.count += 1;
+}
+
 function isAdminAuthorized(req) {
+  if (hasAdminSession(req)) return true;
   const header = String(req.headers.authorization || '');
   if (!header.startsWith('Basic ')) return false;
   let decoded = '';
@@ -786,9 +840,8 @@ function serveStatic(req, res) {
     return;
   }
 
-  // صفحة الإدارة محمية دائماً: أي تهجئة مشفّرة للمسار (مثل /admin%2Ehtml) تصل
-  // إلى admin.html دون المرور بفحص المسار الحرفي أعلاه، فتتطلب المصادقة هنا.
-  if (path.basename(fullPath).toLowerCase() === 'admin.html' && !requireAdmin(req, res)) return;
+  // صفحة اللوحة تُخدَم دائماً لأنها تعرض شاشة الدخول بنفسها؛ حماية البيانات تبقى
+  // على كل مسارات /api/* (جلسة موقّعة أو Basic Auth) ولا يكشف الملف أي بيانات.
 
   fs.readFile(fullPath, (err, data) => {
     if (err) {
@@ -871,7 +924,6 @@ const server = http.createServer(async (req, res) => {
   // Explicit admin-page routes; both Node direct access and Nginx proxy use these.
   if (req.method === 'GET' &&
       (url.pathname === '/admin' || url.pathname === '/admin/' || url.pathname === '/admin.html')) {
-    if (!requireAdmin(req, res)) return;
     req.url = '/admin.html';
     return serveStatic(req, res);
   }
@@ -923,6 +975,33 @@ const server = http.createServer(async (req, res) => {
     if (body.viewerId) viewerSessions.delete(String(body.viewerId));
     return send(res, 200, { ok: true });
   }
+  // تسجيل الدخول داخل اللوحة: يتحقق من نفس حساب config.json ثم يفتح جلسة بكوكي HttpOnly.
+  if (url.pathname === '/api/me' && req.method === 'GET') {
+    return send(res, 200, { ok: true, authed: isAdminAuthorized(req), user: adminAccount().user });
+  }
+  if (url.pathname === '/api/login' && req.method === 'POST') {
+    const ip = clientIp(req);
+    if (loginBlocked(ip)) return apiError(res, 429, 'محاولات دخول كثيرة؛ انتظر 10 دقائق ثم أعد المحاولة');
+    let body;
+    try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const user = String(body.user || '').trim();
+    const pass = String(body.pass || '');
+    if (!user || !pass) return apiError(res, 400, 'اسم المستخدم وكلمة المرور مطلوبان');
+    if (!sameSecret(user, adminAccount().user) || !isAdminPassword(pass)) {
+      noteLoginFailure(ip);
+      logLine(`فشل تسجيل دخول للوحة التحكم: ${clientInfo(req)}`);
+      return apiError(res, 401, 'اسم المستخدم أو كلمة المرور غير صحيحة');
+    }
+    loginFailures.delete(ip);
+    setAdminSession(req, res);
+    logLine(`دخول ناجح للوحة التحكم: ${clientInfo(req)}`);
+    return send(res, 200, { ok: true, user: adminAccount().user });
+  }
+  if (url.pathname === '/api/logout' && req.method === 'POST') {
+    clearAdminSession(res);
+    return send(res, 200, { ok: true, message: 'تم تسجيل الخروج' });
+  }
+
   const adminApiPath = url.pathname === '/api/channels' || url.pathname.startsWith('/api/channels/') || url.pathname === '/api/sources' || url.pathname.startsWith('/api/sources/') || url.pathname === '/api/settings' || url.pathname === '/api/stats' || url.pathname.startsWith('/api/devices') || url.pathname === '/api/start' || url.pathname === '/api/stop' || url.pathname === '/api/logs' || url.pathname.startsWith('/api/logs/') || url.pathname.startsWith('/api/backup') || url.pathname === '/api/upload' || url.pathname === '/api/metrics' || url.pathname.startsWith('/api/settings/');
   if (url.pathname === '/api/status' && req.method === 'GET') {
     // Status is intentionally public for the viewer page; it contains no credentials or filesystem paths.

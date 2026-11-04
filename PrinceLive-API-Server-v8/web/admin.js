@@ -29,7 +29,7 @@ async function api(path, opts) {
     opts.body = JSON.stringify(opts.body);
   }
   const r = await fetch('/api' + path, opts);
-  if (r.status === 401) { throw new Error('الخادم ما زال يطلب مصادقة؛ يلزم تعديل server.js لإلغاء تسجيل الدخول.'); }
+  if (r.status === 401) { showLogin(); throw new Error('انتهت الجلسة، سجّل الدخول مجدداً'); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok || j.ok === false) throw new Error(j.message || 'حدث خطأ غير متوقع');
   return j;
@@ -43,8 +43,25 @@ function toast(msg, isErr) {
   t._h = setTimeout(() => t.classList.add('hidden'), 3200);
 }
 
-// Authentication UI removed from this customized build.
-function showApp() { $('#app').classList.remove('hidden'); }
+// ---------------- Auth ----------------
+function showLogin() { $('#loginScreen').classList.remove('hidden'); $('#app').classList.add('hidden'); }
+function showApp() { $('#loginScreen').classList.add('hidden'); $('#app').classList.remove('hidden'); }
+
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#loginError').textContent = '';
+  try {
+    await api('/login', { method: 'POST', body: { user: $('#loginUser').value.trim(), pass: $('#loginPass').value } });
+    $('#loginPass').value = '';
+    showApp();
+    await boot();
+  } catch (err) { $('#loginError').textContent = err.message; }
+});
+
+$('#logoutBtn').addEventListener('click', async () => {
+  try { await api('/logout', { method: 'POST' }); } catch (e) { /* الخروج محلياً يكفي */ }
+  location.reload();
+});
 
 // ---------------- Navigation ----------------
 $$('.nav-btn').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
@@ -65,6 +82,9 @@ async function boot() {
 }
 
 (async function init() {
+  let authed = false;
+  try { authed = (await fetch('/api/me').then(r => r.json())).authed === true; } catch (e) { authed = false; }
+  if (!authed) { showLogin(); return; }
   showApp();
   try { await boot(); } catch (e) { console.error(e); toast(e.message, true); }
 })();
