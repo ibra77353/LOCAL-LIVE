@@ -86,6 +86,38 @@ for (const source of data.sources || []) if (!source.id || !source.type) failure
 // 8) Nginx يمرّر الصفحة وواجهات API إلى خادم Node
 if (serverJs && !readText('nginx/conf/nginx.conf').includes('proxy_pass http://127.0.0.1:')) failures.push('nginx.conf لا يمرّر الطلبات إلى خادم Node');
 
+// 9) قيم حقول الإعدادات تُعرض صحيحة: النوع، وخيارات القوائم، وحدود min/max
+const settingsView = (/<section id="view-settings"[\s\S]*?<\/section>/.exec(adminHtml) || [''])[0];
+const fieldRe = /<(input|textarea|select)([^>]*)>/gi;
+let fieldMatch;
+while ((fieldMatch = fieldRe.exec(settingsView))) {
+  const tag = fieldMatch[1].toLowerCase();
+  const attrs = fieldMatch[2];
+  const idMatch = /id="(s_[^"]*)"/.exec(attrs);
+  if (!idMatch) continue;
+  const key = idMatch[1].slice(2);
+  const value = (data.settings || {})[key];
+  const type = tag === 'input' ? ((/type="([^"]*)"/.exec(attrs) || [])[1] || 'text') : tag;
+  if (type === 'checkbox') { if (typeof value !== 'boolean') failures.push(`الحقل ${key} اختيار لكن القيمة ليست منطقية`); continue; }
+  if (tag === 'select') {
+    const tail = settingsView.slice(fieldRe.lastIndex);
+    const options = [...tail.slice(0, tail.indexOf('</select>')).matchAll(/<option(?:[^>]*value="([^"]*)")?[^>]*>([^<]*)/gi)]
+      .map((option) => option[1] !== undefined ? option[1] : option[2].trim());
+    if (!options.includes(String(value))) failures.push(`الحقل ${key}: القيمة "${value}" ليست من خيارات القائمة`);
+    continue;
+  }
+  if (type === 'number' || type === 'range') {
+    const number = Number(value);
+    const min = (/min="([^"]*)"/.exec(attrs) || [])[1];
+    const max = (/max="([^"]*)"/.exec(attrs) || [])[1];
+    if (!Number.isFinite(number)) failures.push(`الحقل ${key}: قيمة غير رقمية`);
+    else if (min !== undefined && number < Number(min)) failures.push(`الحقل ${key}: القيمة ${number} أقل من الحد min=${min}`);
+    else if (max !== undefined && number > Number(max)) failures.push(`الحقل ${key}: القيمة ${number} أكبر من الحد max=${max}`);
+    continue;
+  }
+  if (value === undefined) failures.push(`الحقل ${key}: لا توجد قيمة مخزنة ليُعرض`);
+}
+
 if (failures.length) {
   console.error('AmaanLive verification FAILED');
   console.error(failures.join('\n'));

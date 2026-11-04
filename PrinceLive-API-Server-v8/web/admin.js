@@ -428,9 +428,10 @@ function renderIptv() {
     <td><button class="btn btn-sm btn-danger" onclick="deleteIptv('${c.id}')">حذف</button></td>
   </tr>`).join('') || '<tr><td colspan="5" class="cell-muted">المكتبة فارغة.</td></tr>';
 }
-$('#iptvFilter').addEventListener('input', renderIptv);
+// عناصر مكتبة IPTV غير موجودة في لوحة AmaanLive؛ نربطها فقط عند وجودها
+if ($('#iptvFilter')) $('#iptvFilter').addEventListener('input', renderIptv);
 
-$('#m3uFile').addEventListener('change', async (e) => {
+if ($('#m3uFile')) $('#m3uFile').addEventListener('change', async (e) => {
   if (!e.target.files[0]) return;
   const fd = new FormData();
   fd.append('file', e.target.files[0]);
