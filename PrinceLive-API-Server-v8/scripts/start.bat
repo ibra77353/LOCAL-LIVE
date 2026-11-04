@@ -32,7 +32,9 @@ if not exist "ffmpeg.exe" (
   where ffmpeg >nul 2>nul
   if errorlevel 1 echo WARNING: FFmpeg not found. Put ffmpeg.exe beside server.js or add FFmpeg to PATH.
 )
-for /f %%P in ('node -e "const c=require('./config.json');process.stdout.write(String(c.port||3001))"') do set "API_PORT=%%P"
+set "API_PORT="
+for /f "tokens=2" %%P in ('node scripts\ports.js 2^>nul') do set "API_PORT=%%P"
+if not defined API_PORT set "API_PORT=3001"
 rem فتح منافذ المشاهدة في جدار الحماية تلقائياً عند أول تشغيل (نافذة صلاحيات واحدة)
 set "FW_PORT="
 for /f "tokens=1" %%P in ('node scripts\ports.js 2^>nul') do set "FW_PORT=%%P"

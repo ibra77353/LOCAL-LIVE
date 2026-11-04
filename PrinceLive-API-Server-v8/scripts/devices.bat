@@ -19,5 +19,5 @@ if not exist "config.json" (
   pause
   exit /b 1
 )
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$c=Get-Content -Raw -Encoding UTF8 'config.json' | ConvertFrom-Json; $ff=$c.ffmpegPath; if (-not [IO.Path]::IsPathRooted($ff)) {$ff=Join-Path (Get-Location) $ff}; if (-not (Test-Path $ff)) {Write-Host ('ERROR: FFmpeg not found: '+$ff); exit 2}; & $ff -hide_banner -list_devices true -f dshow -i dummy 2>&1; Write-Host 'A non-zero FFmpeg exit code during device listing can be normal.'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=Get-Content -Raw -Encoding UTF8 'data.json' | ConvertFrom-Json; $ff=$d.settings.ffmpegPath; if (-not $ff) {$ff='ffmpeg'}; if (-not [IO.Path]::IsPathRooted($ff)) {$ff=Join-Path (Get-Location) $ff}; if (-not (Test-Path $ff)) {Write-Host ('ERROR: FFmpeg not found: '+$ff); exit 2}; & $ff -hide_banner -list_devices true -f dshow -i dummy 2>&1; Write-Host 'A non-zero FFmpeg exit code during device listing can be normal.'"
 pause

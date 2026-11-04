@@ -37,15 +37,11 @@ const cfg = parsed['config.json'] || {};
 if (!Array.isArray(data.sources) || !Array.isArray(data.channels) || !data.settings) failures.push('مخطط data.json غير مكتمل');
 if (!Number.isFinite(Number(cfg.port))) failures.push('config.json يفتقد منفذاً رقمياً صالحاً');
 
-// 3.1) settings.json: الملف الظاهر لإعدادات اللوحة يجب أن يحمل كل الحقول ويطابق data.json
-let settingsFile = {};
-try { settingsFile = JSON.parse(readText('settings.json')); }
-catch (e) { failures.push(`JSON غير صالح: settings.json: ${e.message}`); }
-const dataSettings = data.settings || {};
-const missingInFile = Object.keys(dataSettings).filter((key) => !(key in settingsFile));
-if (missingInFile.length) failures.push(`settings.json يفتقد حقولاً: ${missingInFile.join(', ')}`);
-const mismatched = Object.keys(settingsFile).filter((key) => key in dataSettings && JSON.stringify(settingsFile[key]) !== JSON.stringify(dataSettings[key]));
-if (mismatched.length) failures.push(`اختلاف بين settings.json وdata.json في: ${mismatched.join(', ')}`);
+// 3.1) ملف واحد للحالة: settings.json لم يعد مستخدماً، وconfig.json للتمهيد فقط
+if (fs.existsSync(filePath('settings.json'))) failures.push('settings.json ما زال موجوداً مع أن data.json هو المصدر الوحيد للإعدادات');
+const bootstrapKeys = ['port', 'host', 'hlsRoot', 'admin'];
+const duplicated = Object.keys(cfg).filter((key) => !bootstrapKeys.includes(key));
+if (duplicated.length) failures.push(`config.json يحمل حقولاً مكررة مع data.settings: ${duplicated.join(', ')}`);
 
 // 4) حقول قسم الإعدادات: S_KEYS في admin.js ↔ id="s_*" في admin.html ↔ بيانات data.json
 const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'ticker', 'tickerEnabled', 'x264Preset',

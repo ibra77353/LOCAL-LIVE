@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableExtensions
 rem ============================================================
 rem  PrinceLive - إعداد جدار الحماية تلقائياً (Windows 10/11)
-rem  يقرأ منافذ البث والمشاهدة من settings.json/config.json ثم يفتحها.
+rem  يقرأ منافذ البث والمشاهدة من data.json (ومن config.json كاحتياط) ثم يفتحها.
 rem    firewall.bat          - السماح على الشبكات الخاصة والمكتبية (الافتراضي)
 rem    firewall.bat public   - السماح على كل الشبكات بما فيها العامة
 rem    firewall.bat remove   - حذف قواعد PrinceLive من جدار الحماية

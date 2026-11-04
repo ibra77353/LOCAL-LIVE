@@ -25,14 +25,14 @@
 ## الإعداد الأولي
 
 1. فك ضغط الحزمة في مجلد مستقل، ولا تستبدل ملفات إصدار سابق مباشرة.
-2. افتح `config.json` واضبط `ffmpegPath` و`ffprobePath` و`nginxPath` حسب المسارات الفعلية.
+2. الإعدادات كلها في `data.json` (قسم `settings`): اضبط `ffmpegPath` و`ffprobePath` و`nginxPath` من لوحة الإدارة أو مباشرةً من الملف. ملف `config.json` للتمهيد فقط (`port` و`host` و`hlsRoot` و`admin`).
 3. راجع كائن `admin` في `config.json` (`user` و`salt` و`hash` و`defaultPassword`) وغيّر كلمة المرور قبل الاستخدام.
 4. راجع المنفذين `port` و`nginxPort` وعنوان `host`.
 5. تأكد من وجود `nginx/conf/nginx.conf` وأن `proxy_pass` يشير إلى منفذ Node.js.
 6. شغّل `scripts/start.bat` أو نفّذ `node server.js` من مجلد المشروع.
 7. افتح `http://localhost/admin/` وسجّل الدخول.
 8. أضف مصدراً، افحصه واختبره، ثم احفظه. ينشئ النظام قناة مرتبطة به تلقائياً.
-9. جدار الحماية: `scripts\start.bat` يفحص القاعدة عند كل تشغيل، وإن لم تكن موجودة يشغّل `scripts\firewall.bat` تلقائياً (نافذة صلاحيات واحدة) لفتح منفذ المشاهدة ولوحة الإدارة. يقرأ المنافذ الفعلية من `settings.json` عبر `scripts\ports.js`. يدوياً: `firewall.bat` للسماح، `firewall.bat public` للشبكات العامة أيضاً، و`firewall.bat remove` للإلغاء.
+9. جدار الحماية: `scripts\start.bat` يفحص القاعدة عند كل تشغيل، وإن لم تكن موجودة يشغّل `scripts\firewall.bat` تلقائياً (نافذة صلاحيات واحدة) لفتح منفذ المشاهدة ولوحة الإدارة. يقرأ المنافذ الفعلية من `data.json` عبر `scripts\ports.js`. يدوياً: `firewall.bat` للسماح، `firewall.bat public` للشبكات العامة أيضاً، و`firewall.bat remove` للإلغاء.
 9. عدّل القناة واختر الجودة وإعدادات التشغيل.
 10. افتح واجهة المشاهد من `/`.
 

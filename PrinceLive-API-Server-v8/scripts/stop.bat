@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 rem إيقاف كامل: قنوات البث ثم Nginx ثم خادم Node.js.
-rem المنفذ وبيانات الإدارة تُقرأ من config.json بدل تثبيت 3001 أو تجاهل المصادقة.
+rem المنفذ من data.json وبيانات الإدارة من config.json بدل تثبيت 3001 أو تجاهل المصادقة.
 set "ROOT=%~dp0"
 if not exist "%ROOT%server.js" (
   if exist "%ROOT%..\server.js" (
@@ -16,11 +16,11 @@ if not exist "%ROOT%server.js" (
 cd /d "%ROOT%"
 
 set "API_PORT="
-for /f "delims=" %%P in ('node -e "const c=require('./config.json');process.stdout.write(String(Number(c.port)||3001))"') do set "API_PORT=%%P"
+for /f "tokens=2" %%P in ('node scripts\ports.js 2^>nul') do set "API_PORT=%%P"
 if not defined API_PORT set "API_PORT=3001"
 
 echo Requesting stream stop through the local API (port %API_PORT%)...
-node -e "const http=require('http'),c=require('./config.json');const auth=Buffer.from(String((c.admin&&c.admin.user)||c.adminUsername||'admin')+':'+String((c.admin&&c.admin.defaultPassword)||c.adminPassword||'')).toString('base64');const r=http.request({host:'127.0.0.1',port:Number(c.port)||3001,path:'/api/stop',method:'POST',headers:{Authorization:'Basic '+auth,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.end();"
+node -e "const http=require('http'),c=require('./config.json');const auth=Buffer.from(String((c.admin&&c.admin.user)||c.adminUsername||'admin')+':'+String((c.admin&&c.admin.defaultPassword)||c.adminPassword||'')).toString('base64');const r=http.request({host:'127.0.0.1',port:(()=>{let p=3001;try{p=Number(require('./data.json').settings.port)||p}catch{}return p})(),path:'/api/stop',method:'POST',headers:{Authorization:'Basic '+auth,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.end();"
 echo.
 
 if not exist "nginx\nginx.exe" goto :stopnode

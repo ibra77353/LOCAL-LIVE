@@ -24,15 +24,17 @@ if exist "server.js" (echo OK: server.js) else echo MISSING: server.js
 if exist "config.json" (echo OK: config.json) else echo MISSING: config.json
 echo.
 echo ==== Config JSON and stream settings ====
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $c=Get-Content -Raw -Encoding UTF8 'config.json' | ConvertFrom-Json; Write-Host 'OK: valid JSON'; Write-Host ('FFmpeg: '+$c.ffmpegPath); Write-Host ('Video device: '+$c.videoDevice); Write-Host ('Audio device: '+$c.audioDevice); Write-Host ('Output: '+$c.outputWidth+'x'+$c.outputHeight+' / '+$c.outputFps+' FPS / '+$c.videoBitrate); } catch { Write-Host ('ERROR: '+$_.Exception.Message); exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $c=Get-Content -Raw -Encoding UTF8 'config.json' | ConvertFrom-Json; $d=Get-Content -Raw -Encoding UTF8 'data.json' | ConvertFrom-Json; Write-Host 'OK: valid JSON'; Write-Host ('Config: port='+$c.port+' host='+$c.host); Write-Host ('FFmpeg: '+$d.settings.ffmpegPath); Write-Host ('Nginx: '+$d.settings.nginxPath); Write-Host ('Output: '+$d.settings.outputWidth+'x'+$d.settings.outputHeight+' / '+$d.settings.outputFps+' FPS'); Write-Host ('Sources: '+@($d.sources).Count+'  Channels: '+@($d.channels).Count); if (@($d.sources).Count -gt 0) { Write-Host ('Video device: '+$d.sources[0].videoDevice); Write-Host ('Audio device: '+$d.sources[0].audioDevice) } } catch { Write-Host ('ERROR: '+$_.Exception.Message); exit 1 }"
 echo.
 echo ==== Nginx ====
 if exist "nginx\nginx.exe" ("nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -t) else echo MISSING: nginx\nginx.exe
 echo.
 set "API_PORT="
-for /f "delims=" %%P in ('node -e "const c=require('./config.json');process.stdout.write(String(Number(c.port)||3001))"') do set "API_PORT=%%P"
 set "NGINX_PORT="
-for /f "delims=" %%P in ('node -e "const c=require('./config.json');process.stdout.write(String(Number(c.nginxPort)||80))"') do set "NGINX_PORT=%%P"
+for /f "tokens=1,2" %%A in ('node scripts\ports.js') do (
+  set "NGINX_PORT=%%A"
+  set "API_PORT=%%B"
+)
 if not defined API_PORT set "API_PORT=3001"
 if not defined NGINX_PORT set "NGINX_PORT=80"
 echo ==== Listening ports %NGINX_PORT% and %API_PORT% ====
