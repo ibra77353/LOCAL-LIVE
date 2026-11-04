@@ -35,11 +35,11 @@ for (const file of ['config.json', 'data.json']) {
 const data = parsed['data.json'] || { sources: [], channels: [], settings: {} };
 const cfg = parsed['config.json'] || {};
 if (!Array.isArray(data.sources) || !Array.isArray(data.channels) || !data.settings) failures.push('مخطط data.json غير مكتمل');
-if (!Number.isFinite(Number(cfg.port))) failures.push('config.json يفتقد منفذاً رقمياً صالحاً');
+if (!Number.isFinite(Number(data.settings.port))) failures.push('data.json يفتقد منفذاً رقمياً صالحاً في settings.port');
 
 // 3.1) ملف واحد للحالة: settings.json لم يعد مستخدماً، وconfig.json للتمهيد فقط
 if (fs.existsSync(filePath('settings.json'))) failures.push('settings.json ما زال موجوداً مع أن data.json هو المصدر الوحيد للإعدادات');
-const bootstrapKeys = ['port', 'host', 'hlsRoot', 'admin'];
+const bootstrapKeys = ['host', 'hlsRoot', 'admin'];
 const duplicated = Object.keys(cfg).filter((key) => !bootstrapKeys.includes(key));
 if (duplicated.length) failures.push(`config.json يحمل حقولاً مكررة مع data.settings: ${duplicated.join(', ')}`);
 

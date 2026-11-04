@@ -690,7 +690,6 @@ function restartChannel(channelId) {
   if (!stopped.ok) return stopped;
   return {ok:true,message:'تم طلب إعادة التشغيل بعد إغلاق FFmpeg الحالي',channelId};
 }
-function startStream() { const channel=activeChannel(); return channel?startChannel(channel.id):{ok:false,message:'لا توجد قنوات'}; }
 function stopStream(origin = '') {
   const context = origin ? ` — الطالب: ${origin}` : '';
   const running = data.channels.filter(c => streams.get(c.id)?.proc).length;
@@ -802,19 +801,6 @@ function queryCaptureCapabilities(videoDevice, callback) {
       }
       callback(null, { capabilities, output });
     });
-}
-
-function testNetworkCapture(body, callback) {
-  let streamUrl;try{streamUrl=validateNetworkStreamUrl(body.streamUrl);}catch(e){return callback(e);}
-  const args=['-hide_banner','-loglevel','error'];
-  if(/^rtsp:/i.test(streamUrl))args.push('-rtsp_transport','tcp');
-  else args.push('-rw_timeout','10000000');
-  args.push('-i',streamUrl,'-t','3','-f','null','-');
-  const child=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']});
-  let output='';const timer=setTimeout(()=>{try{child.kill();}catch{}},12000);
-  child.stderr.on('data',b=>{output=(output+b.toString()).slice(-12000);});
-  child.on('error',e=>{clearTimeout(timer);callback(new Error(`تعذر تشغيل FFmpeg: ${e.message}`));});
-  child.on('close',code=>{clearTimeout(timer);if(code===0)callback(null,{ok:true,output:'نجح اختبار المصدر الشبكي لمدة 3 ثوانٍ.'});else callback(new Error(`فشل اختبار المصدر الشبكي (exit ${code}). ${output.slice(-2500)}`));});
 }
 
 function testCapture(body, callback) {
@@ -1388,13 +1374,13 @@ const server = http.createServer(async (req, res) => {
   return serveStatic(req, res);
 });
 
-// يمكن تجاوز المنفذ والعنوان بمتغيري البيئة PORT وHOST (يفيد التشغيل في حاوية
-// أو خلف وكيل)، وتبقى القيم الافتراضية من config.json كما هي على Windows.
-const LISTEN_PORT = Number(process.env.PORT || cfg.port) || 3001;
+// المنفذ يأتي من settings.port في data.json (مصدر وحيد يتغيّر من اللوحة)،
+// ويبقى متغير البيئة PORT أعلى أولوية للتشغيل في حاوية أو خلف وكيل.
+const LISTEN_PORT = Number(process.env.PORT || data.settings.port) || 3001;
 const LISTEN_HOST = process.env.HOST || cfg.host || '127.0.0.1';
 
 server.on('error', err => {
-  if (err.code === 'EADDRINUSE') logLine(`تعذر بدء الخادم: المنفذ ${LISTEN_PORT} مستخدم بالفعل. أغلق النسخة الأخرى من الخادم أو غيّر المنفذ من config.json.`);
+  if (err.code === 'EADDRINUSE') logLine(`تعذر بدء الخادم: المنفذ ${LISTEN_PORT} مستخدم بالفعل. أغلق النسخة الأخرى من الخادم أو غيّر المنفذ من إعدادات اللوحة.`);
   else if (err.code === 'EACCES') logLine(`تعذر بدء الخادم: لا توجد صلاحية للاستماع على المنفذ ${LISTEN_PORT} أو العنوان ${LISTEN_HOST}.`);
   else logLine(`خطأ في خادم HTTP: ${err.message}`);
   process.exit(1);

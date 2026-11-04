@@ -1,7 +1,7 @@
 'use strict';
 // يطبع منفذ المشاهدة ومنفذ لوحة الإدارة من الإعدادات الفعلية على شكل: "<nginxPort> <port>"
 // يستخدمه scripts/firewall.bat لفتح المنافذ الصحيحة في جدار الحماية.
-// المصدر: data.settings (نفس مصدر الخادم) مع config.json كاحتياط عند أول تشغيل.
+// المصدر الوحيد: data.settings (نفس مصدر الخادم)، وconfig.json لا يحمل منفذاً.
 const fs = require('fs');
 const path = require('path');
 const root = path.resolve(__dirname, '..');
@@ -14,8 +14,7 @@ function readJson(file) {
   }
 }
 
-const cfg = readJson('config.json');
 const settings = readJson('data.json').settings || {};
 const nginxPort = Number(settings.nginxPort) || 80;
-const nodePort = Number(settings.port) || Number(cfg.port) || 3001;
+const nodePort = Number(settings.port) || 3001;
 process.stdout.write(`${nginxPort} ${nodePort}\n`);
