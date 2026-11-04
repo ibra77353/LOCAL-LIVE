@@ -838,40 +838,6 @@ async function refreshDashboard() {
 }
 
 // =====================================================================
-// ONLINE CHANNELS (from license server)
-// =====================================================================
-let ONLINE = [];
-async function loadOnline() {
-  const tb = $('#onlineTable tbody');
-  tb.innerHTML = '<tr><td colspan="6" class="cell-muted">جارٍ جلب القنوات من الخادم...</td></tr>';
-  try {
-    ONLINE = (await api('/online-channels')).channels || [];
-    const imported = new Set(DATA.channels.map(c => c.onlineId).filter(Boolean));
-    tb.innerHTML = ONLINE.map(c => `<tr>
-      <td><input type="checkbox" class="online-chk" value="${esc(c.id)}"></td>
-      <td>${c.cover ? `<img class="iptv-logo" src="${esc(c.cover)}" onerror="this.style.display='none'">` : '📺'}</td>
-      <td><b>${esc(c.name)}</b></td>
-      <td>${esc(c.category)}</td>
-      <td class="cell-muted">${qualityLabel(c.quality)}</td>
-      <td>${imported.has(c.id) ? '<span class="chip running" style="--ok:#3FA66A">مستوردة</span>' : '<span class="cell-muted">غير مستوردة</span>'}</td>
-    </tr>`).join('') || '<tr><td colspan="6" class="cell-muted">لا توجد قنوات متاحة لاشتراكك حالياً.</td></tr>';
-  } catch (e) {
-    tb.innerHTML = `<tr><td colspan="6" class="form-error">${esc(e.message)}</td></tr>`;
-  }
-}
-function toggleAllOnline(box) { $$('.online-chk').forEach(c => c.checked = box.checked); }
-async function importOnline() {
-  const ids = $$('.online-chk:checked').map(c => c.value);
-  try {
-    const r = await api('/online-channels/import', { method: 'POST', body: { ids } });
-    toast(`تم استيراد ${r.imported} قناة`);
-    await loadChannels();
-    await loadSources();
-    loadOnline();
-  } catch (e) { toast(e.message, true); }
-}
-
-// =====================================================================
 // LICENSE
 // =====================================================================
 async function loadLicense() {
