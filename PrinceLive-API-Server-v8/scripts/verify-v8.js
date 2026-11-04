@@ -1,32 +1,96 @@
 'use strict';
+// فحص استقرار المشروع بعد اعتماد لوحة AmaanLive وصفحة المشاهدة الجديدة.
+// يتحقق من: سلامة الملفات والصيغة، تطابق حقول الإعدادات بين اللوحة والبيانات،
+// عناصر اللوحة الأساسية، عقد نقاط النهاية بين صفحة المشاهدة والخادم، وسلامة البيانات.
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const root = path.resolve(__dirname, '..');
+const failures = [];
+const filePath = (file) => path.join(root, file);
+const readText = (file) => fs.readFileSync(filePath(file), 'utf8').replace(/^\uFEFF/, '');
+
+// 1) الملفات الأساسية المطلوبة للتشغيل
 const required = [
-  'server.js','config.json','data.json','web/admin.html','web/admin.js',
-  'web/index.html','web/app.js','web/vendor/hls.min.js','nginx/conf/nginx.conf'
+  'server.js', 'config.json', 'data.json',
+  'web/admin.html', 'web/admin.js', 'web/admin.css',
+  'web/index.html', 'web/viewer.js', 'web/viewer.css', 'web/vendor/hls.min.js',
+  'nginx/conf/nginx.conf'
 ];
-const failures=[];
-for (const file of required) if (!fs.existsSync(path.join(root,file))) failures.push(`ملف مفقود: ${file}`);
-for (const file of ['server.js','web/admin.js','web/app.js']) {
-  const result=spawnSync(process.execPath,['--check',path.join(root,file)],{encoding:'utf8'});
-  if(result.status!==0) failures.push(`فشل فحص JavaScript: ${file}\n${result.stderr}`);
+for (const file of required) if (!fs.existsSync(filePath(file))) failures.push(`ملف مفقود: ${file}`);
+
+// 2) صيغة JavaScript
+for (const file of ['server.js', 'web/admin.js', 'web/viewer.js']) {
+  if (!fs.existsSync(filePath(file))) continue;
+  const result = spawnSync(process.execPath, ['--check', filePath(file)], { encoding: 'utf8' });
+  if (result.status !== 0) failures.push(`فشل فحص JavaScript: ${file}\n${result.stderr}`);
 }
-for (const file of ['config.json','data.json']) {
-  try { JSON.parse(fs.readFileSync(path.join(root,file),'utf8').replace(/^\uFEFF/,'')); }
-  catch(e){ failures.push(`JSON غير صالح: ${file}: ${e.message}`); }
+
+// 3) صلاحية ملفات JSON ومخططها
+const parsed = {};
+for (const file of ['config.json', 'data.json']) {
+  try { parsed[file] = JSON.parse(readText(file)); }
+  catch (e) { failures.push(`JSON غير صالح: ${file}: ${e.message}`); }
 }
-const data=JSON.parse(fs.readFileSync(path.join(root,'data.json'),'utf8').replace(/^\uFEFF/,''));
-if(!Array.isArray(data.sources)||!Array.isArray(data.channels)||!data.settings) failures.push('مخطط data.json غير مكتمل');
-for(const channel of data.channels||[]) {
-  if(!channel.id||!channel.sourceId) failures.push(`القناة ${channel.name||'(بدون اسم)'} لا تحتوي id/sourceId`);
-  if(!(data.sources||[]).some(source=>source.id===channel.sourceId)) failures.push(`مصدر القناة غير موجود: ${channel.id}`);
+const data = parsed['data.json'] || { sources: [], channels: [], settings: {} };
+const cfg = parsed['config.json'] || {};
+if (!Array.isArray(data.sources) || !Array.isArray(data.channels) || !data.settings) failures.push('مخطط data.json غير مكتمل');
+if (!Number.isFinite(Number(cfg.port))) failures.push('config.json يفتقد منفذاً رقمياً صالحاً');
+
+// 4) حقول قسم الإعدادات: S_KEYS في admin.js ↔ id="s_*" في admin.html ↔ بيانات data.json
+const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'ticker', 'tickerEnabled', 'x264Preset',
+  'port', 'nginxPort',
+  'x264Threads', 'x264QualityMode', 'hlsTime', 'hlsListSize', 'gopSeconds', 'startupQueueDelayMs', 'autoRestartCrashed',
+  'playerMaxBufferLength', 'playerBackBufferLength', 'playerLiveSyncDuration', 'capLevelToPlayerSize',
+  'cpuSaverDefault', 'ffmpegPath', 'nginxPath', 'streamUserAgent', 'idleStopEnabled', 'idleStopMinutes',
+  'sourceFailStopMinutes', 'blockedStopMinutes', 'logoImage', 'logoPosition', 'logoSizePct', 'logoOpacityPct'];
+const adminHtml = fs.existsSync(filePath('web/admin.html')) ? readText('web/admin.html') : '';
+const adminJs = fs.existsSync(filePath('web/admin.js')) ? readText('web/admin.js') : '';
+const declaredMatch = /const S_KEYS = \[([\s\S]*?)\];/.exec(adminJs);
+const declared = declaredMatch ? [...declaredMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) : [];
+if (!declared.length) failures.push('لم يتم العثور على قائمة S_KEYS في web/admin.js');
+for (const key of S_KEYS) if (!declared.includes(key)) failures.push(`web/admin.js لا يقرأ أو يحفظ الحقل ${key}`);
+for (const key of declared) if (!S_KEYS.includes(key)) failures.push(`حقل غير معروف في S_KEYS: ${key}`);
+for (const key of S_KEYS) if (!adminHtml.includes(`id="s_${key}"`)) failures.push(`لوحة الإدارة تفتقد الحقل s_${key}`);
+for (const key of S_KEYS) if (!(key in (data.settings || {}))) failures.push(`بيانات الإعدادات تفتقد المفتاح ${key}`);
+
+// 5) عناصر لوحة AmaanLive الأساسية
+const adminIds = ['view-dashboard', 'view-sources', 'view-channels', 'view-settings',
+  'dashGrid', 'onairStrip', 'sourcesTable', 'channelsTable', 'statusTable', 'sysStats', 'sysMsgBar',
+  'logBody', 'modalOverlay', 'modalBody', 'modalSave', 'modalError', 'toast', 'brandName', 'logoutBtn', 'restoreFileInput'];
+for (const id of adminIds) if (!adminHtml.includes(`id="${id}"`)) failures.push(`لوحة الإدارة تفتقد العنصر ${id}`);
+
+// 6) عقد صفحة المشاهدة مع الخادم
+const viewerHtml = fs.existsSync(filePath('web/index.html')) ? readText('web/index.html') : '';
+const viewerJs = fs.existsSync(filePath('web/viewer.js')) ? readText('web/viewer.js') : '';
+const serverJs = fs.existsSync(filePath('server.js')) ? readText('server.js') : '';
+for (const asset of ['/viewer.js', '/viewer.css', '/vendor/hls.min.js']) if (!viewerHtml.includes(asset)) failures.push(`صفحة المشاهدة لا تحمّل ${asset}`);
+const viewerEndpoints = ['/api/public/settings', '/api/public/channels', '/api/public/channel-health', '/api/public/watch', '/api/public/heartbeat'];
+const serverPublicEndpoints = [...viewerEndpoints, '/api/public/leave'];
+for (const endpoint of viewerEndpoints) if (!viewerJs.includes(endpoint)) failures.push(`صفحة المشاهدة لا تستدعي ${endpoint}`);
+for (const endpoint of serverPublicEndpoints) if (!serverJs.includes(`'${endpoint}'`)) failures.push(`server.js لا يعرّف ${endpoint}`);
+if (!viewerJs.includes('viewerId') || !serverJs.includes('body.viewerId')) failures.push('حقل نبضة المشاهد غير متوافق بين viewer.js و server.js');
+
+// 7) سلامة بيانات القنوات والمصادر
+const sourceIds = new Set((data.sources || []).map((source) => source.id));
+const channelIds = new Set();
+for (const channel of data.channels || []) {
+  if (!channel.id) failures.push(`القناة ${channel.name || '(بدون اسم)'} بلا معرّف`);
+  if (channelIds.has(channel.id)) failures.push(`معرّف قناة مكرر: ${channel.id}`);
+  channelIds.add(channel.id);
+  if (channel.sourceId && !sourceIds.has(channel.sourceId)) failures.push(`مصدر القناة غير موجود: ${channel.name || channel.id}`);
+  if (channel.url && channel.url !== `/hls/${channel.id}/index.m3u8`) failures.push(`مسار HLS غير متوافق للقناة ${channel.id}`);
 }
-const admin=fs.readFileSync(path.join(root,'web/admin.html'),'utf8');
-for(const id of ['settings-form','source-form','channel-form','source-dialog','channel-dialog']) if(!admin.includes(`id="${id}"`)) failures.push(`واجهة الإدارة تفتقد ${id}`);
-for(const forbidden of ['IPTV','Xtream Codes','كأس العالم 2026','الإعلانات','الجدولة','اشتراك MH']) if(admin.includes(forbidden)) failures.push(`واجهة الإدارة ما زالت تحتوي صفحة محذوفة: ${forbidden}`);
-if(failures.length){console.error('V8 verification FAILED\n'+failures.join('\n'));process.exit(1);}
-console.log('V8 verification PASSED');
-console.log(`Sources: ${data.sources.length}; channels: ${data.channels.length}`);
-console.log('JavaScript syntax, JSON, channel-source relationships, and core UI sections are valid.');
+for (const source of data.sources || []) if (!source.id || !source.type) failures.push(`إعداد المصدر ${source.name || '(بدون اسم)'} غير مكتمل`);
+
+// 8) Nginx يمرّر الصفحة وواجهات API إلى خادم Node
+if (serverJs && !readText('nginx/conf/nginx.conf').includes('proxy_pass http://127.0.0.1:')) failures.push('nginx.conf لا يمرّر الطلبات إلى خادم Node');
+
+if (failures.length) {
+  console.error('AmaanLive verification FAILED');
+  console.error(failures.join('\n'));
+  process.exit(1);
+}
+console.log('AmaanLive verification PASSED');
+console.log(`Sources: ${data.sources.length}; channels: ${data.channels.length}; settings fields: ${S_KEYS.length}`);
+console.log('JavaScript syntax, JSON schema, AmaanLive settings fields, admin sections, viewer API contract, and data integrity are valid.');
