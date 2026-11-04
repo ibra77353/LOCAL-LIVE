@@ -15,7 +15,7 @@ const required = [
   'server.js', 'config.json', 'data.json',
   'web/admin.html', 'web/admin.js', 'web/admin.css',
   'web/index.html', 'web/viewer.js', 'web/viewer.css', 'web/vendor/hls.min.js',
-  'nginx/conf/nginx.conf'
+  'nginx/conf/nginx.conf', 'scripts/nginx-dirs.bat', 'nginx/temp/.gitkeep'
 ];
 for (const file of required) if (!fs.existsSync(filePath(file))) failures.push(`ملف مفقود: ${file}`);
 
@@ -102,6 +102,10 @@ for (const source of data.sources || []) if (!source.id || !source.type) failure
 
 // 8) Nginx يمرّر الصفحة وواجهات API إلى خادم Node
 if (serverJs && !readText('nginx/conf/nginx.conf').includes('proxy_pass http://127.0.0.1:')) failures.push('nginx.conf لا يمرّر الطلبات إلى خادم Node');
+// 8b) مجلدات Nginx المؤقتة تُنشأ قبل أي فحص إعداد (وإلا فشل nginx -t بخطأ CreateDirectory على Windows)
+for (const file of ['scripts/start.bat', 'scripts/restart-nginx.bat', 'scripts/check.bat']) {
+  if (!readText(file).includes('nginx-dirs.bat')) failures.push(`${file} لا ينشئ مجلدات Nginx المؤقتة قبل الفحص`);
+}
 
 // 9) قيم حقول الإعدادات تُعرض صحيحة: النوع، وخيارات القوائم، وحدود min/max
 const settingsView = (/<section id="view-settings"[\s\S]*?<\/section>/.exec(adminHtml) || [''])[0];

@@ -51,6 +51,7 @@ if errorlevel 1 (
   timeout /t 2 /nobreak >nul
 ) else echo Node API is already responding on port %API_PORT%
 if exist "nginx\nginx.exe" (
+  call "%ROOT%scripts\nginx-dirs.bat"
   "nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -t
   if errorlevel 1 (
     echo ERROR: Nginx configuration test failed.

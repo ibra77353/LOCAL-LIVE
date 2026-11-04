@@ -81,6 +81,7 @@
 - `startupConcurrency` عدد القنوات التي تُشغَّل معاً عند الإقلاع (1 = تسلسلي، وهو الأنسب لكرت التقاط واحد)، ويبقى `startupQueueDelayMs` تأخيراً أولياً قبل أول دفعة.
 - السجلات عند تشخيص فشل التشغيل من أجهزة خارجية: `logs/server.log` (أوامر تشغيل/إيقاف القنوات مع IP والجهاز والسبب)، و`nginx/logs/access.log` (كل الطلبات)، و`nginx/logs/stream.log` (طلبات HLS وحدها)، و`nginx/logs/error.log` (مستوى info).
 - تغيير منافذ Node.js أو Nginx يتطلب إعادة تشغيل الخدمات. يتم تحديث إعداد proxy في `nginx/conf/nginx.conf` عند حفظ الإعدادات.
+- إذا ظهر `nginx: [emerg] CreateDirectory() "...\nginx/temp/client_body_temp" failed` فهذا يعني أن مجلد `nginx\temp` غير موجود (يحدث عند نسخ الملفات دون المجلدات الفارغة). الحزمة تضم `nginx/temp/.gitkeep`، و`scripts\start.bat` و`restart-nginx.bat` و`check.bat` تستدعي `scripts\nginx-dirs.bat` الذي ينشئ المجلدات المؤقتة قبل أي فحص. للحل الفوري: أنشئ مجلد `nginx\temp` يدوياً ثم أعد `scripts\start.bat`.
 - تغيير إعدادات الترميز يطبق على القنوات عند إعادة تشغيلها.
 - وضع «نسخ المصدر» دون إعادة ترميز متاح فقط للمصادر الشبكية في هذه النسخة، وقد يفشل إذا كانت codecs غير متوافقة مع HLS MPEG-TS. اختر 240p/360p/480p/720p عند الحاجة إلى إعادة الترميز.
 - عدد القنوات المتزامنة تحدده قدرة CPU وRAM وأجهزة الالتقاط وعرض الشبكة.

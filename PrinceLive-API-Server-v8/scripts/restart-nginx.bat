@@ -19,6 +19,7 @@ if not exist "nginx\nginx.exe" (
   pause
   exit /b 1
 )
+call "%ROOT%scripts\nginx-dirs.bat"
 "nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -t
 if errorlevel 1 (
   echo ERROR: config test failed; reload cancelled.
