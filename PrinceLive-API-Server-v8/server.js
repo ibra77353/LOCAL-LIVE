@@ -568,6 +568,48 @@ function applySourceFields(source, body) {
   return '';
 }
 
+// ---- تنقية معايير FFmpeg قبل تمريرها ----
+// قيم libx264 المقبولة (نفس قائمة واجهة الإعدادات) ونطاق عدد الخيوط.
+const X264_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'];
+const encoderWarningsLogged = new Set();
+function clampNumber(value, min, max, fallback) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+// يقبل صور البِتريت التي يفهمها FFmpeg مثل 500k أو 2000K أو 2M؛ غير ذلك يعيد الافتراضي.
+function normalizeVideoBitrate(value, fallback) {
+  const text = String(value || '').trim();
+  return /^\d{2,6}[kKmM]?$/.test(text) ? text : fallback;
+}
+// يضمن أن preset وعدد الخيوط صالحان حتى لو عُدّلت data.json يدوياً.
+function resolveEncoderSettings(settings) {
+  const warnings = [];
+  const presetRaw = String(settings.x264Preset || '').trim().toLowerCase();
+  const preset = X264_PRESETS.includes(presetRaw) ? presetRaw : 'veryfast';
+  if (presetRaw && preset !== presetRaw) warnings.push(`preset «${presetRaw}» غير مدعوم في libx264؛ سيُستخدم veryfast`);
+  const threadsRaw = Math.round(Number(settings.x264Threads));
+  const threads = clampNumber(settings.x264Threads, 1, 64, 2);
+  if (Number.isFinite(threadsRaw) && threadsRaw !== threads) warnings.push(`x264Threads=${threadsRaw} خارج النطاق 1..64؛ سيُستخدم ${threads}`);
+  // التحذير مرة واحدة لكل قيمة، حتى لا يتكرر مع كل إعادة تشغيل.
+  const fresh = warnings.filter(w => !encoderWarningsLogged.has(w));
+  if (fresh.length) { fresh.forEach(w => encoderWarningsLogged.add(w)); logLine(`تنبيه إعدادات FFmpeg: ${fresh.join(' | ')}`); }
+  return { preset, threads };
+}
+// يميّز أخطاء معايير الترميز (تتكرر مع كل إعادة تشغيل) عن الأعطال العابرة.
+function isEncoderParamError(text) {
+  return /Error setting option|Unable to parse option value|Unknown encoder|Unknown decoder|Error initializing output stream|Invalid value .* for option|not a valid pixel format|Unrecognized option/i.test(String(text || ''));
+}
+// رسالة عربية قابلة للتنفيذ بدل خطأ FFmpeg الخام.
+function describeEncoderParamError(text) {
+  const t = String(text || '');
+  if (/Unable to parse option value .* as pixel format|not a valid pixel format/i.test(t)) return 'صيغة البكسل المطلوبة غير صالحة؛ اختر صيغة يدعمها الجهاز (yuyv422 أو mjpeg) من نافذة المصدر.';
+  if (/Unknown encoder/i.test(t)) return 'مُرمِّز libx264 غير متوفر في نسخة FFmpeg المستخدمة.';
+  if (/Error setting option (?:framerate|video_size)|Could not set video options/i.test(t)) return 'الدقة أو معدل الإطارات غير مدعومين من الجهاز؛ استخدم «ضبط تلقائي» أو فعّل الوضع الآمن للالتقاط.';
+  if (/preset/i.test(t)) return 'قيمة preset غير مقبولة؛ اختر إحدى قيم ultrafast…slow من الإعدادات.';
+  return 'فشل FFmpeg بسبب خيار غير صالح؛ راجع آخر سطر في سجل القناة.';
+}
+
 function buildArgs(channel, forceTranscode = false) {
   const source = sourceForChannel(channel);
   if (!channel || channel.enabled === false) throw new Error('القناة غير موجودة أو معطلة');
@@ -578,10 +620,14 @@ function buildArgs(channel, forceTranscode = false) {
   const derivedWidth=Math.max(160,Math.round((srcW||1280)*outputHeight/(srcH||720)/2)*2);
   const configuredWidth=Number(settings.outputWidth)||640;
   const outputWidth=isCopyQuality(channel.quality)?(srcW||1280):(outputHeight===(Number(settings.outputHeight)||360)?configuredWidth:derivedWidth);
-  const outputFps = Number(channel.fps) || Number(settings.outputFps) || 20;
-  const videoBitrate = String(channel.bitrate || (outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k'));
-  const hlsTime = Number(settings.hlsTime) || 2;
-  const gop = Math.max(1, Math.round(outputFps * (Number(settings.gopSeconds) || hlsTime)));
+  const outputFps = clampNumber(Number(channel.fps) || settings.outputFps, 1, 60, 20);
+  const defaultBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
+  const videoBitrate = normalizeVideoBitrate(channel.bitrate, defaultBitrate);
+  if (String(channel.bitrate || '').trim() && videoBitrate !== String(channel.bitrate).trim()) {
+    logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
+  }
+  const hlsTime = clampNumber(settings.hlsTime, 1, 10, 2);
+  const gop = Math.max(1, Math.round(outputFps * clampNumber(settings.gopSeconds, 1, 10, hlsTime)));
   const sourceType = String(source.type || 'usb').toLowerCase();
   const isNetwork = ['http-hls','http','hls','network','rtsp'].includes(sourceType);
   const audioDevice = source.audioDevice || '';
@@ -604,7 +650,10 @@ function buildArgs(channel, forceTranscode = false) {
     const inputSpec = audioDevice ? `video=${source.videoDevice}:audio=${audioDevice}` : `video=${source.videoDevice}`;
     args.push('-f','dshow','-rtbufsize','256M');
     // الوضع الآمن: لا نفرض الدقة/الإطارات على الجهاز (يعالج خطأ "Could not set video options").
-    if (!source.captureSafeMode) args.push('-framerate',String(Number(source.fps)||30),'-video_size',String(source.videoSize||'1280x720'));
+    // نتحقق من الصيغة قبل تمريرها حتى لا تصل قيمة تالفة من data.json إلى FFmpeg.
+    const captureSize = String(source.videoSize || '').trim();
+    const safeSize = /^\d{3,4}x\d{3,4}$/.test(captureSize) ? captureSize : '1280x720';
+    if (!source.captureSafeMode) args.push('-framerate',String(clampNumber(source.fps, 1, 60, 30)),'-video_size',safeSize);
     // صيغة الإدخال: pixelFormat → -pixel_format، أما codec مثل mjpeg فيُمرَّر بـ -vcodec (mjpeg ليس pixel format).
     const inputPixelFormat = String(source.pixelFormat || '').trim();
     const inputCodec = String(source.vcodec || '').trim();
@@ -620,8 +669,9 @@ function buildArgs(channel, forceTranscode = false) {
   if (isCopyQuality(channel.quality) && isNetwork && !forceTranscode) {
     args.push('-map','0:v:0','-map','0:a:0?','-c:v','copy','-c:a','aac','-b:a',cfg.audioBitrate||'96k');
   } else {
+    const encoder = resolveEncoderSettings(settings);
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
-      '-c:v','libx264','-preset',settings.x264Preset||'veryfast','-pix_fmt','yuv420p','-threads',String(Number(settings.x264Threads)||2),
+      '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
     if(settings.x264QualityMode===true) args.push('-crf','23');
     else args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize','1000k');
@@ -645,7 +695,7 @@ function startChannel(channelId) {
   if (old?.proc && !old.stopping) return {ok:true,message:'القناة تعمل بالفعل',channelId};
   if (old?.proc && old.stopping) return {ok:false,message:'القناة ما زالت تغلق؛ انتظر اكتمال الإيقاف ثم أعد التشغيل',channelId};
   if(old?.restartTimer)clearTimeout(old.restartTimer);
-  const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:null,sourceId:source.id,forceTranscode:!!old?.forceTranscode};
+  const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:null,sourceId:source.id,forceTranscode:!!old?.forceTranscode,lastStderr:'',paramError:false};
   streams.set(channelId,runtime); clearTimeout(runtime.restartTimer); clearChannelHls(channel);
   let args; try { args=buildArgs(channel,runtime.forceTranscode); } catch(e) { runtime.lastExit=e.message; return {ok:false,message:e.message}; }
   const safeArgs=args.map((a,i)=> i>0 && args[i-1]==='-i' && /^(https?|rtsp):/i.test(a) ? '[network-url-hidden]' : a);
@@ -654,6 +704,7 @@ function startChannel(channelId) {
   catch(e) { runtime.lastExit=e.message; return {ok:false,message:e.message}; }
   const proc=runtime.proc; runtime.startedAt=new Date().toISOString();
   proc.stderr.on('data',b=>{
+    runtime.lastStderr=(runtime.lastStderr+b.toString()).slice(-4000);
     let m=b.toString().trim(); if(!m) return;
     if(data.settings.hideCosmeticLogs===true){ m=filterCosmeticFfmpegLines(m); if(!m) return; }
     logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);
@@ -663,13 +714,20 @@ function startChannel(channelId) {
     runtime.lastExit=`code=${code}; signal=${signal||''}`;
     runtime.proc=null;
     logLine(`[${channel.name}] انتهى FFmpeg: ${runtime.lastExit} — ${runtime.stopping ? 'إيقاف مطلوب يدوياً' : 'خروج غير متوقع'}${runtime.forceTranscode ? ' | نسخ قسري بعد فشل' : ''}`);
+    // خطأ إعداد (preset/دقة/صيغة/مُرمِّز) يتكرر مع كل محاولة، فلا فائدة من حلقة إعادة التشغيل.
+    if (code !== 0 && !runtime.stopping && !runtime.paramError && isEncoderParamError(runtime.lastStderr)) {
+      runtime.paramError = true;
+      runtime.lastExit = describeEncoderParamError(runtime.lastStderr);
+      logLine(`[${channel.name}] خطأ في معايير الترميز/الالتقاط — أُوقفت إعادة المحاولة التلقائية: ${runtime.lastExit}`);
+      appendChannelLog(channelId, `خطأ معايير الترميز: ${runtime.lastExit}`);
+    }
     const currentSource=sourceForChannel(channel);
     const networkSource=currentSource && ['http-hls','http','hls','network','rtsp'].includes(String(currentSource.type||'').toLowerCase());
     if(code!==0 && isCopyQuality(channel.quality) && networkSource && !runtime.forceTranscode && !runtime.stopping){
       runtime.forceTranscode=true;
       logLine(`[${channel.name}] فشل نسخ المصدر؛ ستتم إعادة المحاولة بإعادة الترميز لضمان توافق HLS.`);
     }
-    if(streams.get(channelId)===runtime && !runtime.stopping)scheduleChannelRestart(channelId);
+    if(streams.get(channelId)===runtime && !runtime.stopping && !runtime.paramError)scheduleChannelRestart(channelId);
   });
   return {ok:true,message:`تم إرسال أمر تشغيل القناة ${channel.name}`,channelId,pid:proc.pid};
 }
