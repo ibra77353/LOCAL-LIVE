@@ -59,6 +59,13 @@ for (const key of S_KEYS) if (!declared.includes(key)) failures.push(`web/admin.
 for (const key of declared) if (!S_KEYS.includes(key)) failures.push(`حقل غير معروف في S_KEYS: ${key}`);
 for (const key of S_KEYS) if (!adminHtml.includes(`id="s_${key}"`)) failures.push(`لوحة الإدارة تفتقد الحقل s_${key}`);
 for (const key of S_KEYS) if (!(key in (data.settings || {}))) failures.push(`بيانات الإعدادات تفتقد المفتاح ${key}`);
+// 4.1) الاتجاه المعاكس: كل حقل إعدادات في اللوحة يجب أن يكون في S_KEYS ليُعرض من data.json
+const htmlSettingsKeys = [...new Set([...adminHtml.matchAll(/id="s_([A-Za-z0-9_]+)"/g)].map((match) => match[1]))];
+for (const key of htmlSettingsKeys) if (!S_KEYS.includes(key)) failures.push(`حقل في اللوحة لا يُقرأ من data.json: s_${key}`);
+// 4.2) اللوحة تقرأ وتحفظ الإعدادات عبر /api/settings وحدها (لا تخزين محلي ولا ملف آخر)
+if (!/async function loadSettings[\s\S]{0,500}?api\('\/settings'\)/.test(adminJs)) failures.push('web/admin.js لا يقرأ الإعدادات من /api/settings');
+if (!/async function saveSettings[\s\S]{0,900}?api\('\/settings', \{ method: 'PUT'/.test(adminJs)) failures.push('web/admin.js لا يحفظ الإعدادات في /api/settings');
+if (/amaan_settings|settings\.json/.test(adminJs)) failures.push('web/admin.js ما زال يستخدم مصدر إعدادات قديماً');
 
 // 5) عناصر لوحة AmaanLive الأساسية
 const adminIds = ['view-dashboard', 'view-sources', 'view-channels', 'view-settings',
@@ -70,6 +77,10 @@ for (const id of adminIds) if (!adminHtml.includes(`id="${id}"`)) failures.push(
 const viewerHtml = fs.existsSync(filePath('web/index.html')) ? readText('web/index.html') : '';
 const viewerJs = fs.existsSync(filePath('web/viewer.js')) ? readText('web/viewer.js') : '';
 const serverJs = fs.existsSync(filePath('server.js')) ? readText('server.js') : '';
+// 6.1) الإعدادات تُقدَّم وتُحفظ من data.json فقط (settings: data.settings + writeData)
+if (!serverJs.includes("'/api/settings' && req.method === 'GET'")) failures.push('server.js لا يقدّم /api/settings');
+if (!/settings: data\.settings/.test(serverJs)) failures.push('server.js لا يقرأ الإعدادات من data.settings');
+if (!/data\.settings\[key\] = /.test(serverJs)) failures.push('server.js لا يحدّث الإعدادات في data.settings');
 for (const asset of ['/viewer.js', '/viewer.css', '/vendor/hls.min.js']) if (!viewerHtml.includes(asset)) failures.push(`صفحة المشاهدة لا تحمّل ${asset}`);
 const viewerEndpoints = ['/api/public/settings', '/api/public/channels', '/api/public/channel-health', '/api/public/watch', '/api/public/heartbeat'];
 const serverPublicEndpoints = [...viewerEndpoints, '/api/public/leave'];
