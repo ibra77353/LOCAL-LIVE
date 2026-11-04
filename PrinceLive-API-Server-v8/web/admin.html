@@ -133,11 +133,20 @@
           <p class="sub" style="margin-top:-4px">يعطّل «البث الفوري» (zerolatency) فيستفيد المرمّز من B-frames وlookahead: نفس الجودة بحجم بيانات أقل بـ10–15٪ تقريباً، وجودة أثبت في المشاهد الصعبة. مناسب عندما يكون الاستقرار أهم من التأخير. يُطبَّق على القنوات عند تشغيلها التالي.</p>
           <label>طول مقطع HLS بالثواني (hls_time)<input class="input" id="s_hlsTime" type="number" min="1" max="10"></label>
           <label>عدد المقاطع في القائمة (hls_list_size)<input class="input" id="s_hlsListSize" type="number" min="3" max="20"></label>
+          <label>عدد المقاطع المحفوظة قبل الحذف (hls_delete_threshold)<input class="input" id="s_hlsDeleteThreshold" type="number" min="1" max="100"></label>
           <label>GOP بالثواني<input class="input" id="s_gopSeconds" type="number" min="1" max="10"></label>
+          <label>عرض الخرج بالبكسل<input class="input" id="s_outputWidth" type="number" min="160" max="3840" step="16"></label>
+          <label>ارتفاع الخرج بالبكسل<input class="input" id="s_outputHeight" type="number" min="120" max="2160" step="16"></label>
+          <label>معدل إطارات الخرج (FPS)<input class="input" id="s_outputFps" type="number" min="1" max="60"></label>
+          <p class="sub" style="margin-top:-4px">أبعاد ومعدل الإطارات الافتراضية للترميز؛ جودة القناة الواحدة تتجاوز الارتفاع، ومعدل الإطارات المضبوط في القناة يتجاوز هذه القيمة.</p>
           <label>تأخير طابور التشغيل عند الإقلاع (مللي ثانية)<input class="input" id="s_startupQueueDelayMs" type="number" min="0" step="1000"></label>
           <label class="switch-row"><input type="checkbox" id="s_autoRestartCrashed"> إعادة تشغيل القناة تلقائياً عند الانهيار</label>
+          <label>الحد الأقصى لمحاولات إعادة التشغيل التلقائي<input class="input" id="s_maxRestarts" type="number" min="0" max="100"></label>
+          <label>المهلة بين محاولات إعادة التشغيل (مللي ثانية)<input class="input" id="s_restartBackoffMs" type="number" min="1000" max="120000" step="500"></label>
           <label class="switch-row"><input type="checkbox" id="s_hideCosmeticLogs"> إخفاء التحذيرات التجميلية من سجل القناة</label>
           <p class="sub" style="margin-top:-4px">يخفي سطوراً لا تعني فشلاً: «deprecated pixel format»، «Guessed Channel Layout»، وإنذارات MJPEG عند إيقاف البطاقة. تُبقى الأخطاء الحقيقية (الجهاز مشغول، تعذر الفتح، انقطاع المصدر) ظاهرة دائماً.</p>
+          <label class="switch-row"><input type="checkbox" id="s_autoStartOnDemand"> تشغيل القنوات عند الطلب (مع أول مشاهد)</label>
+          <p class="sub" style="margin-top:-4px">عند التعطيل لا تُشغَّل القناة تلقائياً بفتح المشاهد لها، ويبقى التشغيل من اللوحة فقط.</p>
           <label class="switch-row"><input type="checkbox" id="s_idleStopEnabled"> إيقاف القنوات المستمرة تلقائياً عند عدم وجود مشاهدين (توفير الموارد)</label>
           <label>إيقاف بعد (دقائق بلا مشاهدين)<input class="input" id="s_idleStopMinutes" type="number" min="1" max="60"></label>
           <p class="sub" style="margin-top:-4px">تنطبق فقط على القنوات المستمرة (بلا جدولة وقتية) والمفعّلة. تعمل القناة تلقائياً من جديد فور فتح أحد المشاهدين لها.</p>
@@ -193,6 +202,7 @@
         <div class="card">
           <h3>المسارات</h3>
           <label>مسار FFmpeg<input class="input" id="s_ffmpegPath"></label>
+          <label>مسار FFprobe<input class="input" id="s_ffprobePath"></label>
           <label>مسار Nginx<input class="input" id="s_nginxPath"></label>
           <label>User-Agent للبث (لقنوات Xtream/IPTV التي ترفض بـ 403)<input class="input" id="s_streamUserAgent" dir="ltr" placeholder="VLC/3.0.20 LibVLC/3.0.20"></label>
           

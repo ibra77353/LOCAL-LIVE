@@ -46,9 +46,9 @@ if (duplicated.length) failures.push(`config.json يحمل حقولاً مكرر
 // 4) حقول قسم الإعدادات: S_KEYS في admin.js ↔ id="s_*" في admin.html ↔ بيانات data.json
 const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'ticker', 'tickerEnabled', 'x264Preset',
   'port', 'nginxPort',
-  'x264Threads', 'x264QualityMode', 'hlsTime', 'hlsListSize', 'gopSeconds', 'startupQueueDelayMs', 'autoRestartCrashed', 'hideCosmeticLogs',
+  'x264Threads', 'x264QualityMode', 'hlsTime', 'hlsListSize', 'hlsDeleteThreshold', 'gopSeconds', 'outputWidth', 'outputHeight', 'outputFps', 'startupQueueDelayMs', 'autoRestartCrashed', 'maxRestarts', 'restartBackoffMs', 'hideCosmeticLogs',
   'playerMaxBufferLength', 'playerBackBufferLength', 'playerLiveSyncDuration', 'capLevelToPlayerSize',
-  'cpuSaverDefault', 'ffmpegPath', 'nginxPath', 'streamUserAgent', 'idleStopEnabled', 'idleStopMinutes',
+  'cpuSaverDefault', 'ffmpegPath', 'ffprobePath', 'nginxPath', 'streamUserAgent', 'autoStartOnDemand', 'idleStopEnabled', 'idleStopMinutes',
   'sourceFailStopMinutes', 'blockedStopMinutes', 'logoImage', 'logoPosition', 'logoSizePct', 'logoOpacityPct'];
 const adminHtml = fs.existsSync(filePath('web/admin.html')) ? readText('web/admin.html') : '';
 const adminJs = fs.existsSync(filePath('web/admin.js')) ? readText('web/admin.js') : '';
