@@ -1,530 +1,1258 @@
 'use strict';
+/* أمان لايف — منطق لوحة التحكم */
 
-const $ = id => document.getElementById(id);
-let captureModes = [];
+const $ = (s, el) => (el || document).querySelector(s);
+const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-function sourceInputSignature(form) {
-  return JSON.stringify({
-    type:getField(form,'type'), streamUrl:getField(form,'streamUrl'),
-    videoDevice:getField(form,'videoDevice'), audioDevice:getField(form,'audioDevice'),
-    videoSize:getField(form,'videoSize'), fps:getField(form,'fps'), pixelFormat:getField(form,'pixelFormat')
-  });
-}
-function sourceAudioSignature(form) {
-  return JSON.stringify({audioDevice:getField(form,'audioDevice')});
-}
+// جودة القناة الواحدة: نسخ المصدر (copy) ثم جودات الترميز.
+const CH_QUALITIES = [
+  ['copy', 'نسخ المصدر (بلا ترميز — الأخف والأعلى جودة)'],
+  ['240p', '240p'], ['360p', '360p'], ['480p', '480p'], ['720p', '720p']
+];
+const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+const TYPE_LABELS = {
+  usb: 'كرت التقاط USB / DirectShow', http: 'HTTP مباشر', hls: 'HLS / M3U8',
+file: 'ملف فيديو محلي', screen: 'التقاط الشاشة'
+};
+const STATUS_LABELS = { running: 'تعمل ON AIR', stopped: 'متوقفة', starting: 'جارٍ التشغيل', stopping: 'جارٍ الإيقاف', restarting: 'إعادة تشغيل', error: 'خطأ', blocked: 'محظورة من المزوّد' };
 
-async function api(url, method = 'GET', body) {
-  const options = { method, cache: 'no-store', headers: {} };
-  if (body !== undefined) {
-    options.headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify(body);
+let DATA = { sources: [], channels: [], settings: {} };
+let statusTimer = null, currentLogChannel = null;
+
+// ---------------- API helper ----------------
+async function api(path, opts) {
+  opts = opts || {};
+  if (opts.body && !(opts.body instanceof FormData)) {
+    opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers);
+    opts.body = JSON.stringify(opts.body);
   }
-  const response = await fetch(url, options);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.ok === false) throw new Error(data.error || data.message || `HTTP ${response.status}`);
-  return data;
+  const r = await fetch('/api' + path, opts);
+  if (r.status === 401) { throw new Error('الخادم ما زال يطلب مصادقة؛ يلزم تعديل server.js لإلغاء تسجيل الدخول.'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.ok === false) throw new Error(j.message || 'حدث خطأ غير متوقع');
+  return j;
 }
 
-function showMessage(message, isError = false, target = 'action-message') {
-  const el = $(target);
-  if (!el) return;
-  if (target === 'action-message') {
-    el.replaceChildren();
-    const dot = document.createElement('span'); dot.className = 'message-dot';
-    el.append(dot, document.createTextNode(' ' + message));
-  } else el.textContent = message;
-  el.style.color = isError ? '#ff9c90' : '';
+function toast(msg, isErr) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast' + (isErr ? ' err' : '');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.add('hidden'), 3200);
 }
 
-function setField(form, name, value) {
-  const field = form.elements.namedItem(name);
-  if (!field) return;
-  if (field.type === 'checkbox') field.checked = !!value;
-  else field.value = value == null ? '' : String(value);
-}
-function getField(form, name) {
-  const field = form.elements.namedItem(name);
-  if (field.type === 'checkbox') return field.checked;
-  if (field.type === 'number') return field.value === '' ? undefined : Number(field.value);
-  return field.value;
+// Authentication UI removed from this customized build.
+function showApp() { $('#app').classList.remove('hidden'); }
+
+// ---------------- Navigation ----------------
+$$('.nav-btn').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
+function switchView(name) {
+  $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  $$('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + name));
+  if (name === 'dashboard') refreshStatus();
 }
 
-function askConfirmation(message, title = 'تأكيد العملية') {
-  return new Promise(resolve => {
-    const dialog = $('confirm-dialog');
-    $('confirm-title').textContent = title;
-    $('confirm-text').textContent = message;
-    const yes = $('confirm-yes');
-    const finish = value => {
-      yes.removeEventListener('click', onYes);
-      dialog.removeEventListener('close', onClose);
-      if (dialog.open) dialog.close();
-      resolve(value);
-    };
-    const onYes = () => finish(true);
-    const onClose = () => finish(false);
-    yes.addEventListener('click', onYes, { once: true });
-    dialog.addEventListener('close', onClose, { once: true });
-    dialog.showModal();
-  });
+
+// ---------------- Boot ----------------
+async function boot() {
+  await Promise.all([loadSettings(), loadSources(), loadChannels()]);
+  refreshStatus();
+  clearInterval(statusTimer);
+  statusTimer = setInterval(refreshStatus, 5000);
+  setTimeout(updateBanner, 4000); // إشعار التحديث بعد الدخول
 }
+
+(async function init() {
+  showApp();
+  try { await boot(); } catch (e) { console.error(e); toast(e.message, true); }
+})();
+
+// ---------------- Settings ----------------
+const S_KEYS = ['siteName','siteNameLatin','logo','phone','ticker','tickerEnabled','x264Preset',
+  'port','nginxPort',
+  'x264Threads','x264QualityMode','hlsTime','hlsListSize','gopSeconds','startupQueueDelayMs','autoRestartCrashed',
+  'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
+  'cpuSaverDefault','ffmpegPath','nginxPath','streamUserAgent','idleStopEnabled','idleStopMinutes',
+  'sourceFailStopMinutes','blockedStopMinutes','logoImage','logoPosition','logoSizePct','logoOpacityPct'];
 
 async function loadSettings() {
-  const form = $('settings-form');
-  try {
-    const { settings } = await api('/api/settings');
-    for (const key of ['siteName','siteNameLatin','phone','logo','ticker','tickerEnabled','autoStartOnDemand','playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','cpuSaverDefault','capLevelToPlayerSize','ffmpegPath','ffprobePath','nginxPath','x264Preset','x264Threads','x264QualityMode','outputWidth','outputHeight','outputFps','gopSeconds','hlsTime','hlsListSize','hlsDeleteThreshold','port','nginxPort','startupQueueDelayMs','autoRestartCrashed','maxRestarts','restartBackoffMs','idleStopEnabled','idleStopMinutes']) setField(form, key, settings[key]);
-
-  } catch (error) { showMessage(`تعذر تحميل الإعدادات: ${error.message}`, true, 'settings-message'); }
-}
-
-async function loadChannel(selectedId) {
-  const form = $('channel-form');
-  try {
-    const [{channels},{sources}] = await Promise.all([api('/api/channels'),api('/api/sources')]);
-    const select = $('channel-select'), sourceSelect=$('channel-source-select');
-    select.replaceChildren(); sourceSelect.replaceChildren();
-    for(const source of sources||[]){const o=document.createElement('option');o.value=source.id;o.textContent=`${source.name} · ${source.type}`;sourceSelect.append(o);}
-    for (const channel of channels || []) { const option=document.createElement('option'); option.value=channel.id; option.textContent=`${channel.name} · ${channel.id}`; select.append(option); }
-    const channel=(channels||[]).find(x=>x.id===selectedId)||(channels||[])[0];
-    if(!channel){form.dataset.channelId='';showMessage('لا توجد قنوات بعد. أضف مصدراً لإنشاء أول قناة تلقائياً.',false,'channel-message');return;}
-    select.value=channel.id;
-    for(const key of ['name','category','cover','quality','fps','bitrate','enabled','autoStart','alwaysOn','sortOrder','sourceId'])setField(form,key,channel[key]);
-    form.dataset.channelId=channel.id;
-  } catch(error){showMessage(`تعذر تحميل بيانات القناة: ${error.message}`,true,'channel-message');}
-}
-
-// قوائم الأجهزة تُبنى حصراً من نتيجة فحص FFmpeg الحالية: لا تُضاف أسماء محفوظة
-// أو تجريبية، والجهاز المقطوع يختفي من القائمة بعد إعادة الفحص.
-function fillDeviceSelect(select, devices, selectedValue, emptyLabel, disableWhenEmpty = false) {
-  const previous = selectedValue == null ? '' : String(selectedValue);
-  const values = (Array.isArray(devices) ? devices : []).filter(Boolean);
-  select.replaceChildren();
-  if (emptyLabel !== null) {
-    const empty = document.createElement('option');
-    empty.value = '';
-    empty.textContent = emptyLabel;
-    if (disableWhenEmpty && !values.length) empty.disabled = true;
-    select.append(empty);
+  const { settings } = await api('/settings');
+  DATA.settings = settings;
+  for (const k of S_KEYS) {
+    const el = $('#s_' + k);
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = !!settings[k]; else el.value = settings[k] ?? '';
   }
-  for (const device of values) {
-    const option = document.createElement('option');
-    option.value = device;
-    option.textContent = device;
-    select.append(option);
+  // حدّث تسميات نسب الشعار بجانب الأشرطة
+  if ($('#logoSizeVal')) $('#logoSizeVal').textContent = (settings.logoSizePct ?? 10) + '٪';
+  if ($('#logoOpacityVal')) $('#logoOpacityVal').textContent = (settings.logoOpacityPct ?? 50) + '٪';
+  $('#brandName').textContent = settings.siteName || 'أمان لايف';
+  $('#adminFooter').textContent = 'جميع الحقوق محفوظة © أمان لايف';
+  const logo = $('#brandLogo');
+  if (settings.logo) { logo.src = '/' + settings.logo.replace(/^\//, '').replace(/^srv\/uploads/, 'uploads'); logo.classList.remove('hidden'); }
+  else logo.classList.add('hidden');
+}
+
+async function saveSettings() {
+  const body = {};
+  for (const k of S_KEYS) {
+    const el = $('#s_' + k);
+    if (!el) continue;
+    body[k] = el.type === 'checkbox' ? el.checked : ((el.type === 'number' || el.type === 'range') ? Number(el.value) : el.value);
   }
-  select.value = values.includes(previous) ? previous : '';
-  return { devices: values, keptPrevious: values.includes(previous) };
-}
-
-// تُعرض فقط القيم التي أعلنها الجهاز فعلياً؛ لا تُضاف قيمة محفوظة أو افتراضية غير مدعومة.
-function fillOptions(select, values, selectedValue, labelForEmpty) {
-  const previous = selectedValue == null ? '' : String(selectedValue);
-  const unique = [...new Set((values || []).map(v => String(v)).filter(Boolean))];
-  select.replaceChildren();
-  if (!unique.length) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = labelForEmpty || 'غير متاح';
-    option.disabled = true;
-    select.append(option);
-    select.value = '';
-    return;
-  }
-  for (const value of unique) { const option = document.createElement('option'); option.value = value; option.textContent = value; select.append(option); }
-  select.value = unique.includes(previous) ? previous : '';
-}
-
-function updateSourceTypeFields() {
-  const form = $('source-form');
-  const network = ['http-hls','rtsp'].includes(getField(form, 'type'));
-  $('stream-url-field').hidden = !network;
-  for (const id of ['video-device-field','audio-device-field','video-size-field','fps-field','pixel-format-field']) $(id).hidden = network;
-  $('devices').hidden = network;
-  $('auto-config').hidden = network;
-  if($('source-auto-config'))$('source-auto-config').hidden=network;
-  if($('source-devices'))$('source-devices').hidden=network;
-  const urlInput = form.elements.namedItem('streamUrl');
-  urlInput.required = network;
-  form.elements.namedItem('videoDevice').required = !network;
-  form.elements.namedItem('videoSize').required = !network;
-  form.elements.namedItem('fps').required = !network;
-  $('device-output').textContent = network
-    ? 'مصدر شبكي: سيتم تمرير رابط HTTP/HLS إلى FFmpeg. لا تُستخدم قوائم DirectShow في هذا الوضع.'
-    : 'مصدر USB محلي: افحص الأجهزة ثم اختر الإعدادات المدعومة.';
-}
-
-function updateCaptureModeOptions(){
-  const form=$('source-form'); if(!captureModes.length)return;
-  const size=getField(form,'videoSize'), pixel=getField(form,'pixelFormat');
-  const matching=captureModes.filter(m=>(!size||m.videoSize===size)&&(!pixel||m.pixelFormat===pixel));
-  const fpsValues=[...new Set(matching.map(m=>String(m.fps)))].sort((a,b)=>Number(a)-Number(b));
-  if(fpsValues.length)fillOptions(form.elements.namedItem('fps'),fpsValues,fpsValues.includes(String(getField(form,'fps')))?String(getField(form,'fps')):fpsValues[fpsValues.length-1],'لا توجد معدلات لهذه الدقة');
-}
-async function autoConfigureCapture() {
-  const button = $('auto-config'); const form = $('source-form');
-  if (['http-hls','rtsp'].includes(getField(form, 'type'))) return showMessage('الضبط التلقائي للدقات خاص بمصادر USB؛ المصدر الشبكي يحدد صيغته من الرابط.', true, 'source-message');
-  button.disabled = true; button.textContent = 'جارٍ تحليل قدرات القطعة…';
-  $('device-output').hidden = false; $('device-output').textContent = 'يقرأ FFmpeg الدقات ومعدلات الإطارات وتنسيقات الفيديو المدعومة…';
   try {
-    await refreshCaptureDevices(getField(form, 'videoDevice'), getField(form, 'audioDevice'));
-    const videoDevice = getField(form, 'videoDevice');
-    if (!videoDevice) throw new Error('لم يتم اكتشاف جهاز فيديو. تحقق من توصيل القطعة ثم أعد الفحص.');
-    const audioDevice = getField(form, 'audioDevice');
-    const result = await api(`/api/devices/capabilities?videoDevice=${encodeURIComponent(videoDevice)}${audioDevice ? `&audioDevice=${encodeURIComponent(audioDevice)}` : ''}`);
-    const caps = result.capabilities || {};
-    if (!caps.videoSizes?.length) throw new Error('لم يستطع FFmpeg استخراج قدرات الدقة لهذا الجهاز. جرّب جهازًا آخر أو تحقق من تعريف القطعة.');
-    captureModes = caps.modes || [];
-    const preferred = [...captureModes].sort((a,b)=>{
-      const score=m=>((m.pixelFormat==='mjpeg'?100:0)+(m.videoSize==='1280x720'?80:0)+(m.fps===30?40:m.fps===25?35:m.fps<=30?20:0)+(Number(m.videoSize.split('x')[0])<=1920?10:0));
-      return score(b)-score(a);
+    const r = await api('/settings', { method: 'PUT', body });
+    toast('تم حفظ الإعدادات');
+    loadSettings();
+    if (r.restartRequired) {
+      alert('تم تغيير المنفذ. لتطبيق التغيير:\n1) اضغط «تحديث ملف nginx.conf بالمنافذ الحالية».\n2) أعد تشغيل النظام (أغلق نافذة الأوامر وشغّل start.bat).\n3) أعد تشغيل Nginx.');
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function regenerateNginx() {
+  try {
+    // احفظ المنافذ الحالية من الحقول أولاً حتى لا يعتمد على ترتيب الضغط
+    const nginxPort = Number($('#s_nginxPort').value) || 80;
+    const port = Number($('#s_port').value) || 3000;
+    if (nginxPort === port) { toast('منفذ النظام و Nginx يجب أن يكونا مختلفين', true); return; }
+    await api('/settings', { method: 'PUT', body: { nginxPort, port } });
+    const r = await api('/settings/regenerate-nginx', { method: 'POST', body: {} });
+    const written = (r.written || []).join('\n');
+    const notes = (r.notes || []).join('\n');
+    alert('المنفذ المطبّق فعلياً: Nginx=' + r.nginxPort + ' · Node=' + r.port + '\n\nالملفات المكتوبة:\n' + written + '\n\n' + notes);
+    toast('تم تحديث nginx.conf على المنفذ ' + r.nginxPort);
+    loadSettings();
+  } catch (e) { toast(e.message, true); }
+}
+
+
+
+
+// ---------------- النسخ الاحتياطي ----------------
+function downloadBackup() {
+  toast('جارٍ تجهيز النسخة الاحتياطية...');
+  // فتح رابط التنزيل مباشرةً (المتصفح يحفظ الملف)
+  const a = document.createElement('a');
+  a.href = '/api/backup/download';
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+let _restoreFile = null;
+function restoreFileChosen(input) {
+  _restoreFile = input.files[0] || null;
+  $('#restoreFileName').value = _restoreFile ? _restoreFile.name : '';
+  $('#restoreBtn').disabled = !_restoreFile;
+}
+
+async function doRestore() {
+  if (!_restoreFile) return;
+  if (!confirm('سيتم استبدال كل الإعدادات الحالية بمحتوى النسخة، وإعادة تشغيل النظام. متابعة؟')) return;
+  const fd = new FormData();
+  fd.append('file', _restoreFile);
+  try {
+    toast('جارٍ الاسترجاع...');
+    await api('/backup/restore', { method: 'POST', body: fd });
+    toast('تم الاسترجاع — يُعاد تشغيل النظام، انتظر قليلاً ثم حدّث الصفحة');
+    setTimeout(() => location.reload(), 6000);
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------------- Upload helper (Browse button) ----------------
+function browseUpload(targetInputId, accept) {
+  const fi = document.createElement('input');
+  fi.type = 'file';
+  if (accept) fi.accept = accept;
+  fi.onchange = async () => {
+    if (!fi.files[0]) return;
+    const fd = new FormData();
+    fd.append('file', fi.files[0]);
+    try {
+      const r = await api('/upload', { method: 'POST', body: fd });
+      $('#' + targetInputId).value = r.path;
+      toast('تم رفع الملف');
+    } catch (e) { toast(e.message, true); }
+  };
+  fi.click();
+}
+
+// ---------------- Modal helpers ----------------
+function openModal(title, bodyHtml, onSave) {
+  $('#modalTitle').textContent = title;
+  $('#modalBody').innerHTML = bodyHtml;
+  $('#modalError').textContent = '';
+  $('#modalOverlay').classList.remove('hidden');
+  $('#modalSave').onclick = async () => {
+    $('#modalError').textContent = '';
+    try { await onSave(); closeModal(); }
+    catch (e) { $('#modalError').textContent = e.message; }
+  };
+}
+function closeModal() { $('#modalOverlay').classList.add('hidden'); }
+$('#modalOverlay').addEventListener('click', (e) => { if (e.target.id === 'modalOverlay') closeModal(); });
+
+// =====================================================================
+// SOURCES
+// =====================================================================
+async function loadSources() {
+  DATA.sources = (await api('/sources')).sources;
+  const tb = $('#sourcesTable tbody');
+  tb.innerHTML = DATA.sources.map(s => `<tr>
+    <td><b>${esc(s.name)}</b></td>
+    <td>${esc(TYPE_LABELS[s.type] || s.type)}</td>
+    <td class="cell-muted">${esc(sourceDetail(s))}</td>
+    <td><div class="row-actions">
+      <button class="btn btn-sm" onclick="openSourceModal('${s.id}')">تعديل</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteSource('${s.id}')">حذف</button>
+    </div></td></tr>`).join('') || '<tr><td colspan="4" class="cell-muted">لا توجد مصادر بعد — أضف أول مصدر للبدء.</td></tr>';
+}
+
+function sourceDetail(s) {
+  if (s.type === 'usb') return (s.videoDeviceLabel || s.videoDevice || '') + (s.videoSize ? ' @ ' + s.videoSize : '');
+  if (s.type === 'file') return s.path || '';
+  if (s.type === 'screen') return 'desktop' + (s.fps ? ' @ ' + s.fps + 'fps' : '');
+  return s.url || '';
+}
+
+async function deleteSource(id) {
+  if (!confirm('حذف هذا المصدر؟')) return;
+  try { await api('/sources/' + id, { method: 'DELETE' }); loadSources(); toast('تم الحذف'); }
+  catch (e) { toast(e.message, true); }
+}
+
+function openSourceModal(id) {
+  const src = id ? DATA.sources.find(s => s.id === id) : null;
+  const body = `
+    <label>اسم المصدر<input class="input" id="m_name" value="${esc(src?.name)}"></label>
+    <label>نوع المصدر
+      <select class="input" id="m_type" onchange="renderSourceFields()">
+        ${Object.entries(TYPE_LABELS).map(([v, l]) =>
+          `<option value="${v}" ${src?.type === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>
+    <div id="srcFields"></div>
+    ${id ? '' : `<label class="switch-row" style="margin-top:10px"><input type="checkbox" id="m_autoChannel" checked> إضافة قناة تلقائياً لهذا المصدر بعد الحفظ</label>`}`;
+  openModal(id ? 'تعديل مصدر' : 'إضافة مصدر', body, async () => {
+    const payload = collectSourceForm();
+    if (id) { await api('/sources/' + id, { method: 'PUT', body: payload }); }
+    else {
+      const created = await api('/sources', { method: 'POST', body: payload });
+      // إضافة قناة تلقائياً إن طُلب
+      if ($('#m_autoChannel') && $('#m_autoChannel').checked && created && created.source) {
+        try {
+          await api('/channels', { method: 'POST', body: { name: created.source.name, sourceId: created.source.id, enabled: true } });
+        } catch (e) {}
+        await loadChannels();
+      }
+    }
+    await loadSources();
+    toast('تم الحفظ');
+  });
+  window._editSrc = src;
+  renderSourceFields();
+}
+
+async function renderSourceFields() {
+  const type = $('#m_type').value;
+  const src = window._editSrc && window._editSrc.type === type ? window._editSrc : null;
+  const box = $('#srcFields');
+
+  if (type === 'usb') {
+    box.innerHTML = `<p class="hint">جارٍ قراءة الأجهزة المتصلة...</p>`;
+    try {
+      const d = await api('/devices');
+      box.innerHTML = `
+        <label>جهاز الفيديو
+          <select class="input" id="m_videoDevice" onchange="loadSizeOptions()">
+            ${d.video.map(v => `<option value="${esc(v.value)}" data-label="${esc(v.label)}"
+              ${src?.videoDevice === v.value ? 'selected' : ''}>${esc(v.label)}</option>`).join('') || '<option value="">لا توجد أجهزة</option>'}
+          </select></label>
+        <button class="btn btn-sm" type="button" onclick="autoRecommendCapture()" style="margin:4px 0 8px">⚙️ ضبط تلقائي لأفضل إعدادات (موصى به لكروت USB)</button>
+        <p class="hint" id="m_capHint"></p>
+        <label>صيغة الإدخال
+          <select class="input" id="m_capFormat">
+            <option value="">افتراضي الجهاز</option>
+            <option value="pf:yuyv422" ${src?.pixelFormat === 'yuyv422' ? 'selected' : ''}>yuyv422 (خام — يمنع أعطال MJPEG)</option>
+            <option value="vc:mjpeg" ${src?.vcodec === 'mjpeg' ? 'selected' : ''}>mjpeg (إن لم يدعم الجهاز yuyv)</option>
+          </select></label>
+        <label>الدقة (video_size)
+          <select class="input" id="m_videoSize"><option value="">افتراضي</option></select></label>
+        <label>الإطارات بالثانية (FPS)
+          <select class="input" id="m_fps"><option value="">افتراضي</option></select></label>
+        <label class="switch-row"><input type="checkbox" id="m_capSafe" ${src?.captureSafeMode ? 'checked' : ''}>
+          الوضع الآمن (لا تفرض الدقة/الإطارات — جرّبه إن ظهر خطأ "Could not set video options")</label>
+        <label>جهاز الصوت (اختياري)
+          <select class="input" id="m_audioDevice">
+            <option value="">بدون صوت منفصل</option>
+            ${d.audio.map(a => `<option value="${esc(a.value)}" ${src?.audioDevice === a.value ? 'selected' : ''}>${esc(a.label)}</option>`).join('')}
+          </select></label>`;
+      await loadSizeOptions(src);
+    } catch (e) {
+      box.innerHTML = `<p class="form-error">${esc(e.message)} — على ويندوز يلزم دعم DirectShow، وعلى أندرويد/لينكس يظهر الجهاز كـ /dev/video* (كرت UVC مع صلاحية وصول).</p>`;
+    }
+  } else if (type === 'file') {
+    box.innerHTML = `
+      <label>ملف الفيديو
+        <span class="with-browse">
+          <input class="input" id="m_path" value="${esc(src?.path)}" placeholder="srv/uploads/video.mp4">
+          <button class="btn" type="button" onclick="browseUpload('m_path','video/*')">استعراض / رفع</button>
+        </span></label>
+      <p class="hint">سيتم تشغيل الملف في حلقة مستمرة (loop).</p>`;
+  } else if (type === 'screen') {
+    box.innerHTML = `
+      <label>FPS<input class="input" id="m_fps" type="number" min="5" max="60" value="${esc(src?.fps || 15)}"></label>
+      <label>الدقة (اختياري)<input class="input" id="m_videoSize" placeholder="1920x1080" value="${esc(src?.videoSize)}"></label>`;
+  } else {
+    box.innerHTML = `<label>الرابط<input class="input" id="m_url" dir="ltr" value="${esc(src?.url)}"
+      placeholder="http://.../stream.m3u8"></label>
+      <div style="display:flex;gap:8px;align-items:center;margin:8px 0">
+        <button class="btn btn-sm" type="button" onclick="testSourceUrl()">🔍 اختبار قراءة الرابط</button>
+        <span id="m_testResult" class="hint" style="margin:0"></span>
+      </div>
+      <pre id="m_testDetail" class="log-body" style="display:none;max-height:160px"></pre>`;
+  }
+}
+
+// اختبار قراءة رابط المصدر قبل الحفظ: يُظهر رد الخادم ونوع البيانات (m3u8/ts/خطأ).
+async function testSourceUrl() {
+  const url = ($('#m_url') && $('#m_url').value || '').trim();
+  const result = $('#m_testResult'), detail = $('#m_testDetail');
+  if (!url) { result.textContent = 'أدخل الرابط أولاً'; result.style.color = 'var(--accent)'; return; }
+  result.textContent = 'جارٍ الاختبار...'; result.style.color = '';
+  if (detail) detail.style.display = 'none';
+  try {
+    const r = await api('/sources/test', { method: 'POST', body: { url } });
+    const kindLabel = { m3u8: 'قائمة تشغيل HLS (m3u8)', ts: 'تدفق TS مباشر', other: 'نوع آخر/غير معروف', error: 'خطأ' }[r.kind] || r.kind;
+    if (r.ok) result.innerHTML = `<span style="color:var(--ok,#3a7)">✓ نجح — الحالة ${r.status} — النوع: ${kindLabel}</span>`;
+    else result.innerHTML = `<span style="color:var(--accent)">✗ فشل — الحالة ${r.status || '—'} — ${esc(r.message || kindLabel)}</span>`;
+    if (detail) {
+      detail.style.display = 'block';
+      detail.textContent = `HTTP ${r.status || ''} ${r.statusText || ''}\nContent-Type: ${r.contentType || '—'}\n\n${(r.preview || '').slice(0, 1200)}`;
+    }
+  } catch (e) {
+    result.innerHTML = `<span style="color:var(--accent)">✗ ${esc(e.message)}</span>`;
+  }
+}
+
+async function autoRecommendCapture() {
+  const sel = $('#m_videoDevice');
+  if (!sel || !sel.value) { toast('اختر جهاز الفيديو أولاً', true); return; }
+  $('#m_capHint').textContent = 'جارٍ فحص الجهاز واختيار أفضل إعدادات...';
+  try {
+    const r = await api('/devices/recommend?device=' + encodeURIComponent(sel.value));
+    // make sure size list is populated, then apply
+    await loadSizeOptions();
+    // format
+    if (r.pixelFormat === 'yuyv422') $('#m_capFormat').value = 'pf:yuyv422';
+    else if (r.vcodec === 'mjpeg') $('#m_capFormat').value = 'vc:mjpeg';
+    else $('#m_capFormat').value = '';
+    // size (add if missing)
+    if (r.videoSize) {
+      if (![...$('#m_videoSize').options].some(o => o.value === r.videoSize))
+        $('#m_videoSize').insertAdjacentHTML('beforeend', `<option>${r.videoSize}</option>`);
+      $('#m_videoSize').value = r.videoSize;
+    }
+    if (r.fps) {
+      if (![...$('#m_fps').options].some(o => o.value == r.fps))
+        $('#m_fps').insertAdjacentHTML('beforeend', `<option>${r.fps}</option>`);
+      $('#m_fps').value = r.fps;
+    }
+    const fmt = r.pixelFormat || r.vcodec || 'افتراضي';
+    $('#m_capHint').textContent = `تم: الصيغة ${fmt} · الدقة ${r.videoSize} · ${r.fps}fps. الجهاز يدعم: ${(r.detected.pixelFormats.concat(r.detected.codecs)).join(', ') || '—'}`;
+    toast('تم ضبط أفضل إعدادات للجهاز');
+  } catch (e) {
+    $('#m_capHint').textContent = '';
+    toast('تعذر الفحص التلقائي: ' + e.message, true);
+  }
+}
+
+async function loadSizeOptions(src) {
+  const sel = $('#m_videoDevice');
+  if (!sel || !sel.value) return;
+  const sizeSel = $('#m_videoSize'), fpsSel = $('#m_fps');
+  sizeSel.innerHTML = '<option value="">جارٍ القراءة...</option>';
+  try {
+    const o = await api('/devices/options?device=' + encodeURIComponent(sel.value));
+    sizeSel.innerHTML = '<option value="">افتراضي</option>' +
+      o.sizes.map(s => `<option ${src?.videoSize === s ? 'selected' : ''}>${s}</option>`).join('');
+    fpsSel.innerHTML = '<option value="">افتراضي</option>' +
+      o.fps.map(f => `<option ${src?.fps == f ? 'selected' : ''}>${f}</option>`).join('');
+  } catch (e) { sizeSel.innerHTML = '<option value="">تعذرت القراءة</option>'; }
+}
+
+function collectSourceForm() {
+  const type = $('#m_type').value;
+  const out = { name: $('#m_name').value.trim(), type };
+  if (type === 'usb') {
+    const sel = $('#m_videoDevice');
+    out.videoDevice = sel.value;
+    out.videoDeviceLabel = sel.selectedOptions[0]?.dataset.label || '';
+    out.videoSize = $('#m_videoSize').value;
+    out.fps = $('#m_fps').value ? Number($('#m_fps').value) : null;
+    out.audioDevice = $('#m_audioDevice').value;
+    // صيغة الإدخال: pf:yuyv422 → pixelFormat، vc:mjpeg → vcodec
+    const fmt = $('#m_capFormat') ? $('#m_capFormat').value : '';
+    out.pixelFormat = fmt.startsWith('pf:') ? fmt.slice(3) : '';
+    out.vcodec = fmt.startsWith('vc:') ? fmt.slice(3) : '';
+    out.captureSafeMode = $('#m_capSafe') ? $('#m_capSafe').checked : false;
+  } else if (type === 'file') {
+    out.path = $('#m_path').value.trim();
+  } else if (type === 'screen') {
+    out.fps = Number($('#m_fps').value || 15);
+    out.videoSize = $('#m_videoSize').value.trim();
+  } else {
+    out.url = $('#m_url').value.trim();
+  }
+  return out;
+}
+
+// =====================================================================
+// IPTV
+// =====================================================================
+async function loadIptv() {
+  DATA.iptv = (await api('/iptv')).iptv;
+  renderIptv();
+}
+function renderIptv() {
+  const q = ($('#iptvFilter').value || '').toLowerCase();
+  const list = DATA.iptv.filter(c => !q || c.name.toLowerCase().includes(q) || (c.group || '').toLowerCase().includes(q));
+  $('#iptvTable tbody').innerHTML = list.slice(0, 500).map(c => `<tr>
+    <td>${c.logo ? `<img class="iptv-logo" src="${esc(c.logo)}" loading="lazy" onerror="this.style.display='none'">` : ''}</td>
+    <td><b>${esc(c.name)}</b></td>
+    <td>${esc(c.group)}</td>
+    <td class="cell-muted">${esc((c.url || '').slice(0, 60))}…</td>
+    <td><button class="btn btn-sm btn-danger" onclick="deleteIptv('${c.id}')">حذف</button></td>
+  </tr>`).join('') || '<tr><td colspan="5" class="cell-muted">المكتبة فارغة.</td></tr>';
+}
+$('#iptvFilter').addEventListener('input', renderIptv);
+
+$('#m3uFile').addEventListener('change', async (e) => {
+  if (!e.target.files[0]) return;
+  const fd = new FormData();
+  fd.append('file', e.target.files[0]);
+  try {
+    const r = await api('/iptv/import-file', { method: 'POST', body: fd });
+    toast(`تمت الإضافة: ${r.added} | المكرر: ${r.skipped}`);
+    loadIptv();
+  } catch (err) { toast(err.message, true); }
+  e.target.value = '';
+});
+
+function openIptvUrl() {
+  openModal('استيراد M3U من رابط',
+    `<label>رابط ملف M3U<input class="input" id="m_m3uUrl" dir="ltr" placeholder="http://example.com/playlist.m3u"></label>`,
+    async () => {
+      const r = await api('/iptv/import-url', { method: 'POST', body: { url: $('#m_m3uUrl').value.trim() } });
+      toast(`تمت الإضافة: ${r.added} | المكرر: ${r.skipped}`);
+      loadIptv();
     });
-    const candidates=preferred.length?preferred.slice(0,8):[{videoSize:caps.recommended?.videoSize||'1280x720',fps:Number(caps.recommended?.fps)||30,pixelFormat:caps.recommended?.pixelFormat||caps.pixelFormats?.[0]||'mjpeg'}];
-    let accepted=null, failures=[];
-    for(const candidate of candidates){
-      setField(form,'videoSize',candidate.videoSize);setField(form,'fps',candidate.fps);setField(form,'pixelFormat',candidate.pixelFormat);
-      try{await api('/api/devices/test','POST',{videoDevice,audioDevice,videoSize:candidate.videoSize,fps:candidate.fps,pixelFormat:candidate.pixelFormat});accepted=candidate;break;}
-      catch(e){failures.push(`${candidate.pixelFormat} ${candidate.videoSize}@${candidate.fps}: ${e.message.slice(0,180)}`);}
-    }
-    if(!accepted)throw new Error('تم اكتشاف الأوضاع لكن فشل اختبار جميع التوليفات الأولية. '+failures.slice(0,3).join(' | '));
-    fillOptions(form.elements.namedItem('videoSize'), caps.videoSizes, accepted.videoSize, 'لا توجد دقات مدعومة');
-    fillOptions(form.elements.namedItem('pixelFormat'), caps.pixelFormats, accepted.pixelFormat, 'تلقائي');
-    updateCaptureModeOptions();setField(form,'fps',accepted.fps);
-    if (caps.audioDevices) fillDeviceSelect(form.elements.namedItem('audioDevice'), caps.audioDevices, audioDevice, 'بدون صوت');
-    $('device-output').textContent = `تم تحليل واختبار: ${videoDevice}
-الدقات المكتشفة: ${caps.videoSizes.join(', ')}
-معدلات الإطارات المكتشفة: ${caps.frameRates.join(', ')}
-التنسيقات: ${caps.pixelFormats.join(', ') || 'لم يحددها FFmpeg'}
-التوليفة التي اجتازت اختبار الالتقاط: ${accepted.pixelFormat} · ${accepted.videoSize} @ ${accepted.fps} FPS
-${result.note || ''}`;
-    form.dataset.videoTestSignature=sourceInputSignature(form);
-    if(audioDevice) delete form.dataset.audioTestSignature;
-    showMessage('نجح اختبار أفضل توليفة متاحة. راجع الإعدادات ثم احفظ المصدر.', false, 'source-message');
-  } catch (error) {
-    $('device-output').textContent = `تعذر الضبط التلقائي: ${error.message}`;
-    showMessage(`تعذر الضبط التلقائي: ${error.message}`, true, 'source-message');
-  } finally { button.disabled = false; button.innerHTML = '<span>✦</span> ضبط تلقائي للقطعة المناسبة'; }
 }
 
-async function refreshCaptureDevices(selectedVideo, selectedAudio) {
-  const result = await api('/api/devices');
-  const form = $('source-form');
-  const video = (result.devices?.video || []).filter(Boolean);
-  const audio = (result.devices?.audio || []).filter(Boolean);
-  const videoChoice = fillDeviceSelect(
-    form.elements.namedItem('videoDevice'), video, selectedVideo,
-    video.length ? 'اختر جهاز الفيديو…' : 'لم يتم العثور على أجهزة فيديو متصلة', true
-  );
-  fillDeviceSelect(form.elements.namedItem('audioDevice'), audio, selectedAudio, 'بدون صوت');
-  const lines = [
-    video.length ? `أجهزة الفيديو المكتشفة: ${video.join(' | ')}` : 'لم يتم العثور على أجهزة فيديو متصلة',
-    audio.length ? `أجهزة الصوت المكتشفة: ${audio.join(' | ')}` : 'لم يتم العثور على أجهزة صوت متصلة'
-  ];
-  if (selectedVideo && !videoChoice.keptPrevious) lines.push('الجهاز المحفوظ سابقاً غير متصل الآن، لذلك لا يظهر في القائمة.');
-  if (result.note) lines.push(result.note);
-  $('device-output').hidden = false;
-  $('device-output').textContent = lines.join('\n') + (result.output ? `\n\n${result.output}` : '');
-  await loadDeviceCapabilities(form.elements.namedItem('videoDevice').value);
-  return result;
+function openIptvManual() {
+  openModal('إضافة قناة IPTV يدوياً', `
+    <label>اسم القناة<input class="input" id="m_iname"></label>
+    <label>الرابط<input class="input" id="m_iurl" dir="ltr" placeholder="http://.../stream.m3u8"></label>
+    <label>المجموعة (اختياري)<input class="input" id="m_igroup"></label>
+    <label>رابط الشعار (اختياري)<input class="input" id="m_ilogo" dir="ltr"></label>`,
+    async () => {
+      await api('/iptv', { method: 'POST', body: {
+        name: $('#m_iname').value.trim(), url: $('#m_iurl').value.trim(),
+        group: $('#m_igroup').value.trim(), logo: $('#m_ilogo').value.trim() } });
+      toast('تمت إضافة القناة');
+      loadIptv();
+    });
 }
 
-// يقرأ FFmpeg قدرات الجهاز المختار (الدقات، الصيغ، معدلات الإطارات) ويملأ القوائم بها فقط.
-async function loadDeviceCapabilities(device) {
-  const form = $('source-form');
-  const sizeSelect = form.elements.namedItem('videoSize');
-  const pixelSelect = form.elements.namedItem('pixelFormat');
-  const fpsSelect = form.elements.namedItem('fps');
-  captureModes = [];
-  if (!device) {
-    fillOptions(sizeSelect, [], '', 'اختر جهازاً لعرض الدقات المدعومة');
-    fillOptions(pixelSelect, [], '', 'اختر جهازاً لعرض الصيغ المدعومة');
-    fillOptions(fpsSelect, [], '', 'اختر جهازاً لعرض المعدلات المدعومة');
-    return;
-  }
-  const audioDevice = getField(form, 'audioDevice');
-  $('device-output').hidden = false;
-  $('device-output').textContent = `جارٍ قراءة قدرات الجهاز: ${device}`;
+async function deleteIptv(id) {
+  try { await api('/iptv/' + id, { method: 'DELETE' }); loadIptv(); }
+  catch (e) { toast(e.message, true); }
+}
+
+// =====================================================================
+// CHANNELS
+// =====================================================================
+async function loadChannels() {
+  DATA.channels = (await api('/channels')).channels;
+  const srcName = id => DATA.sources.find(s => s.id === id)?.name || '—';
+  $('#channelsTable tbody').innerHTML = DATA.channels
+    .slice().sort((a, b) => (a.sort || 0) - (b.sort || 0))
+    .map(c => `<tr>
+      <td>${c.sort || 0}</td>
+      <td><b>${esc(c.name)}</b></td>
+      <td class="cell-muted">${esc(c.chanId)}</td>
+      <td>${esc(c.category)}</td>
+      <td>${esc(srcName(c.sourceId))}</td>
+      <td class="cell-muted">${qualityLabel(c.quality)}</td>
+      <td>${c.autoStart ? 'نعم' : 'لا'}</td>
+      <td><span class="chip" data-chip="${c.id}">…</span></td>
+      <td><div class="row-actions">
+        <label class="ch-enable" title="إلغاء التفعيل يوقف القناة نهائياً ويُخفيها عن المشاهدين حتى إعادة تفعيلها">
+          <input type="checkbox" ${c.enabled !== false ? 'checked' : ''} onchange="toggleChannelEnabled('${c.id}', this.checked)"> مفعّلة</label>
+        <button class="btn btn-sm" onclick="chAction('${c.id}','start')">تشغيل</button>
+        <button class="btn btn-sm" onclick="chAction('${c.id}','stop')">إيقاف</button>
+        <button class="btn btn-sm" onclick="chAction('${c.id}','restart')">إعادة</button>
+        <button class="btn btn-sm" onclick="openChannelModal('${c.id}')">تعديل</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteChannel('${c.id}')">حذف</button>
+      </div></td></tr>`).join('') || '<tr><td colspan="9" class="cell-muted">لا توجد قنوات بعد.</td></tr>';
+  refreshStatus();
+}
+
+async function chAction(id, act) {
+  try { await api(`/channels/${id}/${act}`, { method: 'POST' }); toast('تم تنفيذ الأمر'); setTimeout(refreshStatus, 800); }
+  catch (e) { toast(e.message, true); }
+}
+
+// تفعيل/تعطيل القناة من قائمة القنوات. التعطيل يوقفها نهائياً ويُخفيها عن
+// المشاهدين؛ لا تعمل إلا بإعادة التفعيل يدوياً.
+async function toggleChannelEnabled(id, enabled) {
   try {
-    const result = await api(`/api/devices/capabilities?videoDevice=${encodeURIComponent(device)}${audioDevice ? `&audioDevice=${encodeURIComponent(audioDevice)}` : ''}`);
-    const caps = result.capabilities || {};
-    captureModes = Array.isArray(caps.modes) ? caps.modes : [];
-    if (!caps.videoSizes?.length) throw new Error('لم يعلن الجهاز أي دقة مدعومة عبر FFmpeg.');
-    fillOptions(sizeSelect, caps.videoSizes, getField(form, 'videoSize'), 'لا توجد دقات مدعومة');
-    fillOptions(pixelSelect, caps.pixelFormats, getField(form, 'pixelFormat'), 'لم يعلن الجهاز صيغة');
-    updateCaptureModeOptions();
-    $('device-output').textContent = `قدرات الجهاز: ${device}\nالدقات المدعومة: ${caps.videoSizes.join(', ')}\nمعدلات الإطارات: ${caps.frameRates.join(', ') || 'لم تعلن'}\nالصيغ: ${caps.pixelFormats.join(', ') || 'لم يحددها FFmpeg'}`;
-  } catch (error) {
-    fillOptions(sizeSelect, [], '', 'لم تُقرأ قدرات الجهاز');
-    fillOptions(pixelSelect, [], '', 'لم تُقرأ قدرات الجهاز');
-    fillOptions(fpsSelect, [], '', 'لم تُقرأ قدرات الجهاز');
-    $('device-output').textContent = `تعذر قراءة قدرات الجهاز: ${error.message}`;
-  }
+    await api('/channels/' + id, { method: 'PATCH', body: { enabled } });
+    toast(enabled ? 'تم تفعيل القناة' : 'تم تعطيل القناة (موقّفة ومخفية عن المشاهدين)');
+    await loadChannels();
+  } catch (e) { toast(e.message, true); loadChannels(); }
 }
 
-async function loadNetworkInterfaces() {
-  const box = $('network-addresses');
-  const message = $('network-message');
-  if (!box) return;
-  box.textContent = 'جارٍ اكتشاف عناوين IPv4…';
-  try {
-    const result = await api('/api/network/interfaces');
-    box.replaceChildren();
-    if (!result.interfaces?.length) {
-      box.textContent = 'لم يتم العثور على عناوين IPv4 خارجية. تحقق من اتصال Ethernet أو Wi-Fi.';
-      return;
-    }
-    for (const item of result.interfaces) {
-      const row = document.createElement('div');
-      row.className = 'network-address-row';
-      const details = document.createElement('div');
-      const title = document.createElement('strong');
-      title.textContent = item.address;
-      const meta = document.createElement('small');
-      meta.textContent = `${item.name} · ${item.cidr || item.netmask}`;
-      details.append(title, meta);
-      const link = document.createElement('a');
-      link.href = item.url;
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = 'فتح صفحة المشاهدة ↗';
-      const copy = document.createElement('button');
-      copy.type = 'button'; copy.className = 'btn btn-secondary'; copy.textContent = 'نسخ الرابط';
-      copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(item.url); copy.textContent = 'تم النسخ'; } catch { message.textContent = item.url; } });
-      row.append(details, link, copy);
-      box.append(row);
-    }
-    message.textContent = `تم اكتشاف ${result.interfaces.length} عنوانًا. افتح الرابط الموافق للشبكة المتصل بها هاتفك.`;
-  } catch (error) {
-    box.textContent = `تعذر اكتشاف عناوين الشبكة: ${error.message}`;
-    if (message) message.textContent = 'تأكد من تشغيل الخادم وتسجيل الدخول إلى الإدارة.';
-  }
+async function deleteChannel(id) {
+  if (!confirm('حذف القناة وجدولتها؟')) return;
+  try { await api('/channels/' + id, { method: 'DELETE' }); loadChannels(); loadSchedules(); toast('تم الحذف'); }
+  catch (e) { toast(e.message, true); }
 }
 
-async function loadSource(selectedId) {
-  const form=$('source-form');
-  try{
-    const {sources}=await api('/api/sources'); const list=$('source-select'); list.replaceChildren();
-    for(const source of sources||[]){const o=document.createElement('option');o.value=source.id;o.textContent=`${source.name} · ${source.type}`;list.append(o);}
-    const source=(sources||[]).find(x=>x.id===selectedId)||(sources||[])[0];
-    if(!source){delete form.dataset.sourceId;showMessage('لا توجد مصادر. أضف مصدراً جديداً.',false,'source-message');return;}
-    for(const key of ['name','type','streamUrl','videoSize','fps','pixelFormat','enabled'])setField(form,key,source[key]);
-    form.dataset.sourceId=source.id;list.value=source.id;
-    form.dataset.originalInputSignature=sourceInputSignature(form);
-    form.dataset.originalAudioSignature=sourceAudioSignature(form);
-    delete form.dataset.videoTestSignature; delete form.dataset.audioTestSignature;
-    fillDeviceSelect(form.elements.namedItem('videoDevice'),[],source.videoDevice,'جارٍ تحميل أجهزة الفيديو…');
-    fillDeviceSelect(form.elements.namedItem('audioDevice'),[],source.audioDevice,'بدون صوت'); updateSourceTypeFields();
-    if(['http-hls','rtsp'].includes(getField(form,'type'))){$('device-output').hidden=false;$('device-output').textContent='مصدر شبكي HTTP/HLS.';}
-    else try{await refreshCaptureDevices(source.videoDevice,source.audioDevice);}catch(e){$('device-output').hidden=false;$('device-output').textContent=`تعذر اكتشاف الأجهزة: ${e.message}`;}
-  }catch(error){showMessage(`تعذر تحميل بيانات المصدر: ${error.message}`,true,'source-message');}
+function openChannelModal(id) {
+  const ch = id ? DATA.channels.find(c => c.id === id) : null;
+  const curQ = ch?.quality || (ch?.qualities && ch.qualities[0]) || 'copy';
+  openModal(id ? 'تعديل قناة' : 'إضافة قناة', `
+    <label>اسم القناة<input class="input" id="m_cname" value="${esc(ch?.name)}"></label>
+    <label>معرّف القناة (إنجليزي، يستخدم في الروابط)<input class="input" id="m_cid" dir="ltr" value="${esc(ch?.chanId)}" placeholder="sport1"></label>
+    <label>مصدر البث
+      <select class="input" id="m_csource">
+        ${DATA.sources.map(s => `<option value="${s.id}" ${ch?.sourceId === s.id ? 'selected' : ''}>${esc(s.name)} (${TYPE_LABELS[s.type] || s.type})</option>`).join('') || '<option value="">أضف مصدراً أولاً</option>'}
+      </select></label>
+    <label>التصنيف<input class="input" id="m_ccat" value="${esc(ch?.category)}" placeholder="رياضة / أخبار / أطفال"></label>
+    <label>ترتيب الظهور<input class="input" id="m_csort" type="number" value="${ch?.sort || 0}"></label>
+    <label>صورة غلاف القناة
+      <span class="with-browse">
+        <input class="input" id="m_ccover" value="${esc(ch?.cover)}" placeholder="srv/uploads/cover.jpg">
+        <button class="btn" type="button" onclick="browseUpload('m_ccover','image/*')">استعراض / رفع</button>
+      </span></label>
+    <!-- خاصية الشعار معطَّلة مؤقتاً بالكامل من الخادم (ffmpeg.js: LOGO_FEATURE_ENABLED)
+         لضمان أفضل أداء بث دون مشاكل — أُخفي عنصر التحكّم هنا لتطابق سلوك الخادم. -->
+    <div style="display:none">
+      <label class="switch-row"><input type="checkbox" id="m_clogoen" ${(ch?.logoEnabled != null ? ch.logoEnabled : !!ch?.logoOverlay) ? 'checked' : ''}> تفعيل الشعار فوق البث</label>
+      <p class="hint">صورة الشعار وموقعه وحجمه وشفافيته تُضبط من «الإعدادات ← شعار القنوات» (شعار موحّد لكل القنوات). يعمل مع كل الجودات بما فيها «نسخ المصدر».</p>
+    </div>
+    <label>الجودة
+      <select class="input" id="m_cquality">
+        ${CH_QUALITIES.map(([v, l]) => `<option value="${v}" ${curQ === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>
+    <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
+    <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
+    <label>معدّل البت Bitrate (اختياري — مثل 1500k أو 2000k، فارغ = افتراضي الجودة)<input class="input" id="m_cbitrate" dir="ltr" value="${esc(ch?.bitrate)}" placeholder="مثال: 1500k"></label>
+    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام الافتراضي المناسب لكل جودة.</p>
+    <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
+    <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
+    <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
+    async () => {
+      const body = {
+        name: $('#m_cname').value.trim(), chanId: $('#m_cid').value.trim(),
+        sourceId: $('#m_csource').value, category: $('#m_ccat').value.trim(),
+        sort: Number($('#m_csort').value || 0), cover: $('#m_ccover').value.trim(),
+        logoEnabled: $('#m_clogoen').checked,
+        quality: $('#m_cquality').value,
+        fps: $('#m_cfps').value || null,
+        bitrate: $('#m_cbitrate').value.trim() || null,
+        autoStart: $('#m_cauto').checked, alwaysOn: $('#m_calwayson').checked
+      };
+      if (id) await api('/channels/' + id, { method: 'PUT', body });
+      else await api('/channels', { method: 'POST', body });
+      await loadChannels();
+      toast('تم الحفظ');
+    });
 }
 
+// =====================================================================
+// SCHEDULER
+// =====================================================================
+async function loadSchedules() {
+  DATA.schedules = (await api('/schedules')).schedules;
+  const chName = id => DATA.channels.find(c => c.id === id)?.name || '؟';
+  $('#schedulesTable tbody').innerHTML = DATA.schedules.map(s => `<tr>
+    <td><b>${esc(chName(s.channelId))}</b></td>
+    <td>${(s.days || []).map(d => DAYS[d]).join('، ') || 'كل الأيام'}</td>
+    <td class="cell-muted" dir="ltr">${(s.slots || []).map(x => x.start + ' → ' + x.end).join(' | ')}</td>
+    <td>${s.enabled !== false ? 'نعم' : 'لا'}</td>
+    <td><div class="row-actions">
+      <button class="btn btn-sm" onclick="openScheduleModal('${s.id}')">تعديل</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteSchedule('${s.id}')">حذف</button>
+    </div></td></tr>`).join('') || '<tr><td colspan="5" class="cell-muted">لا توجد جداول — كل القنوات تعمل كبث مستمر.</td></tr>';
+}
+
+function slotRowHtml(s) {
+  return `<div class="slot-row">
+    <span>من</span><input class="input" style="width:110px" type="time" data-ss value="${esc(s.start)}">
+    <span>إلى</span><input class="input" style="width:110px" type="time" data-se value="${esc(s.end)}">
+    <button class="btn btn-sm btn-danger" type="button" onclick="this.parentElement.remove()">✕</button>
+  </div>`;
+}
+
+function openScheduleModal(id) {
+  const sc = id ? DATA.schedules.find(s => s.id === id) : null;
+  const days = sc?.days || [0, 1, 2, 3, 4, 5, 6];
+  const slots = sc?.slots?.length ? sc.slots : [{ start: '08:00', end: '10:00' }];
+  openModal(id ? 'تعديل جدولة' : 'إضافة جدولة', `
+    <label>القناة
+      <select class="input" id="m_schChannel">
+        ${DATA.channels.map(c => `<option value="${c.id}" ${sc?.channelId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">أضف قناة أولاً</option>'}
+      </select></label>
+    <label>الأيام<span class="days-checks">
+      ${DAYS.map((d, i) => `<label><input type="checkbox" value="${i}" data-day ${days.includes(i) ? 'checked' : ''}>${d}</label>`).join('')}
+    </span></label>
+    <label>الفترات الزمنية (يمكن إضافة أكثر من فترة لنفس اليوم)</label>
+    <div id="slotRows">${slots.map(slotRowHtml).join('')}</div>
+    <button class="btn btn-sm" type="button" onclick="addSlotRow()">+ إضافة فترة</button>
+    <label class="switch-row" style="margin-top:14px"><input type="checkbox" id="m_schEnabled" ${sc?.enabled !== false ? 'checked' : ''}> الجدولة مفعّلة</label>`,
+    async () => {
+      const body = {
+        channelId: $('#m_schChannel').value,
+        days: $$('input[data-day]:checked').map(i => Number(i.value)),
+        slots: $$('#slotRows .slot-row').map(r => ({ start: $('[data-ss]', r).value, end: $('[data-se]', r).value }))
+          .filter(s => s.start && s.end),
+        enabled: $('#m_schEnabled').checked
+      };
+      if (id) await api('/schedules/' + id, { method: 'PUT', body });
+      else await api('/schedules', { method: 'POST', body });
+      await loadSchedules();
+      toast('تم الحفظ');
+    });
+}
+function addSlotRow() { $('#slotRows').insertAdjacentHTML('beforeend', slotRowHtml({ start: '', end: '' })); }
+
+async function deleteSchedule(id) {
+  try { await api('/schedules/' + id, { method: 'DELETE' }); loadSchedules(); }
+  catch (e) { toast(e.message, true); }
+}
+
+// =====================================================================
+// ADS (الإعلانات)
+// =====================================================================
+let _ads = [];
+async function loadAds() {
+  try { _ads = (await api('/ads')).ads || []; } catch (e) { return; }
+  const placeLabel = a => a.type === 'text' ? '—' : (a.placement === 'underChannels' ? 'أسفل القنوات' : 'تحت الهاتف');
+  const content = a => a.type === 'text'
+    ? esc((a.text || '').slice(0, 60))
+    : `<img src="/${esc(String(a.image).replace(/^\//, '').replace(/^srv\/uploads/, 'uploads'))}" style="height:34px;border-radius:4px">`;
+  const rows = _ads.map(a => `<tr>
+    <td>${a.type === 'text' ? 'نصّي' : 'صورة'}</td>
+    <td>${content(a)}</td>
+    <td>${placeLabel(a)}</td>
+    <td><input type="checkbox" ${a.enabled !== false ? 'checked' : ''} onchange="toggleAd('${a.id}', this.checked)"></td>
+    <td>
+      <button class="btn btn-sm" onclick="openAdModal('${a.id}')">تعديل</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteAd('${a.id}')">حذف</button>
+    </td></tr>`).join('');
+  $('#adsTable').querySelector('tbody').innerHTML = rows || '<tr><td colspan="5" class="muted">لا توجد إعلانات بعد.</td></tr>';
+}
+
+function openAdModal(id) {
+  const ad = id ? _ads.find(a => a.id === id) : null;
+  const type = ad?.type || 'text';
+  const body = `
+    <label>نوع الإعلان
+      <select class="input" id="ad_type" onchange="adTypeChanged()">
+        <option value="text" ${type === 'text' ? 'selected' : ''}>نصّي (شريط متحرك تحت الهاتف)</option>
+        <option value="image" ${type === 'image' ? 'selected' : ''}>صورة (سلايدر)</option>
+      </select>
+    </label>
+    <div id="ad_textWrap">
+      <label>نص الإعلان<input class="input" id="ad_text" value="${esc(ad?.text)}" placeholder="اكتب نص الإعلان هنا..."></label>
+    </div>
+    <div id="ad_imageWrap" class="hidden">
+      <label>صورة الإعلان
+        <div style="display:flex;gap:8px">
+          <input class="input" id="ad_image" value="${esc(ad?.image)}" placeholder="srv/uploads/ad.jpg" style="flex:1">
+          <button type="button" class="btn" onclick="browseUpload('ad_image','image/*')">استعراض</button>
+        </div>
+      </label>
+      <label>مكان عرض السلايدر
+        <select class="input" id="ad_placement">
+          <option value="underPhone" ${ad?.placement !== 'underChannels' ? 'selected' : ''}>تحت رقم الهاتف</option>
+          <option value="underChannels" ${ad?.placement === 'underChannels' ? 'selected' : ''}>أسفل أزرار القنوات</option>
+        </select>
+      </label>
+    </div>
+    <label>رابط عند الضغط (اختياري)<input class="input" id="ad_link" value="${esc(ad?.link)}" placeholder="https://..."></label>
+    <label class="switch-row"><input type="checkbox" id="ad_enabled" ${ad?.enabled !== false ? 'checked' : ''}> مفعّل</label>`;
+  openModal(id ? 'تعديل إعلان' : 'إضافة إعلان', body, async () => {
+    const payload = {
+      type: $('#ad_type').value,
+      text: $('#ad_text').value.trim(),
+      image: $('#ad_image').value.trim(),
+      placement: $('#ad_placement').value,
+      link: $('#ad_link').value.trim(),
+      enabled: $('#ad_enabled').checked
+    };
+    if (id) await api('/ads/' + id, { method: 'PUT', body: payload });
+    else await api('/ads', { method: 'POST', body: payload });
+    await loadAds();
+    toast('تم الحفظ');
+  });
+  adTypeChanged();
+}
+function adTypeChanged() {
+  const t = $('#ad_type').value;
+  $('#ad_textWrap').classList.toggle('hidden', t !== 'text');
+  $('#ad_imageWrap').classList.toggle('hidden', t !== 'image');
+}
+async function toggleAd(id, enabled) {
+  try { await api('/ads/' + id, { method: 'PUT', body: { enabled } }); }
+  catch (e) { toast(e.message, true); loadAds(); }
+}
+async function deleteAd(id) {
+  if (!confirm('حذف هذا الإعلان؟')) return;
+  try { await api('/ads/' + id, { method: 'DELETE' }); loadAds(); toast('تم الحذف'); }
+  catch (e) { toast(e.message, true); }
+}
+
+// =====================================================================
+// DASHBOARD / MONITORING
+// =====================================================================
 async function refreshStatus() {
-  try {
-    const [status,statsResult,channelResult]=await Promise.all([api('/api/status'),api('/api/stats'),api('/api/channels')]);
-    const stats=statsResult.stats||{}, channels=channelResult.channels||[];
-    $('running').textContent=`${stats.channels?.running||0} / ${stats.channels?.total||0} قناة تعمل`;
-    const strip=$('live-strip');strip.classList.toggle('live',(stats.channels?.running||0)>0);
-    $('live-label').textContent=(stats.channels?.running||0)>0?`ON AIR · ${stats.channels.running} قناة`:'OFF AIR · لا توجد قنوات تعمل';
-    $('playlist').textContent=`${stats.channels?.running||0} قائمة HLS نشطة`;
-    $('restarts').textContent=String(channels.reduce((n,c)=>n+(c.restarts||0),0));
-    $('source').textContent=`مصادر: ${stats.devices?.total||0} | CPU: ${stats.cpuPercent==null?'—':stats.cpuPercent+'%'} | ذاكرة الخادم: ${stats.memoryMb??'—'} MB | المشاهدون: ${stats.viewers??0} | HLS: ${formatBytes(stats.hlsBytes||0)}`;
-    const list=$('channel-status-list'); if(list){list.replaceChildren();for(const c of channels){const row=document.createElement('div');row.className='channel-status-row';const info=document.createElement('div');const name=document.createElement('strong');name.textContent=c.name;const meta=document.createElement('small');meta.textContent=`${c.status} · ${c.quality} · ${c.viewers||0} مشاهد`;info.append(name,meta);const actions=document.createElement('div');actions.className='channel-status-actions';for(const [action,label] of [['start','تشغيل'],['stop','إيقاف']]){const b=document.createElement('button');b.type='button';b.className='btn btn-secondary';b.textContent=label;b.addEventListener('click',async()=>{try{await api(`/api/channels/${encodeURIComponent(c.id)}/${action}`,'POST',{});await refreshStatus();}catch(e){showMessage(e.message,true);}});actions.append(b);}row.append(info,actions);list.append(row);}}
-    try {const logData=await api('/api/logs');$('logs').textContent=logData.logs||'لا توجد رسائل بعد.';}catch{$('logs').textContent='تعذر تحميل السجل.';}
-  } catch(error){showMessage(`تعذر جلب حالة الخادم: ${error.message}`,true);}
+  let st;
+  try { st = await api('/status'); } catch (e) { return; }
+  refreshDashboard(); // بطاقات المقاييس (طلب /metrics منفصل خفيف)
+  // header strip
+  const liveCount = st.channels.filter(c => c.status === 'running').length;
+  const strip = $('#onairStrip');
+  strip.textContent = liveCount ? `ON AIR · ${liveCount}` : 'OFF AIR';
+  strip.classList.toggle('live', liveCount > 0);
+  _lastMsgs = st.messages || _lastMsgs; showSysMsg(_lastMsgs);
+  showNginxBindWarning(st.nginxBinding);
+
+  $('#sysStats').innerHTML = `
+    <span class="stat-chip ${st.nginx ? 'good' : 'bad'}">Nginx: <b>${st.nginx ? 'يعمل' : 'متوقف'}</b></span>
+    <span class="stat-chip good">الخادم: <b>${Math.floor(st.uptime / 60)} دقيقة</b></span>
+    <span class="stat-chip">الذاكرة: <b>${st.memoryMB} MB</b></span>
+    <span class="stat-chip ${st.license.valid ? 'good' : 'bad'}">الاشتراك: <b>${st.license.valid ? 'فعّال' : 'غير فعّال'}</b></span>`;
+
+  $('#statusTable tbody').innerHTML = st.channels.map(c => `<tr>
+    <td><b>${esc(c.name)}</b>${c.scheduled ? ' <span class="cell-muted">(مجدولة)</span>' : ''}</td>
+    <td><span class="chip ${c.status}">${STATUS_LABELS[c.status] || c.status}</span></td>
+    <td>${c.viewers}</td>
+    <td>${fmtBytes(c.bytesOut)}</td>
+    <td>${c.restarts}</td>
+    <td>${errCell(c)}</td>
+    <td><div class="row-actions">
+      <button class="btn btn-sm" onclick="chAction('${c.id}','start')">تشغيل</button>
+      <button class="btn btn-sm" onclick="chAction('${c.id}','stop')">إيقاف</button>
+      <button class="btn btn-sm" onclick="chAction('${c.id}','restart')">إعادة</button>
+      <button class="btn btn-sm" onclick="showLog('${c.id}','${esc(c.name)}')">السجل</button>
+    </div></td></tr>`).join('') || '<tr><td colspan="7" class="cell-muted">لا توجد قنوات.</td></tr>';
+
+  // chips inside channels table
+  st.channels.forEach(c => {
+    const chip = $(`[data-chip="${c.id}"]`);
+    if (chip) { chip.className = 'chip ' + c.status; chip.textContent = STATUS_LABELS[c.status] || c.status; }
+  });
+
+  if (currentLogChannel) loadLogBody(currentLogChannel);
 }
 
-function formatBytes(value) {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024*1024) return `${(value/1024).toFixed(1)} KB`;
-  return `${(value/1024/1024).toFixed(1)} MB`;
+async function showLog(id, name) {
+  currentLogChannel = id;
+  $('#logTitle').textContent = 'سجل القناة: ' + name;
+  $('#logCard').classList.remove('hidden');
+  await loadLogBody(id);
+  $('#logCard').scrollIntoView({ behavior: 'smooth' });
+}
+async function loadLogBody(id) {
+  try {
+    const r = await api('/logs/' + id);
+    const el = $('#logBody');
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
+    el.textContent = r.log || '(السجل فارغ)';
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch (e) {}
+}
+function hideLog() { currentLogChannel = null; $('#logCard').classList.add('hidden'); }
+
+async function clearLog() {
+  if (!currentLogChannel) return;
+  if (!confirm('تصفير سجل هذه القناة؟ لا يمكن التراجع.')) return;
+  try {
+    await api('/logs/' + currentLogChannel + '/clear', { method: 'POST' });
+    $('#logBody').textContent = '(السجل فارغ)';
+    toast('تم تصفير السجل');
+  } catch (e) { toast(e.message, true); }
 }
 
-$('start').addEventListener('click', async () => {
-  $('start').disabled = true;
-  try { const id=$('channel-form').dataset.channelId; if(!id)throw new Error('اختر قناة أولاً'); const result=await api(`/api/channels/${encodeURIComponent(id)}/start`,'POST',{});showMessage(result.message||'تم إرسال أمر التشغيل.'); }
-  catch (error) { showMessage(`فشل تشغيل القناة: ${error.message}`, true); }
-  finally { $('start').disabled = false; refreshStatus(); }
-});
-$('stop').addEventListener('click', async () => {
-  $('stop').disabled = true;
-  try { const id=$('channel-form').dataset.channelId; if(!id)throw new Error('اختر قناة أولاً'); const result=await api(`/api/channels/${encodeURIComponent(id)}/stop`,'POST',{});showMessage(result.message||'تم إرسال أمر الإيقاف.'); }
-  catch (error) { showMessage(`فشل إيقاف القناة: ${error.message}`, true); }
-  finally { $('stop').disabled = false; refreshStatus(); }
-});
-$('auto-config').addEventListener('click', autoConfigureCapture);
-
-// أزرار تشغيل/إيقاف/إعادة تشغيل القناة المحددة كانت موجودة في الواجهة بلا أي
-// مستمع نقر، فلم تكن تعمل إطلاقاً. تُنفَّذ الآن على القناة المحددة في نموذج القناة.
-async function runChannelAction(action, doneMessage) {
-  const id = $('channel-form').dataset.channelId;
-  if (!id) return showMessage('اختر قناة أولاً.', true);
-  const button = $('channel-' + action);
-  if (button) button.disabled = true;
-  try {
-    const result = await api(`/api/channels/${encodeURIComponent(id)}/${action}`, 'POST', {});
-    showMessage(result.message || doneMessage);
-  } catch (error) { showMessage(`فشل تنفيذ الأمر: ${error.message}`, true); }
-  finally { if (button) button.disabled = false; refreshStatus(); }
-}
-$('channel-start')?.addEventListener('click', () => runChannelAction('start', 'تم إرسال أمر تشغيل القناة.'));
-$('channel-stop')?.addEventListener('click', () => runChannelAction('stop', 'تم إرسال أمر إيقاف القناة.'));
-$('channel-restart')?.addEventListener('click', () => runChannelAction('restart', 'تم طلب إعادة تشغيل القناة.'));
-
-$('source-form').elements.namedItem('type').addEventListener('change', updateSourceTypeFields);
-$('test-audio')?.addEventListener('click',async()=>{const form=$('source-form');if(!getField(form,'audioDevice'))return showMessage('اختر جهاز صوت أولاً.',true,'source-message');const b=$('test-audio');b.disabled=true;try{const r=await api('/api/devices/test-audio','POST',{audioDevice:getField(form,'audioDevice')});form.dataset.audioTestSignature=sourceAudioSignature(form);showMessage(r.result?.output||'نجح اختبار الصوت.',false,'source-message');}catch(e){showMessage(e.message,true,'source-message');}finally{b.disabled=false;}});
-$('source-form').elements.namedItem('videoSize').addEventListener('change',updateCaptureModeOptions);
-$('source-form').elements.namedItem('pixelFormat').addEventListener('change',updateCaptureModeOptions);
-$('source-form').elements.namedItem('fps').addEventListener('change',updateCaptureModeOptions);
-$('source-auto-config')?.addEventListener('click',autoConfigureCapture);
-$('source-devices')?.addEventListener('click',async()=>{try{const result=await refreshCaptureDevices(getField($('source-form'),'videoDevice'),getField($('source-form'),'audioDevice'));const video=result.devices?.video||[],audio=result.devices?.audio||[];showMessage(video.length?`تم العثور على ${video.length} جهاز فيديو و${audio.length} جهاز صوت.`:'لم يتم العثور على أجهزة فيديو متصلة. وصّل جهازاً ثم أعد الفحص.',!video.length,'source-message');}catch(e){showMessage(`تعذر فحص الأجهزة: ${e.message}`,true,'source-message');}});
-
-$('test-source')?.addEventListener('click',async()=>{
-  const form=$('source-form'); if(['http-hls','rtsp'].includes(getField(form,'type'))){const button=$('test-source');button.disabled=true;try{const r=await api('/api/sources/test','POST',{streamUrl:getField(form,'streamUrl')});form.dataset.videoTestSignature=sourceInputSignature(form);showMessage(r.result?.output||'نجح اختبار المصدر الشبكي.',false,'source-message');}catch(e){showMessage(e.message,true,'source-message');}finally{button.disabled=false;}return;}
-  const button=$('test-source');button.disabled=true;button.textContent='جارٍ اختبار الالتقاط لمدة 3 ثوانٍ…';
-  try{const result=await api('/api/devices/test','POST',{videoDevice:getField(form,'videoDevice'),audioDevice:getField(form,'audioDevice'),videoSize:getField(form,'videoSize'),fps:getField(form,'fps'),pixelFormat:getField(form,'pixelFormat')});form.dataset.videoTestSignature=sourceInputSignature(form);showMessage(result.result?.output||'نجح اختبار المصدر.',false,'source-message');}
-  catch(e){showMessage(`فشل اختبار المصدر: ${e.message}`,true,'source-message');}
-  finally{button.disabled=false;button.textContent='اختبار المصدر قبل الحفظ';}
-});
-
-$('devices').addEventListener('click', async () => {
-  const form = $('source-form');
-  if (['http-hls','rtsp'].includes(getField(form, 'type'))) return showMessage('المصدر الشبكي لا يحتاج إلى فحص أجهزة USB.', false, 'source-message');
-  $('devices').disabled = true; $('device-output').hidden = false; $('device-output').textContent = 'جارٍ فحص أجهزة الالتقاط…';
-  try {
-    await refreshCaptureDevices(getField(form, 'videoDevice'), getField(form, 'audioDevice'));
-    showMessage('تم تحديث قوائم أجهزة الفيديو والصوت.', false, 'source-message');
-  } catch (error) {
-    $('device-output').textContent = `فشل فحص الأجهزة: ${error.message}`;
-    showMessage(`فشل فحص الأجهزة: ${error.message}`, true, 'source-message');
-  } finally { $('devices').disabled = false; }
-});
-
-$('source-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const id = form.dataset.sourceId;
-  const payload = { type: getField(form, 'type'), name: getField(form, 'name'), enabled: getField(form, 'enabled') };
-  if (['http-hls','rtsp'].includes(payload.type)) payload.streamUrl = getField(form, 'streamUrl');
-  else for (const key of ['videoDevice','audioDevice','videoSize','fps','pixelFormat']) payload[key] = getField(form,key);
-  const currentInputSignature=sourceInputSignature(form);
-  const inputChanged=!id || currentInputSignature!==form.dataset.originalInputSignature;
-  if(inputChanged && form.dataset.videoTestSignature!==currentInputSignature) {
-    return showMessage('اختبر المصدر بالإعدادات الحالية قبل الحفظ. إذا غيّرت الدقة أو FPS أو التنسيق، أعد الاختبار.',true,'source-message');
-  }
-  if(inputChanged && payload.type==='usb' && payload.audioDevice &&
-     form.dataset.audioTestSignature!==sourceAudioSignature(form)) {
-    return showMessage('اختبر جهاز الصوت المحدد قبل حفظ المصدر.',true,'source-message');
-  }
-  try {
-    const result = id
-      ? await api(`/api/sources/${encodeURIComponent(id)}`,'PUT',payload)
-      : await api('/api/sources','POST',payload);
-    if (result.source?.id) form.dataset.sourceId = result.source.id;
-    showMessage(id ? 'تم حفظ المصدر.' : 'تم حفظ المصدر وإنشاء قناة مرتبطة به تلقائياً.', false, 'source-message');
-    await loadSource(result.source?.id || id);
-    await loadChannel(result.channel?.id);
-    $('source-dialog').close();
-    refreshStatus();
-  } catch (error) { showMessage(`لم يتم حفظ المصدر: ${error.message}`, true, 'source-message'); }
-});
-
-updateSourceTypeFields();
-
-$('settings-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const payload = {};
-  for (const key of ['siteName','siteNameLatin','phone','logo','ticker','tickerEnabled','autoStartOnDemand','playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','cpuSaverDefault','capLevelToPlayerSize','ffmpegPath','ffprobePath','nginxPath','x264Preset','x264Threads','x264QualityMode','outputWidth','outputHeight','outputFps','gopSeconds','hlsTime','hlsListSize','hlsDeleteThreshold','port','nginxPort','startupQueueDelayMs','autoRestartCrashed','maxRestarts','restartBackoffMs','idleStopEnabled','idleStopMinutes']) payload[key] = getField(form,key);
-  try {
-    await api('/api/settings','PUT',payload);
-    showMessage('تم حفظ الإعدادات بنجاح.', false, 'settings-message');
-    $('settings-dialog').close();
-    refreshStatus();
-  } catch (error) { showMessage(`لم يتم الحفظ: ${error.message}`, true, 'settings-message'); }
-});
-
-$('channel-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const id = form.dataset.channelId;
-  if (!id) return showMessage('معرّف القناة غير متوفر.', true, 'channel-message');
-  const payload = {};
-  for (const key of ['name','category','cover','quality','fps','bitrate','enabled','autoStart','alwaysOn','sortOrder','sourceId']) payload[key] = getField(form,key);
-  try {
-    await api(`/api/channels/${encodeURIComponent(id)}`,'PUT',payload);
-    showMessage('تم حفظ بيانات القناة. أعد تشغيل القناة لتطبيق إعدادات الجودة الجديدة.', false, 'channel-message');
-    $('channel-dialog').close();
-    refreshStatus();
-  } catch (error) { showMessage(`لم يتم حفظ القناة: ${error.message}`, true, 'channel-message'); }
-});
-
-
-$('open-settings')?.addEventListener('click', async () => { await loadSettings(); $('settings-dialog').showModal(); });
-
-$('new-source')?.addEventListener('click', () => {
-  const form = $('source-form'); form.reset(); delete form.dataset.sourceId; delete form.dataset.originalInputSignature; delete form.dataset.videoTestSignature; delete form.dataset.audioTestSignature; $('source-dialog-title').textContent='إضافة مصدر';
-  setField(form,'type','usb'); setField(form,'enabled',true);
-  updateSourceTypeFields();
-  showMessage('جارٍ فحص الأجهزة المتصلة…', false, 'source-message');
-  $('source-dialog').showModal();
-  // فحص فعلي عند فتح نافذة الإضافة: القوائم تُبنى من أجهزة FFmpeg الحالية فقط.
-  refreshCaptureDevices('', '').then(result => {
-    const video = result.devices?.video || [];
-    showMessage(
-      video.length ? `تم العثور على ${video.length} جهاز فيديو متصل. اختر الجهاز ثم احفظ.` : 'لم يتم العثور على أجهزة فيديو متصلة. وصّل جهازاً ثم اضغط «إعادة فحص الأجهزة».',
-      !video.length, 'source-message'
-    );
-  }).catch(error => showMessage(`تعذر فحص الأجهزة: ${error.message}`, true, 'source-message'));
-});
-$('edit-source')?.addEventListener('click',()=>{if(!$('source-form').dataset.sourceId)return showMessage('لا يوجد مصدر محدد.',true,'source-message');$('source-dialog-title').textContent='تعديل مصدر';$('source-dialog').showModal();});
-$('delete-source')?.addEventListener('click',async()=>{const id=$('source-form').dataset.sourceId;if(!id)return;if(!await askConfirmation('حذف المصدر المحدد؟ يجب حذف القناة المرتبطة به أولاً.','تأكيد حذف المصدر'))return;try{await api(`/api/sources/${encodeURIComponent(id)}`,'DELETE');await loadSource();await loadChannel();refreshStatus();showMessage('تم حذف المصدر.');}catch(e){showMessage(e.message,true,'source-message');}});
-$('edit-channel')?.addEventListener('click',()=>{if(!$('channel-form').dataset.channelId)return showMessage('لا توجد قناة محددة.',true,'channel-message');$('channel-dialog').showModal();});
-$('delete-channel')?.addEventListener('click',async()=>{const id=$('channel-form').dataset.channelId;if(!id)return; if(!await askConfirmation('هل تريد حذف القناة المحددة؟','تأكيد حذف القناة'))return;try{await api(`/api/channels/${encodeURIComponent(id)}`,'DELETE');await loadChannel();refreshStatus();showMessage('تم حذف القناة.',false,'channel-message');}catch(e){showMessage(e.message,true,'channel-message');}});
-document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>$(b.dataset.close).close()));
-$('channel-select')?.addEventListener('change', event => loadChannel(event.target.value));
-$('source-select')?.addEventListener('change', event => loadSource(event.target.value));
-for (const action of ['start','stop','restart']) $('channel-'+action)?.addEventListener('click', async () => { const id=$('channel-form').dataset.channelId; if(!id)return; try{const r=await api(`/api/channels/${encodeURIComponent(id)}/${action}`,'POST',{});showMessage(r.message||'تم تنفيذ الأمر.',false,'channel-message');}catch(e){showMessage(e.message,true,'channel-message');} refreshStatus(); });
-
-// التنقل بين أقسام لوحة الإدارة داخل مساحة المحتوى نفسها: يُعرض قسم واحد فقط،
-// ويُزامَن الرابط النشط معه، دون فتح تبويب أو نافذة جديدة ودون إعادة تحميل الصفحة.
-const adminNavLinks = Array.from(document.querySelectorAll('.nav-link'));
-const adminSections = Array.from(document.querySelectorAll('.main > section'));
-
-function activateAdminSection(target, options = {}) {
-  const link = adminNavLinks.includes(target)
-    ? target
-    : adminNavLinks.find(item => item.getAttribute('href') === `#${target}`) || adminNavLinks[0];
-  if (!link) return;
-  const section = document.getElementById((link.getAttribute('href') || '').slice(1));
-  if (!section) return;
-  for (const item of adminSections) item.classList.toggle('is-active', item === section);
-  for (const item of adminNavLinks) {
-    item.classList.toggle('active', item === link);
-    if (item === link) item.setAttribute('aria-current', 'page');
-    else item.removeAttribute('aria-current');
-  }
-  if (options.updateHash !== false && location.hash !== link.hash) history.replaceState(null, '', link.hash);
-  if (options.scroll !== false) {
-    if (window.matchMedia('(max-width:700px)').matches) link.scrollIntoView({ block: 'nearest', inline: 'center' });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
+function downloadLog() {
+  if (!currentLogChannel) return;
+  const a = document.createElement('a');
+  a.href = '/api/logs/' + currentLogChannel + '/download';
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
-adminNavLinks.forEach(link => link.addEventListener('click', event => {
-  event.preventDefault();
-  activateAdminSection(link);
-}));
-window.addEventListener('hashchange', () => activateAdminSection(location.hash.slice(1), { updateHash: false }));
-activateAdminSection(location.hash.slice(1) || 'overview', { updateHash: false, scroll: false });
+// خلية الأخطاء في لوحة المراقبة: تعرض فقط آخر خطأ خلال 10 دقائق (يأتي من الخادم
+// كـ lastError أو null)، ملوّناً حسب الخطورة: أحمر = قاتل يمنع البث، أصفر = مشكلة
+// شبكة قابلة للتعافي، رمادي = بطء/تأخّر مؤقّت. لا خطأ حديث ⇐ شرطة فقط.
+function errCell(c) {
+  const e = c.lastError;
+  if (!e || !e.text) return '<span class="cell-muted">—</span>';
+  const cls = { high: 'err-high', medium: 'err-medium', low: 'err-low' }[e.severity] || 'err-low';
+  return `<div class="err-lines ${cls}" title="${esc((c.lastErrors || []).join('\n'))}">${esc(e.text)}</div>`;
+}
 
-$('refresh-network')?.addEventListener('click', loadNetworkInterfaces);
-// تغيير جهاز الفيديو يعيد قراءة قدراته الفعلية من FFmpeg.
-$('source-form')?.elements.namedItem('videoDevice')?.addEventListener('change', event => { loadDeviceCapabilities(event.target.value); });
-loadNetworkInterfaces();
-loadSettings();
-loadChannel();
-loadSource();
-refreshStatus();
-setInterval(refreshStatus, 3000);
+// تسمية جودة القناة للعرض (copy = نسخ المصدر)
+function qualityLabel(q) { return (!q || q === 'copy') ? 'نسخ المصدر' : q; }
+// تنسيق حجم البيانات بشكل مقروء
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  return (n / 1073741824).toFixed(2) + ' GB';
+}
+function fmtBps(bps) {
+  const bits = (Number(bps) || 0) * 8; // الباندويث يُعرض بالبت/ثانية
+  if (bits < 1000) return bits.toFixed(0) + ' bps';
+  if (bits < 1e6) return (bits / 1e3).toFixed(1) + ' Kbps';
+  if (bits < 1e9) return (bits / 1e6).toFixed(2) + ' Mbps';
+  return (bits / 1e9).toFixed(2) + ' Gbps';
+}
+function fmtDuration(sec) {
+  sec = Number(sec) || 0;
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
+  if (d > 0) return `${d}ي ${h}س ${m}د`;
+  if (h > 0) return `${h}س ${m}د ${s}ث`;
+  if (m > 0) return `${m}د ${s}ث`;
+  return `${s}ث`;
+}
+function dashCard(cls, ico, val, unit, label, sub, pulse) {
+  return `<div class="dash-card ${cls}">
+    <div class="dash-ico">${ico}</div>
+    <div class="dash-val">${pulse ? '<span class="dash-pulse"></span>' : ''}${val}${unit ? `<small>${unit}</small>` : ''}</div>
+    <div class="dash-lbl">${label}</div>
+    ${sub ? `<div class="dash-sub">${sub}</div>` : ''}
+  </div>`;
+}
+// لوحة مقاييس النظام: تُحدَّث مع كل نبضة حالة (كل 5ث) عبر /metrics.
+async function refreshDashboard() {
+  const grid = document.getElementById('dashGrid');
+  if (!grid) return;
+  let m;
+  try { m = await api('/metrics'); } catch (e) { return; }
+  const cpuPct = m.cpuCount ? Math.min(100, Math.round((m.cpuLoad / m.cpuCount) * 100)) : 0;
+  grid.innerHTML = [
+    dashCard('green-accent', '⏱️', fmtDuration(m.uptimeSec), '', 'مدة التشغيل', 'منذ آخر إقلاع', false),
+    dashCard('amber-accent', '🖥️', cpuPct, '%', 'استهلاك المعالج', `${m.cpuCount} نواة · ${m.memoryMB} MB ذاكرة`, false),
+    dashCard('live-accent', '👁️', m.currentViewers, '', 'المشاهدون الآن', `يشاهدون ${m.watchedChannels} قناة`, m.currentViewers > 0),
+    dashCard('blue-accent', '📊', m.totalViewers, '', 'إجمالي المشاهدين', 'منذ بدء التشغيل', false),
+    dashCard('purple-accent', '📺', m.runningChannels, ` / ${m.totalChannels}`, 'قنوات تبثّ الآن', `${m.watchedChannels} منها مُشاهَدة`, m.runningChannels > 0),
+    dashCard('green-accent', '⬇️', fmtBytes(m.hlsBytesTotal), '', 'بيانات HLS المُولّدة', 'إجمالي مقاطع m3u8', false),
+    dashCard('live-accent', '⬆️', fmtBytes(m.egressBytesTotal), '', 'البيانات الخارجة للمشتركين', 'تقدير حسب المشاهدين', false),
+    dashCard('blue-accent', '📡', fmtBps(m.ingestBandwidthBps), '', 'باندويث البث الحالي', 'وارد من المصادر', m.ingestBandwidthBps > 0),
+    dashCard('amber-accent', '🌐', fmtBps(m.egressBandwidthBps), '', 'باندويث الخروج للمشاهدين', 'تقدير فعلي حالي', m.egressBandwidthBps > 0),
+    dashCard('purple-accent', '🔌', fmtBps(m.internetBandwidthBps), '', 'باندويث الإنترنت المستهلك', 'حالياً (وارد)', m.internetBandwidthBps > 0)
+  ].join('');
+}
+
+// =====================================================================
+// WORLD CUP
+// =====================================================================
+async function loadMatches() {
+  DATA.matches = (await api('/matches')).matches;
+  const fmt = new Intl.DateTimeFormat('ar-SA', { timeZone: 'Asia/Riyadh', dateStyle: 'medium', timeStyle: 'short' });
+  const chName = id => DATA.channels.find(c => c.id === id)?.name || '—';
+  $('#matchesTable tbody').innerHTML = DATA.matches.map(m => `<tr>
+    <td><b>${esc(m.homeFlag)} ${esc(m.home)} × ${esc(m.away)} ${esc(m.awayFlag)}</b></td>
+    <td>${esc(m.group)}</td>
+    <td>${(() => { try { return fmt.format(new Date(m.kickoffUtc)); } catch (e) { return m.kickoffUtc; } })()}</td>
+    <td>${esc(chName(m.channelId))}</td>
+    <td><button class="btn btn-sm btn-danger" onclick="deleteMatch('${m.id}')">حذف</button></td>
+  </tr>`).join('') || '<tr><td colspan="5" class="cell-muted">لا توجد مباريات مضافة.</td></tr>';
+}
+
+function openMatchModal() {
+  openModal('إضافة مباراة', `
+    <div class="grid-2">
+      <label>الفريق الأول<input class="input" id="m_home" placeholder="السعودية"></label>
+      <label>علم الفريق الأول (إيموجي)<input class="input" id="m_homeFlag" placeholder="🇸🇦"></label>
+      <label>الفريق الثاني<input class="input" id="m_away" placeholder="الأرجنتين"></label>
+      <label>علم الفريق الثاني (إيموجي)<input class="input" id="m_awayFlag" placeholder="🇦🇷"></label>
+    </div>
+    <label>المجموعة / الدور<input class="input" id="m_group" placeholder="المجموعة B"></label>
+    <label>وقت الانطلاق (بالتوقيت العالمي UTC — سيُعرض للمشاهد بتوقيت الرياض)
+      <input class="input" id="m_kick" type="datetime-local"></label>
+    <label>قناة البث (اختياري)
+      <select class="input" id="m_mchannel"><option value="">—</option>
+        ${DATA.channels.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+      </select></label>`,
+    async () => {
+      const local = $('#m_kick').value;
+      if (!local) throw new Error('حدد وقت المباراة');
+      await api('/matches', { method: 'POST', body: {
+        home: $('#m_home').value.trim(), away: $('#m_away').value.trim(),
+        homeFlag: $('#m_homeFlag').value.trim(), awayFlag: $('#m_awayFlag').value.trim(),
+        group: $('#m_group').value.trim(),
+        kickoffUtc: new Date(local + 'Z').toISOString(),
+        channelId: $('#m_mchannel').value } });
+      await loadMatches();
+      toast('تمت إضافة المباراة');
+    });
+}
+
+async function deleteMatch(id) {
+  try { await api('/matches/' + id, { method: 'DELETE' }); loadMatches(); }
+  catch (e) { toast(e.message, true); }
+}
+
+async function loadNews() {
+  try {
+    const r = await api('/public/worldcup/news');
+    $('#newsList').innerHTML = (r.items || []).slice(0, 12).map(i =>
+      `<li>${i.link ? `<a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a>` : esc(i.title)}
+        <span class="src">${esc(i.source || '')}${r.cached ? ' · من الذاكرة المؤقتة' : ''}</span></li>`).join('')
+      || '<li class="cell-muted">لا توجد أخبار — تحقق من اتصال الإنترنت أو مصادر الأخبار في الإعدادات.</li>';
+  } catch (e) {}
+}
+async function refreshNews() {
+  try { await api('/worldcup/refresh-news', { method: 'POST' }); loadNews(); toast('تم تحديث الأخبار'); }
+  catch (e) { toast(e.message, true); }
+}
+
+// =====================================================================
+// XTREAM CODES
+// =====================================================================
+let XT = [];
+async function xtFetch() {
+  $('#xtMsg').textContent = '';
+  $('#xtCount').textContent = 'جارٍ الجلب...';
+  try {
+    const r = await api('/xtream/fetch', { method: 'POST', body: {
+      server: $('#xtServer').value.trim(), username: $('#xtUser').value.trim(),
+      password: $('#xtPass').value.trim(), output: $('#xtOutput').value,
+      userAgent: $('#xtUA').value.trim(), proxyBase: $('#xtProxy').value.trim()
+    }});
+    XT = r.channels || [];
+    xtRender();
+    if (r.via === 'proxy') toast(r.note || 'تم الجلب عبر الوسيط');
+  } catch (e) {
+    XT = []; xtRender();
+    $('#xtMsg').textContent = e.message; $('#xtCount').textContent = '';
+  }
+}
+async function xtFetchM3u() {
+  $('#xtMsg').textContent = '';
+  $('#xtCount').textContent = 'جارٍ الجلب من الرابط...';
+  try {
+    const r = await api('/xtream/fetch-m3u', { method: 'POST', body: {
+      url: $('#xtM3uUrl').value.trim(), userAgent: $('#xtUA').value.trim()
+    }});
+    XT = r.channels || [];
+    xtRender();
+  } catch (e) {
+    XT = []; xtRender();
+    $('#xtMsg').textContent = e.message; $('#xtCount').textContent = '';
+  }
+}
+function xtRender() {
+  const q = ($('#xtFilter').value || '').toLowerCase();
+  const list = XT.filter(c => !q || (c.name || '').toLowerCase().includes(q) || (c.group || '').toLowerCase().includes(q));
+  $('#xtCount').textContent = XT.length ? `إجمالي ${XT.length} قناة — معروض ${list.length}` : '';
+  $('#xtTable tbody').innerHTML = list.slice(0, 800).map((c, i) => {
+    const idx = XT.indexOf(c);
+    return `<tr>
+      <td>${c.logo ? `<img class="iptv-logo" src="${esc(c.logo)}" loading="lazy" onerror="this.style.display='none'">` : '📺'}</td>
+      <td><b>${esc(c.name)}</b></td>
+      <td>${esc(c.group)}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="xtAdd(${idx})">إضافة كمصدر وقناة</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="4" class="cell-muted">لا توجد نتائج.</td></tr>';
+}
+async function xtAdd(idx) {
+  const c = XT[idx];
+  if (!c) return;
+  try {
+    await api('/xtream/add', { method: 'POST', body: { name: c.name, url: c.url, logo: c.logo, group: c.group } });
+    toast('تمت إضافة «' + c.name + '» كمصدر وقناة');
+    await loadSources();
+    await loadChannels();
+  } catch (e) { toast(e.message, true); }
+}
+
+// =====================================================================
+// اشتراك MH (يحل الروابط الحقيقية عبر إعادة التوجيه)
+// =====================================================================
+let MH = [];
+async function mhFetch() {
+  $('#mhMsg').textContent = '';
+  $('#mhStatus').textContent = '';
+  $('#mhCount').textContent = 'جارٍ الاتصال بالاشتراك...';
+  try {
+    const r = await api('/mh/fetch', { method: 'POST', body: {
+      server: $('#mhServer').value.trim(),
+      username: $('#mhUser').value.trim(),
+      password: $('#mhPass').value.trim(),
+      userAgent: $('#mhUA').value.trim()
+    }});
+    MH = (r.channels || []).map(c => Object.assign({}, c, { realUrl: '', resolved: null }));
+    mhRender();
+    $('#mhStatus').textContent = `تم جلب ${MH.length} قناة. اضغط «حل الروابط الحقيقية» لاكتشاف روابط البث، أو أضف مباشرة (سيُحلّ الرابط تلقائياً عند الإضافة).`;
+  } catch (e) {
+    MH = []; mhRender();
+    $('#mhMsg').textContent = e.message; $('#mhCount').textContent = '';
+  }
+}
+function mhRender() {
+  const q = ($('#mhFilter').value || '').toLowerCase();
+  const list = MH.filter(c => !q || (c.name || '').toLowerCase().includes(q) || (c.group || '').toLowerCase().includes(q));
+  $('#mhCount').textContent = MH.length ? `إجمالي ${MH.length} قناة — معروض ${list.length}` : '';
+  $('#mhTable tbody').innerHTML = list.slice(0, 1000).map(c => {
+    const idx = MH.indexOf(c);
+    let realCell;
+    if (c.resolved === true) realCell = `<span style="color:var(--ok,#3a7)" title="${esc(c.realUrl)}">✓ ${esc((c.realUrl || '').slice(0, 40))}…</span>`;
+    else if (c.resolved === false) realCell = `<span style="color:var(--accent)">✗ تعذّر الحل</span>`;
+    else realCell = `<span class="cell-muted">— لم يُحَل بعد —</span>`;
+    return `<tr>
+      <td><input type="checkbox" class="mh-chk" value="${idx}"></td>
+      <td>${c.logo ? `<img class="iptv-logo" src="${esc(c.logo)}" loading="lazy" onerror="this.style.display='none'">` : '📺'}</td>
+      <td><b>${esc(c.name)}</b></td>
+      <td>${esc(c.group)}</td>
+      <td class="cell-muted">${realCell}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="mhAddOne(${idx})">إضافة</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="cell-muted">لا توجد نتائج.</td></tr>';
+  const a = $('#mhChkAll'); if (a) a.checked = false;
+}
+function mhToggleAll(on) { $$('.mh-chk').forEach(c => c.checked = on); }
+function mhSelectAllVisible() { $$('.mh-chk').forEach(c => c.checked = true); const a = $('#mhChkAll'); if (a) a.checked = true; }
+function mhClearSel() { $$('.mh-chk').forEach(c => c.checked = false); const a = $('#mhChkAll'); if (a) a.checked = false; }
+function mhSelectedIdxs() { return $$('.mh-chk:checked').map(c => Number(c.value)); }
+
+// حل الروابط الحقيقية للقنوات المحددة (يعرضها في العمود دون إضافة).
+async function mhResolveSelected() {
+  const idxs = mhSelectedIdxs();
+  if (!idxs.length) { toast('حدّد قناة واحدة على الأقل', true); return; }
+  const items = idxs.map(i => MH[i]).filter(Boolean);
+  try {
+    $('#mhStatus').textContent = `جارٍ حل ${items.length} رابط... قد يستغرق بضع ثوانٍ.`;
+    const r = await api('/mh/resolve', { method: 'POST', body: { items, userAgent: $('#mhUA').value.trim() } });
+    for (const resolved of (r.channels || [])) {
+      const orig = MH.find(c => c.streamId === resolved.streamId && c.portalUrl === resolved.portalUrl);
+      if (orig) { orig.realUrl = resolved.realUrl; orig.resolved = resolved.resolved; orig.kind = resolved.kind; }
+    }
+    mhRender();
+    const okN = (r.channels || []).filter(c => c.resolved).length;
+    $('#mhStatus').textContent = `تم حل ${okN} من ${items.length} رابط بنجاح.`;
+  } catch (e) { toast(e.message, true); $('#mhStatus').textContent = ''; }
+}
+// إضافة قناة واحدة (يحل رابطها الحقيقي ثم يضيفها).
+async function mhAddOne(idx) {
+  const c = MH[idx];
+  if (!c) return;
+  try {
+    toast('جارٍ حل الرابط وإضافة القناة...');
+    const r = await api('/mh/add-batch', { method: 'POST', body: { items: [c], userAgent: $('#mhUA').value.trim() } });
+    if (r.added) { toast('تمت إضافة «' + c.name + '»'); await loadSources(); await loadChannels(); }
+    else if (r.failed) toast('تعذّر حل رابط القناة (الخادم لم يستجب)', true);
+    else toast('القناة موجودة مسبقاً', true);
+  } catch (e) { toast(e.message, true); }
+}
+// إضافة المحددة دفعة واحدة (يحل الروابط الحقيقية تلقائياً ثم يضيف).
+async function mhAddSelected() {
+  const idxs = mhSelectedIdxs();
+  if (!idxs.length) { toast('حدّد قناة واحدة على الأقل', true); return; }
+  const items = idxs.map(i => MH[i]).filter(Boolean);
+  try {
+    $('#mhStatus').textContent = `جارٍ حل الروابط وإضافة ${items.length} قناة... قد يستغرق بعض الوقت.`;
+    toast(`جارٍ معالجة ${items.length} قناة...`);
+    const r = await api('/mh/add-batch', { method: 'POST', body: { items, userAgent: $('#mhUA').value.trim() } });
+    let msg = `أُضيفت ${r.added} قناة`;
+    if (r.skipped) msg += ` · تُخطّيت ${r.skipped} مكرّرة`;
+    if (r.failed) msg += ` · فشل حل ${r.failed}`;
+    toast(msg);
+    $('#mhStatus').textContent = msg;
+    mhClearSel();
+    await loadSources();
+    await loadChannels();
+  } catch (e) { toast(e.message, true); $('#mhStatus').textContent = ''; }
+}
+
+// =====================================================================
+// ONLINE CHANNELS (from license server)
+// =====================================================================
+let ONLINE = [];
+async function loadOnline() {
+  const tb = $('#onlineTable tbody');
+  tb.innerHTML = '<tr><td colspan="6" class="cell-muted">جارٍ جلب القنوات من الخادم...</td></tr>';
+  try {
+    ONLINE = (await api('/online-channels')).channels || [];
+    const imported = new Set(DATA.channels.map(c => c.onlineId).filter(Boolean));
+    tb.innerHTML = ONLINE.map(c => `<tr>
+      <td><input type="checkbox" class="online-chk" value="${esc(c.id)}"></td>
+      <td>${c.cover ? `<img class="iptv-logo" src="${esc(c.cover)}" onerror="this.style.display='none'">` : '📺'}</td>
+      <td><b>${esc(c.name)}</b></td>
+      <td>${esc(c.category)}</td>
+      <td class="cell-muted">${qualityLabel(c.quality)}</td>
+      <td>${imported.has(c.id) ? '<span class="chip running" style="--ok:#3FA66A">مستوردة</span>' : '<span class="cell-muted">غير مستوردة</span>'}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="cell-muted">لا توجد قنوات متاحة لاشتراكك حالياً.</td></tr>';
+  } catch (e) {
+    tb.innerHTML = `<tr><td colspan="6" class="form-error">${esc(e.message)}</td></tr>`;
+  }
+}
+function toggleAllOnline(box) { $$('.online-chk').forEach(c => c.checked = box.checked); }
+async function importOnline() {
+  const ids = $$('.online-chk:checked').map(c => c.value);
+  try {
+    const r = await api('/online-channels/import', { method: 'POST', body: { ids } });
+    toast(`تم استيراد ${r.imported} قناة`);
+    await loadChannels();
+    await loadSources();
+    loadOnline();
+  } catch (e) { toast(e.message, true); }
+}
+
+// =====================================================================
+// LICENSE
+// =====================================================================
+async function loadLicense() {
+  const res = await api('/license');
+  const license = res.license;
+  const contact = res.contact || {};
+  _lastMsgs = res.messages || []; showSysMsg(_lastMsgs);
+  const fmt = ts => ts ? new Date(ts).toLocaleString('ar-SA') : '—';
+  let statusText, statusColor;
+  if (license.valid && license.isTrial) {
+    statusText = `فترة تجريبية — متبقٍّ ${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'}`;
+    statusColor = '#E0A82E';
+  } else if (license.valid) {
+    statusText = 'الاشتراك فعّال'; statusColor = 'var(--ok)';
+  } else if (license.activated) {
+    statusText = license.isTrial ? 'انتهت الفترة التجريبية — يرجى شراء ترخيص' : 'الاشتراك منتهي';
+    statusColor = 'var(--live)';
+  } else {
+    statusText = 'غير مفعّل'; statusColor = 'var(--live)';
+  }
+  // أزرار التواصل للشراء
+  const contactBtns = () => {
+    let h = '';
+    if (contact.whatsapp) h += `<a class="buy-btn wa" href="https://wa.me/${esc(contact.whatsapp.replace(/[^0-9]/g, ''))}" target="_blank">📱 واتساب للاشتراك</a>`;
+    if (contact.phone) h += `<a class="buy-btn" href="tel:${esc(contact.phone)}">📞 ${esc(contact.phone)}</a>`;
+    return h;
+  };
+  // لافتة حسب الحالة
+  let banner = '';
+  if (license.isTrial && license.valid) {
+    banner = `<div class="trial-banner">أنت تستخدم النسخة التجريبية (${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'} متبقية). للاستمرار بعد انتهائها، احصل على اشتراك.${contact.note ? '<br>' + esc(contact.note) : ''}<div class="buy-row">${contactBtns()}</div></div>`;
+  } else if (!license.valid && license.activated) {
+    banner = `<div class="trial-banner ended"><b>${license.isTrial ? 'انتهت فترتك التجريبية' : 'انتهى اشتراكك'}.</b> للاستمرار في استخدام النظام، يرجى تجديد الاشتراك.${contact.note ? '<br>' + esc(contact.note) : ''}<div class="buy-row">${contactBtns()}</div></div>`;
+  } else if (license.valid && !license.isTrial && license.daysLeft != null && license.daysLeft <= 3) {
+    banner = `<div class="trial-banner">⏳ اشتراكك ينتهي بعد ${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'}. جدّد الآن لتجنّب انقطاع الخدمة.<div class="buy-row">${contactBtns()}</div></div>`;
+  }
+  $('#licenseStatus').innerHTML = banner + `
+    <div><span class="lbl">الحالة: </span><b style="color:${statusColor}">${statusText}</b></div>
+    <div><span class="lbl">معرّف هذا الجهاز (أرسله لمزوّد الخدمة): </span><div class="val">${esc(license.deviceId)}</div></div>
+    <div><span class="lbl">المفتاح: </span><span class="val">${esc(license.key || '—')}</span></div>
+    <div><span class="lbl">ينتهي في: </span>${fmt(license.expiresAt)}</div>
+    <div><span class="lbl">آخر تحقق: </span>${fmt(license.lastCheck)}</div>`;
+}
+
+let _dismissedMsgs = JSON.parse(localStorage.getItem('amaan_msg_dismiss') || '[]');
+function showSysMsg(list) {
+  const bar = $('#sysMsgBar');
+  if (!bar) return;
+  const msgs = (Array.isArray(list) ? list : []).filter(m => m && m.text && !_dismissedMsgs.includes(m.id));
+  if (!msgs.length) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+  bar.classList.remove('hidden');
+  bar.classList.add('sys-msg-wrap');
+  bar.innerHTML = msgs.map(m => `
+    <div class="sys-msg ${m.level === 'warn' ? 'warn' : m.level === 'success' ? 'success' : ''}">
+      <span class="sys-msg-icon">📢</span>
+      <span class="sys-msg-text">${escHtml(m.text)}</span>
+      <button class="sys-msg-close" onclick="dismissSysMsg('${m.id}')" title="إخفاء">✕</button>
+    </div>`).join('');
+}
+function escHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+// تحذير تشخيصي: عملية nginx.exe قد تكون "موجودة" لكن فشلت في حجز المنفذ فعلياً
+// (فشل صامت شائع على ويندوز — عادة حجز نظام ويندوز لنطاق منافذ عبر Hyper-V/WSL،
+// لا علاقة له بتعدد عمليات nginx). يبقى ظاهراً بلا زر إخفاء حتى يُحَل فعلياً،
+// فلا يفوت المدير مشكلة بث حقيقية بسبب إغلاقه بالخطأ.
+function showNginxBindWarning(nb) {
+  const bar = $('#nginxBindBar');
+  if (!bar) return;
+  if (!nb || nb.listening !== false || !nb.reason) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+  bar.classList.remove('hidden');
+  bar.innerHTML = `<div class="sys-msg warn"><span class="sys-msg-icon">⚠️</span><span class="sys-msg-text"><b>Nginx لا يستجيب فعلياً على المنفذ ${nb.port}:</b> ${escHtml(nb.reason)}</span></div>`;
+}
+function dismissSysMsg(id) {
+  if (id && !_dismissedMsgs.includes(id)) _dismissedMsgs.push(id);
+  localStorage.setItem('amaan_msg_dismiss', JSON.stringify(_dismissedMsgs.slice(-50)));
+  showSysMsg(_lastMsgs);
+}
+let _lastMsgs = [];
+
+async function activateLicense() {
+  $('#licMsg').textContent = '';
+  try {
+    await api('/license/activate', { method: 'POST', body: { key: $('#lic_key').value.trim() } });
+    toast('تم تفعيل الاشتراك');
+    loadLicense();
+  } catch (e) { $('#licMsg').textContent = e.message; }
+}
+
+// =====================================================================
+// SYSTEM UPDATE
+// =====================================================================
+async function checkUpdate(force) {
+  try {
+    const u = await api('/update/status' + (force ? '?force=1' : ''));
+    const box = $('#updateStatus');
+    if (u.available) {
+      box.innerHTML = `
+        <div><span class="lbl">الإصدار الحالي: </span><span class="val">${esc(u.currentVersion)}</span></div>
+        <div><b style="color:var(--brass)">يتوفر تحديث جديد: الإصدار ${esc(u.latestVersion)}${u.mandatory ? ' (إجباري)' : ''}</b></div>
+        ${u.changelog ? `<div><span class="lbl">ما الجديد: </span>${esc(u.changelog)}</div>` : ''}`;
+      $('#applyUpdateBtn').classList.remove('hidden');
+    } else {
+      box.innerHTML = `
+        <div><span class="lbl">الإصدار الحالي: </span><span class="val">${esc(u.currentVersion)}</span></div>
+        <div><b style="color:var(--ok)">النظام محدَّث ✓</b></div>`;
+      $('#applyUpdateBtn').classList.add('hidden');
+    }
+    return u;
+  } catch (e) { return null; }
+}
+
+async function applyUpdate() {
+  if (!confirm('سيتم إيقاف البث مؤقتاً وتنزيل التحديث ثم إعادة تشغيل النظام تلقائياً. متابعة؟')) return;
+  $('#updMsg').textContent = '';
+  const btn = $('#applyUpdateBtn');
+  btn.disabled = true; btn.textContent = 'جارٍ التحديث...';
+  try {
+    const r = await api('/update/apply', { method: 'POST', body: {} });
+    toast(r.message || 'تم التحديث');
+    $('#updateStatus').innerHTML = '<div><b style="color:var(--ok)">تم التحديث إلى ' + esc(r.to) + ' — يُعاد تشغيل النظام، حدّث الصفحة بعد لحظات.</b></div>';
+    setTimeout(() => location.reload(), 12000);
+  } catch (e) {
+    $('#updMsg').textContent = e.message;
+    btn.disabled = false; btn.textContent = 'تحديث الآن';
+  }
+}
+
+/** إشعار عام عند توفر تحديث (يظهر بعد الدخول) */
+async function updateBanner() {
+  const u = await checkUpdate(false);
+  if (u && u.available) {
+    toast('🔔 يتوفر تحديث جديد للنظام (الإصدار ' + u.latestVersion + ') — من قائمة الاشتراك والترخيص');
+  }
+}

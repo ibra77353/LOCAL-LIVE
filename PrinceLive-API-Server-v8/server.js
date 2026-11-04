@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
 const os = require('os');
+const net = require('net');
 
 const ROOT = __dirname;
 const CONFIG_PATH = path.join(ROOT, 'config.json');
@@ -49,6 +50,9 @@ let servedBytes = 0;
 const viewerSessions = new Map();
 let previousCpu = os.cpus().map(c => ({ idle: c.times.idle, total: Object.values(c.times).reduce((a,b) => a+b, 0) }));
 let cpuPercent = null;
+let egressBps = 0;
+let totalViewerCount = 0;
+let lastServedSample = { bytes: 0, at: Date.now() };
 
 // API model: persisted locally in data.json. This release runs one capture pipeline
 // (one physical DirectShow input) and exposes it as a configurable channel.
@@ -87,6 +91,11 @@ function defaultData() {
       restartBackoffMs: Number(cfg.restartDelayMs) || 5000,
       idleStopEnabled: !!cfg.idleStopEnabled,
       idleStopMinutes: Number(cfg.idleStopMinutes) || 2,
+      sourceFailStopMinutes: Number(cfg.sourceFailStopMinutes) || 3,
+      blockedStopMinutes: Number(cfg.blockedStopMinutes) || 1000,
+      streamUserAgent: cfg.streamUserAgent || 'VLC/3.0.20 LibVLC/3.0.20',
+      logoImage: cfg.logoImage || '', logoPosition: cfg.logoPosition || 'top-right',
+      logoSizePct: Number(cfg.logoSizePct) || 10, logoOpacityPct: Number(cfg.logoOpacityPct) || 50,
     },
     sources: [],
     channels: []
@@ -130,6 +139,14 @@ function sourceForChannel(channel = activeChannel()) { return channel ? (data.so
 function channelRuntime(channelId) { return streams.get(channelId) || null; }
 function channelHlsDir(channel) { return path.join(HLS_DIR, channel.id); }
 function playlistPath(channel) { return path.join(channelHlsDir(channel), 'index.m3u8'); }
+// مسارات الملفات المرفوعة تُخزَّن كما في الحزمة (srv/uploads/x) وتُعرض عبر /uploads/x.
+function publicAsset(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:/i.test(raw) || raw.startsWith('/uploads/')) return raw;
+  return '/' + raw.replace(/^\.?\/+/, '').replace(/^srv\/uploads\/?/, 'uploads/');
+}
+function isCopyQuality(q) { const v = String(q || '').toLowerCase(); return v === 'source' || v === 'copy'; }
 function publicChannel(channel) {
   const source = sourceForChannel(channel);
   const runtime = channelRuntime(channel.id);
@@ -137,10 +154,15 @@ function publicChannel(channel) {
   try { const st = fs.statSync(playlistPath(channel)); playlistExists = st.isFile(); playlistAgeMs = Date.now() - st.mtimeMs; } catch {}
   const live = !!(channel.enabled && runtime?.proc && playlistExists && playlistAgeMs < 15000);
   const viewers = [...viewerSessions.values()].filter(v => v.channelId === channel.id && Date.now()-v.lastSeen <= 45000).length;
-  return { ...channel, url: `/hls/${channel.id}/index.m3u8`, device: source?.videoDevice || '', sourceName: source?.name || '', live,
-    status: live ? 'running' : (!channel.enabled ? 'disabled' : (runtime?.proc ? 'starting' : (runtime?.lastExit ? 'error' : 'stopped'))),
+  const lastErrorText = runtime?.lastExit || '';
+  return { ...channel, chanId: channel.chanId || channel.id, sort: Number(channel.sortOrder) || 0,
+    url: `/hls/${channel.id}/index.m3u8`, cover: publicAsset(channel.cover),
+    device: source?.videoDevice || '', sourceName: source?.name || '', live,
+    status: live ? 'running' : (!channel.enabled ? 'stopped' : (runtime?.proc ? 'starting' : (runtime?.lastExit ? 'error' : 'stopped'))),
     state: live ? 'running' : 'stopped', pid: runtime?.proc?.pid || null, viewers, restarts: runtime?.restartCount || 0,
-    lastError: runtime?.lastExit || '' };
+    lastErrorText,
+    lastError: lastErrorText ? { text: lastErrorText, severity: /exit|error|فشل|تعذر/i.test(lastErrorText) ? 'high' : 'low' } : null,
+    lastErrors: lastErrorText ? [lastErrorText] : [], bytesOut: 0 };
 }
 
 function readBody(req, maxBytes=1024*1024) {
@@ -150,6 +172,76 @@ function readBody(req, maxBytes=1024*1024) {
     req.on('end', () => { if (!raw) return resolve({}); try { resolve(JSON.parse(raw)); } catch { reject(new Error('JSON غير صالح')); } });
     req.on('error', reject);
   });
+}
+// اختبار رابط بث: يقرأ الترويسات وأول بايتات ليحدد نوع المصدر (m3u8/ts/آخر).
+function probeStreamUrl(target) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try { parsed = new URL(target); } catch { return reject(new Error('صيغة الرابط غير صحيحة')); }
+    const client = parsed.protocol === 'https:' ? require('https') : require('http');
+    const request = client.get(parsed, { timeout: 10000, headers: { 'User-Agent': data.settings.streamUserAgent || 'PrinceLive' } }, response => {
+      const contentType = String(response.headers['content-type'] || '');
+      let preview = '';
+      let done = false;
+      const finish = () => {
+        if (done) return; done = true;
+        const kind = /mpegurl/i.test(contentType) || preview.includes('#EXTM3U') ? 'm3u8'
+          : (/mp2t|octet-stream/i.test(contentType) ? 'ts' : 'other');
+        resolve({ status: response.statusCode, statusText: response.statusMessage || '', contentType, preview: preview.slice(0, 2000), kind });
+      };
+      response.setEncoding('utf8');
+      response.on('data', chunk => { preview += chunk; if (preview.length >= 2000) { finish(); response.destroy(); } });
+      response.on('end', finish);
+      response.on('close', finish);
+      response.on('error', finish);
+    });
+    request.on('timeout', () => request.destroy(new Error('انتهت مهلة الاتصال بالرابط')));
+    request.on('error', reject);
+  });
+}
+
+function readRawBody(req, maxBytes = 20 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    req.on('data', chunk => { size += chunk.length; if (size > maxBytes) { reject(new Error('حجم الملف أكبر من المسموح')); req.destroy(); return; } chunks.push(chunk); });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+// تحليل بسيط لطلب multipart/form-data دون مكتبات خارجية (رفع الشعار والغلاف والنسخة الاحتياطية).
+function parseMultipart(buffer, contentType) {
+  const match = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(String(contentType || ''));
+  if (!match) return [];
+  const boundary = Buffer.from('--' + (match[1] || match[2]).trim());
+  const parts = [];
+  let index = buffer.indexOf(boundary);
+  while (index !== -1) {
+    const start = index + boundary.length;
+    const next = buffer.indexOf(boundary, start);
+    if (next === -1) break;
+    let chunk = buffer.slice(start, next);
+    if (chunk.slice(0, 2).toString() === '\r\n') chunk = chunk.slice(2);
+    if (chunk.slice(-2).toString() === '\r\n') chunk = chunk.slice(0, -2);
+    const headerEnd = chunk.indexOf('\r\n\r\n');
+    if (headerEnd > -1) {
+      const headers = chunk.slice(0, headerEnd).toString('utf8');
+      parts.push({
+        name: (/name="([^"]*)"/i.exec(headers) || [])[1] || '',
+        filename: (/filename="([^"]*)"/i.exec(headers) || [])[1] || '',
+        type: (/content-type:\s*([^\r\n]+)/i.exec(headers) || [])[1] || '',
+        data: chunk.slice(headerEnd + 4)
+      });
+    }
+    index = next;
+  }
+  return parts;
+}
+function safeUploadName(filename) {
+  const base = path.basename(String(filename || 'file')).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80);
+  const ext = path.extname(base).toLowerCase();
+  const allowed = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.json'];
+  const name = allowed.includes(ext) ? base : base + '.bin';
+  return `${Date.now()}_${name}`;
 }
 function apiError(res, code, message) { return send(res, code, { ok: false, error: message, message }); }
 function safeId(value) { return /^[a-zA-Z0-9_-]{1,80}$/.test(String(value || '')); }
@@ -207,6 +299,24 @@ function logLine(message) {
   }
 }
 
+// سجل مستقل لكل قناة لعرضه وتصفيته وتنزيله من لوحة التحكم.
+const channelLogs = new Map();
+function appendChannelLog(channelId, message) {
+  const line = `[${new Date().toISOString()}] ${safeText(message)}`;
+  channelLogs.set(channelId, ((channelLogs.get(channelId) || '') + line + '\n').slice(-40000));
+}
+
+// فحص خفيف: هل هناك خدمة تستمع فعلياً على منفذ Nginx؟
+let nginxListening = false;
+function probeNginxPort() {
+  const port = Number(data.settings.nginxPort) || 80;
+  const socket = net.connect({ host: '127.0.0.1', port });
+  socket.setTimeout(800);
+  socket.once('connect', () => { nginxListening = true; socket.destroy(); });
+  socket.once('timeout', () => { nginxListening = false; socket.destroy(); });
+  socket.once('error', () => { nginxListening = false; socket.destroy(); });
+}
+
 function send(res, code, data) {
   if (res.headersSent) return;
   res.writeHead(code, {
@@ -218,11 +328,21 @@ function send(res, code, data) {
 
 function getStatus(channelId) {
   const channel = channelId ? data.channels.find(c => c.id === channelId) : activeChannel();
-  if (!channel) return { siteName: data.settings.siteName || cfg.siteName || 'البرنس لايف', running: false, playlistExists: false, channels: data.channels.map(publicChannel) };
+  const nginxPort = Number(data.settings.nginxPort) || 80;
+  const base = {
+    siteName: data.settings.siteName || cfg.siteName || 'البرنس لايف',
+    nginx: nginxListening,
+    nginxBinding: { listening: nginxListening, port: nginxPort, reason: nginxListening ? '' : `لم يستجب أي خدمة على المنفذ ${nginxPort}` },
+    uptime: Math.floor(process.uptime()),
+    memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+    license: { valid: true, plan: 'محلي' },
+    messages: []
+  };
+  if (!channel) return { ...base, ticker: data.settings.ticker || cfg.ticker || '', running: false, playlistExists: false, channels: data.channels.map(publicChannel) };
   const source = sourceForChannel(channel), runtime = channelRuntime(channel.id);
   let playlistExists = false, playlistAgeMs = null;
   try { const st = fs.statSync(playlistPath(channel)); playlistExists = st.isFile(); playlistAgeMs = Date.now() - st.mtimeMs; } catch {}
-  return { siteName: data.settings.siteName || cfg.siteName || 'البرنس لايف', ticker: data.settings.ticker || cfg.ticker || '',
+  return { ...base, ticker: data.settings.ticker || cfg.ticker || '',
     running: !!runtime?.proc, pid: runtime?.proc?.pid || null, startedAt: runtime?.startedAt || null,
     restartCount: runtime?.restartCount || 0, lastExit: runtime?.lastExit || null, playlistExists, playlistAgeMs,
     streamUrl: `/hls/${channel.id}/index.m3u8`, sourceType: source?.type || '', videoDevice: source?.videoDevice || '', audioDevice: source?.audioDevice || '',
@@ -257,16 +377,49 @@ function validateNetworkStreamUrl(value) {
   return parsed.toString();
 }
 
+// توحيد أنواع المصادر القادمة من اللوحة (usb/http/hls/file/screen) إلى أنواع الخادم.
+function normalizeSourceType(value) {
+  const raw = String(value || 'usb').toLowerCase();
+  const map = { usb: 'usb', http: 'http-hls', hls: 'http-hls', 'http-hls': 'http-hls', network: 'http-hls', rtsp: 'rtsp', file: 'file', screen: 'screen' };
+  return map[raw] || '';
+}
+// يطبّق حقول نموذج المصدر على كائن المصدر ويعيد نص الخطأ أو '' عند النجاح.
+function applySourceFields(source, body) {
+  const has = key => Object.prototype.hasOwnProperty.call(body, key);
+  if (has('name') && String(body.name || '').trim()) source.name = String(body.name).trim().slice(0, 100);
+  if (has('videoDevice')) source.videoDevice = String(body.videoDevice || '').slice(0, 300);
+  if (has('videoDeviceLabel')) source.videoDeviceLabel = String(body.videoDeviceLabel || '').slice(0, 200);
+  if (has('audioDevice')) source.audioDevice = String(body.audioDevice || '').slice(0, 300);
+  if (has('videoSize')) source.videoSize = String(body.videoSize || '').slice(0, 20);
+  if (has('fps')) source.fps = body.fps ? Number(body.fps) : null;
+  if (has('pixelFormat')) source.pixelFormat = String(body.pixelFormat || '').slice(0, 30);
+  if (has('vcodec')) source.vcodec = String(body.vcodec || '').slice(0, 30);
+  if (has('captureSafeMode')) source.captureSafeMode = !!body.captureSafeMode;
+  if (has('enabled')) source.enabled = body.enabled !== false;
+  if (source.type === 'usb') {
+    if (!String(source.videoDevice || '').trim()) return 'جهاز الفيديو مطلوب لمصدر USB';
+  } else if (source.type === 'http-hls' || source.type === 'rtsp') {
+    const raw = has('url') ? body.url : (has('streamUrl') ? body.streamUrl : (source.streamUrl || ''));
+    try { source.streamUrl = validateNetworkStreamUrl(raw); } catch (e) { return e.message; }
+  } else if (source.type === 'file') {
+    const raw = has('path') ? body.path : (source.path || '');
+    const value = String(raw || '').trim();
+    if (!value) return 'مسار الملف مطلوب لمصدر الملف المحلي';
+    source.path = value.slice(0, 1000);
+  }
+  return '';
+}
+
 function buildArgs(channel, forceTranscode = false) {
   const source = sourceForChannel(channel);
   if (!channel || channel.enabled === false) throw new Error('القناة غير موجودة أو معطلة');
   if (!source || source.enabled === false) throw new Error('مصدر البث غير موجود أو معطل');
   const settings = data.settings;
   const [srcW, srcH] = String(source.videoSize || cfg.videoSize || '1280x720').split('x').map(Number);
-  const outputHeight = channel.quality === 'source' ? (srcH || 720) : Number(String(channel.quality || '').replace(/p$/i,'')) || 360;
+  const outputHeight = isCopyQuality(channel.quality) ? (srcH || 720) : Number(String(channel.quality || '').replace(/p$/i,'')) || 360;
   const derivedWidth=Math.max(160,Math.round((srcW||1280)*outputHeight/(srcH||720)/2)*2);
   const configuredWidth=Number(settings.outputWidth)||640;
-  const outputWidth=channel.quality==='source'?(srcW||1280):(outputHeight===(Number(settings.outputHeight)||360)?configuredWidth:derivedWidth);
+  const outputWidth=isCopyQuality(channel.quality)?(srcW||1280):(outputHeight===(Number(settings.outputHeight)||360)?configuredWidth:derivedWidth);
   const outputFps = Number(channel.fps) || Number(settings.outputFps) || 20;
   const videoBitrate = String(channel.bitrate || (outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k'));
   const hlsTime = Number(settings.hlsTime) || 2;
@@ -281,6 +434,14 @@ function buildArgs(channel, forceTranscode = false) {
     if (sourceType !== 'rtsp') args.push('-reconnect','1','-reconnect_streamed','1','-reconnect_delay_max','5');
     else args.push('-rtsp_transport','tcp');
     args.push('-i',streamUrl);
+  } else if (sourceType === 'file') {
+    const filePath = String(source.path || '').trim();
+    if (!filePath) throw new Error('مسار ملف المصدر غير محدد');
+    args.push('-re','-stream_loop','-1','-i',filePath);
+  } else if (sourceType === 'screen') {
+    const screenFps = String(Number(source.fps) || 15);
+    if (process.platform === 'win32') args.push('-f','gdigrab','-framerate',screenFps,'-i','desktop');
+    else args.push('-f','x11grab','-framerate',screenFps,'-i',String(process.env.DISPLAY || ':0.0'));
   } else {
     const inputSpec = audioDevice ? `video=${source.videoDevice}:audio=${audioDevice}` : `video=${source.videoDevice}`;
     args.push('-f','dshow','-rtbufsize','256M','-framerate',String(Number(source.fps)||30),'-video_size',String(source.videoSize||'1280x720'));
@@ -288,8 +449,8 @@ function buildArgs(channel, forceTranscode = false) {
     args.push('-i',inputSpec);
   }
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
-  if (channel.quality === 'source' && !isNetwork) throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 360p أو 480p أو 720p.');
-  if (channel.quality === 'source' && isNetwork && !forceTranscode) {
+  if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 360p أو 480p أو 720p.');
+  if (isCopyQuality(channel.quality) && isNetwork && !forceTranscode) {
     args.push('-map','0:v:0','-map','0:a:0?','-c:v','copy','-c:a','aac','-b:a',cfg.audioBitrate||'96k');
   } else {
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
@@ -297,7 +458,7 @@ function buildArgs(channel, forceTranscode = false) {
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
     if(settings.x264QualityMode===true) args.push('-crf','23');
     else args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize','1000k');
-    if (isNetwork || audioDevice) args.push('-map','0:a:0?','-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
+    if (isNetwork || audioDevice || sourceType === 'file') args.push('-map','0:a:0?','-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
   }
   const dir = channelHlsDir(channel); fs.mkdirSync(dir,{recursive:true});
@@ -325,7 +486,7 @@ function startChannel(channelId) {
   try { runtime.proc=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']}); }
   catch(e) { runtime.lastExit=e.message; return {ok:false,message:e.message}; }
   const proc=runtime.proc; runtime.startedAt=new Date().toISOString();
-  proc.stderr.on('data',b=>{const m=b.toString().trim();if(m)logLine(`[${channel.name}] FFmpeg: ${m}`);});
+  proc.stderr.on('data',b=>{const m=b.toString().trim();if(m){logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);}});
   proc.on('error',e=>{runtime.lastExit=e.message;runtime.proc=null;logLine(`[${channel.name}] تعذر تشغيل FFmpeg: ${e.message}`);scheduleChannelRestart(channelId);});
   proc.on('exit',(code,signal)=>{
     runtime.lastExit=`code=${code}; signal=${signal||''}`;
@@ -333,7 +494,7 @@ function startChannel(channelId) {
     logLine(`[${channel.name}] انتهى FFmpeg: ${runtime.lastExit}`);
     const currentSource=sourceForChannel(channel);
     const networkSource=currentSource && ['http-hls','http','hls','network','rtsp'].includes(String(currentSource.type||'').toLowerCase());
-    if(code!==0 && channel.quality==='source' && networkSource && !runtime.forceTranscode && !runtime.stopping){
+    if(code!==0 && isCopyQuality(channel.quality) && networkSource && !runtime.forceTranscode && !runtime.stopping){
       runtime.forceTranscode=true;
       logLine(`[${channel.name}] فشل نسخ المصدر؛ ستتم إعادة المحاولة بإعادة الترميز لضمان توافق HLS.`);
     }
@@ -395,6 +556,8 @@ function listDevices(res) {
       if (res) {
         send(res, 200, {
           ok: true,
+          video: video.map(name => ({ value: name, label: name })),
+          audio: audio.map(name => ({ value: name, label: name })),
           devices: { video, audio },
           output: output || (err ? err.message : 'لم تظهر أجهزة'),
           note: err && !output ? `تعذر تشغيل فحص FFmpeg: ${err.message}` : (video.length || audio.length ? 'قوائم الفيديو والصوت مستخرجة من أجهزة DirectShow التي يعرضها FFmpeg.' : 'لم يعرض FFmpeg أي جهاز DirectShow متصل.')
@@ -644,7 +807,7 @@ const server = http.createServer(async (req, res) => {
   // Public API used by viewer.js. Public endpoints expose no filesystem paths.
   if (url.pathname === '/api/public/settings' && req.method === 'GET') {
     const {siteName,siteNameLatin,logo,ticker,tickerEnabled,phone,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault}=data.settings;
-    return send(res, 200, { ok: true, settings: {siteName,siteNameLatin,logo,ticker,tickerEnabled,phone,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault} });
+    return send(res, 200, { ok: true, settings: {siteName,siteNameLatin,logo:publicAsset(logo),ticker,tickerEnabled,phone,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault} });
   }
   if (url.pathname === '/api/public/channels' && req.method === 'GET') {
     return send(res, 200, { ok: true, channels: data.channels.filter(c => c.enabled !== false).sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).map(publicChannel) });
@@ -671,6 +834,7 @@ const server = http.createServer(async (req, res) => {
     const channelId = String(body.channelId || activeChannel()?.id || '');
     if (!safeId(id)) return apiError(res, 400, 'معرّف المشاهد غير صالح');
     if (!data.channels.some(c => c.id === channelId && c.enabled !== false)) return apiError(res, 404, 'القناة غير موجودة');
+    if (!viewerSessions.has(id)) totalViewerCount++;
     viewerSessions.set(id, { channelId, lastSeen: Date.now() });
     return send(res, 200, { ok: true });
   }
@@ -679,17 +843,17 @@ const server = http.createServer(async (req, res) => {
     if (body.viewerId) viewerSessions.delete(String(body.viewerId));
     return send(res, 200, { ok: true });
   }
-  const adminApiPath = url.pathname === '/api/channels' || url.pathname.startsWith('/api/channels/') || url.pathname === '/api/sources' || url.pathname.startsWith('/api/sources/') || url.pathname === '/api/settings' || url.pathname === '/api/stats' || url.pathname.startsWith('/api/devices') || url.pathname === '/api/start' || url.pathname === '/api/stop' || url.pathname === '/api/logs';
+  const adminApiPath = url.pathname === '/api/channels' || url.pathname.startsWith('/api/channels/') || url.pathname === '/api/sources' || url.pathname.startsWith('/api/sources/') || url.pathname === '/api/settings' || url.pathname === '/api/stats' || url.pathname.startsWith('/api/devices') || url.pathname === '/api/start' || url.pathname === '/api/stop' || url.pathname === '/api/logs' || url.pathname.startsWith('/api/logs/') || url.pathname.startsWith('/api/backup') || url.pathname === '/api/upload' || url.pathname === '/api/metrics' || url.pathname.startsWith('/api/settings/');
   if (url.pathname === '/api/status' && req.method === 'GET') {
     // Status is intentionally public for the viewer page; it contains no credentials or filesystem paths.
   } else if (adminApiPath && !requireAdmin(req, res)) return;
   // Admin/local management API: channel/source CRUD and settings persistence.
   if (url.pathname === '/api/channels' && req.method === 'GET') return send(res, 200, { ok: true, channels: data.channels.map(publicChannel) });
-  if (url.pathname === '/api/sources' && req.method === 'GET') return send(res, 200, { ok: true, sources: data.sources });
+  if (url.pathname === '/api/sources' && req.method === 'GET') return send(res, 200, { ok: true, sources: data.sources.map(s => ({ ...s, url: s.streamUrl || '' })) });
   if (url.pathname === '/api/settings' && req.method === 'GET') return send(res, 200, { ok: true, settings: data.settings });
   if (url.pathname === '/api/settings' && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
-    const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath'];
+    const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','logoImage','logoPosition'];
     for (const key of textKeys) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const value = String(body[key] ?? '');
       if (value.length > (key === 'ticker' ? 500 : (['ffmpegPath','ffprobePath','nginxPath'].includes(key) ? 1000 : 300))) return apiError(res,400,`قيمة ${key} أطول من المسموح`);
@@ -701,7 +865,8 @@ const server = http.createServer(async (req, res) => {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
       outputWidth:[160,3840], outputHeight:[120,2160], outputFps:[1,60], gopSeconds:[1,10],
       startupQueueDelayMs:[0,120000], x264Threads:[1,64], hlsTime:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
-      maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440]
+      maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
+      sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000], logoSizePct:[2,40], logoOpacityPct:[0,100]
     };
     for (const [key,[min,max]] of Object.entries(numberRanges)) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const n = Number(body[key]);
@@ -712,6 +877,10 @@ const server = http.createServer(async (req, res) => {
       const allowedPresets = ['ultrafast','superfast','veryfast','faster','fast','medium','slow'];
       if (!allowedPresets.includes(String(body.x264Preset))) return apiError(res,400,'Preset غير صالح');
       data.settings.x264Preset = String(body.x264Preset);
+    }
+    if (Object.prototype.hasOwnProperty.call(body,'logoPosition')) {
+      if (!['top-right','top-left','bottom-right','bottom-left'].includes(String(body.logoPosition))) return apiError(res,400,'موضع الشعار غير صالح');
+      data.settings.logoPosition = String(body.logoPosition);
     }
     Object.assign(cfg, {
       ffmpegPath:data.settings.ffmpegPath||cfg.ffmpegPath, ffprobePath:data.settings.ffprobePath||cfg.ffprobePath, nginxPath:data.settings.nginxPath||cfg.nginxPath,
@@ -729,7 +898,10 @@ const server = http.createServer(async (req, res) => {
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم القناة مطلوب');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
     const channelId = 'ch_' + require('crypto').randomBytes(5).toString('hex');
-    const channel = { id: channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || '360p'), fps: Number(body.fps)||20, bitrate: String(body.bitrate||'500k'), autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(body.sortOrder)) ? Number(body.sortOrder) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
+    const chanId = String(body.chanId || '').trim();
+    if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
+    const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
+    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || '360p'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, logoEnabled: !!body.logoEnabled, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
     data.channels.push(channel); writeData(data); return send(res, 201, { ok: true, channel: publicChannel(channel) });
   }
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
@@ -738,11 +910,28 @@ const server = http.createServer(async (req, res) => {
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
-    if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','240p','360p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
+    if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','240p','360p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
-    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn','sortOrder']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    if (Object.prototype.hasOwnProperty.call(body,'chanId')) {
+      const chanId = String(body.chanId || '').trim();
+      if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId && c.id !== channel.id))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
+      channel.chanId = chanId || channel.id;
+    }
+    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn','logoEnabled']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;
+    else if (Object.prototype.hasOwnProperty.call(body,'sortOrder')) channel.sortOrder = Number(body.sortOrder) || 0;
     channel.url = `/hls/${channel.id}/index.m3u8`;
+    writeData(data); return send(res, 200, { ok: true, channel: publicChannel(channel) });
+  }
+  if (channelMatch && req.method === 'PATCH') {
+    let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const channel = data.channels.find(c => c.id === channelMatch[1]);
+    if (!channel) return apiError(res, 404, 'القناة غير موجودة');
+    if (Object.prototype.hasOwnProperty.call(body,'enabled')) {
+      channel.enabled = !!body.enabled;
+      if (!channel.enabled) stopChannel(channel.id);
+    }
     writeData(data); return send(res, 200, { ok: true, channel: publicChannel(channel) });
   }
   if (channelMatch && req.method === 'DELETE') {
@@ -753,55 +942,50 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/sources' && req.method === 'POST') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
-    const type = ['http-hls','rtsp','usb'].includes(String(body.type || 'usb')) ? String(body.type || 'usb') : '';
+    const type = normalizeSourceType(body.type);
     if (!type) return apiError(res, 400, 'نوع المصدر غير مدعوم');
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم المصدر مطلوب');
-    let streamUrl = '';
-    if (type === 'http-hls' || type === 'rtsp') { try { streamUrl = validateNetworkStreamUrl(body.streamUrl); } catch (e) { return apiError(res, 400, e.message); } }
-    else if (!String(body.videoDevice || '').trim()) return apiError(res, 400, 'جهاز الفيديو مطلوب لمصدر USB');
-    const source = { id: 'src_' + require('crypto').randomBytes(5).toString('hex'), name: String(body.name).trim().slice(0,100), type, streamUrl, videoDevice: String(body.videoDevice||'').slice(0,300), audioDevice: String(body.audioDevice||'').slice(0,300), videoSize: String(body.videoSize||'1280x720'), fps: Number(body.fps)||30, pixelFormat: String(body.pixelFormat||'mjpeg'), enabled: body.enabled !== false };
+    const source = { id: 'src_' + require('crypto').randomBytes(5).toString('hex'), name: String(body.name).trim().slice(0,100), type, enabled: body.enabled !== false };
+    const invalid = applySourceFields(source, body);
+    if (invalid) return apiError(res, 400, invalid);
     data.sources.push(source);
-    const channelId = 'ch_' + require('crypto').randomBytes(5).toString('hex');
-    const channel = {
-      id: channelId,
-      name: source.name, category: 'عام', sourceId: source.id, cover: '',
-      enabled: true, quality: '360p', fps: '', bitrate: '',
-      autoStart: false, alwaysOn: false, sortOrder: data.channels.length,
-      url: `/hls/${channelId}/index.m3u8`
-    };
-    data.channels.push(channel);
     writeData(data);
-    return send(res, 201, { ok: true, source, channel: publicChannel(channel), message: 'تمت إضافة المصدر وإنشاء قناة مرتبطة به تلقائياً' });
+    return send(res, 201, { ok: true, source, message: 'تم حفظ المصدر. أضف قناة مرتبطة به من صفحة القنوات.' });
   }
   if (url.pathname === '/api/sources/test' && req.method === 'POST') {
-    let body;try{body=await readBody(req);}catch(e){return apiError(res,400,e.message);}
-    return testNetworkCapture(body,(err,result)=>err?apiError(res,422,err.message):send(res,200,{ok:true,result}));
+    let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const target = String(body.url || body.streamUrl || '').trim();
+    if (!target) return apiError(res, 400, 'أدخل رابط المصدر أولاً');
+    if (!/^https?:\/\//i.test(target)) return apiError(res, 400, 'اختبار الرابط يدعم HTTP وHTTPS فقط');
+    try {
+      const result = await probeStreamUrl(target);
+      return send(res, 200, { ok: result.status >= 200 && result.status < 400, ...result });
+    } catch (err) {
+      return send(res, 200, { ok: false, kind: 'error', message: err.message });
+    }
   }
   const sourceMatch = url.pathname.match(/^\/api\/sources\/([a-zA-Z0-9_-]+)$/);
   if (sourceMatch && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
     const source = data.sources.find(x => x.id === sourceMatch[1]);
     if (!source) return apiError(res, 404, 'مصدر البث غير موجود');
-    const nextType=Object.prototype.hasOwnProperty.call(body,'type')?String(body.type):String(source.type||'usb');
-    if(!['usb','http-hls','rtsp'].includes(nextType))return apiError(res,400,'نوع المصدر غير مدعوم');
-    const nextVideo=Object.prototype.hasOwnProperty.call(body,'videoDevice')?String(body.videoDevice||''):String(source.videoDevice||'');
-    const nextUrl=Object.prototype.hasOwnProperty.call(body,'streamUrl')?String(body.streamUrl||''):String(source.streamUrl||'');
-    if(nextType==='usb'&&!nextVideo.trim())return apiError(res,400,'جهاز الفيديو مطلوب لمصدر USB');
-    let validatedUrl='';
-    if(nextType==='http-hls'||nextType==='rtsp'){try{validatedUrl=validateNetworkStreamUrl(nextUrl);}catch(e){return apiError(res,400,e.message);}}
-    const linked=data.channels.filter(c=>c.sourceId===source.id);
-    const wasRunning=linked.filter(c=>channelRuntime(c.id)?.proc).map(c=>c.id);
+    const nextType = Object.prototype.hasOwnProperty.call(body, 'type') ? normalizeSourceType(body.type) : normalizeSourceType(source.type);
+    if (!nextType) return apiError(res, 400, 'نوع المصدر غير مدعوم');
+    const linked = data.channels.filter(c => c.sourceId === source.id);
+    const wasRunning = linked.filter(c => channelRuntime(c.id)?.proc).map(c => c.id);
     wasRunning.forEach(stopChannel);
-    source.type=nextType;
-    if(nextType==='http-hls'||nextType==='rtsp')source.streamUrl=validatedUrl;
-    for(const key of ['name','videoDevice','audioDevice','videoSize','fps','pixelFormat','enabled'])if(Object.prototype.hasOwnProperty.call(body,key))source[key]=body[key];
+    const previousType = source.type;
+    source.type = nextType;
+    if (previousType !== nextType) { delete source.streamUrl; delete source.path; delete source.videoDevice; }
+    const invalid = applySourceFields(source, body);
+    if (invalid) { source.type = previousType; return apiError(res, 400, invalid); }
     writeData(data);
-    wasRunning.forEach(id=>{
-      const rt=streams.get(id);
-      if(rt?.proc){const proc=rt.proc;proc.once('exit',()=>setTimeout(()=>startChannel(id),250));}
-      else setTimeout(()=>startChannel(id),250);
+    wasRunning.forEach(id => {
+      const rt = streams.get(id);
+      if (rt?.proc) { const proc = rt.proc; proc.once('exit', () => setTimeout(() => startChannel(id), 250)); }
+      else setTimeout(() => startChannel(id), 250);
     });
-    return send(res,200,{ok:true,source,restartedChannels:wasRunning,message:'تم حفظ المصدر؛ ستُعاد القنوات التي كانت تعمل بعد إغلاق عمليات FFmpeg السابقة.'});
+    return send(res, 200, { ok: true, source, restartedChannels: wasRunning, message: 'تم حفظ المصدر؛ ستُعاد القنوات التي كانت تعمل بعد إغلاق عمليات FFmpeg السابقة.' });
   }
   if (sourceMatch && req.method === 'DELETE') {
     const source = data.sources.find(x => x.id === sourceMatch[1]);
@@ -859,6 +1043,121 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { logs: ffmpegLog });
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/devices/options') {
+    const device = url.searchParams.get('device') || '';
+    return queryCaptureCapabilities(device, (err, result) => {
+      if (err) return send(res, 422, { ok: false, error: err.message });
+      return send(res, 200, { ok: true, sizes: result.capabilities.videoSizes, fps: result.capabilities.frameRates, pixelFormats: result.capabilities.pixelFormats });
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/devices/recommend') {
+    const device = url.searchParams.get('device') || '';
+    return queryCaptureCapabilities(device, (err, result) => {
+      if (err) return send(res, 422, { ok: false, error: err.message });
+      const caps = result.capabilities;
+      const recommended = caps.recommended || {};
+      return send(res, 200, {
+        ok: true,
+        videoSize: recommended.videoSize || '1280x720',
+        fps: recommended.fps || 30,
+        pixelFormat: recommended.pixelFormat || '',
+        vcodec: (caps.pixelFormats || []).includes('mjpeg') ? 'mjpeg' : '',
+        detected: { pixelFormats: caps.pixelFormats || [], codecs: (caps.pixelFormats || []).filter(x => ['mjpeg', 'h264'].includes(x)) }
+      });
+    });
+  }
+  const logMatch = url.pathname.match(/^\/api\/logs\/([a-zA-Z0-9_-]+)(\/(?:clear|download))?$/);
+  if (logMatch && data.channels.some(c => c.id === logMatch[1])) {
+    const channelId = logMatch[1];
+    const content = channelLogs.get(channelId) || '';
+    if (logMatch[2] === '/clear' && req.method === 'POST') {
+      channelLogs.delete(channelId);
+      return send(res, 200, { ok: true, message: 'تم تصفير السجل' });
+    }
+    if (logMatch[2] === '/download') {
+      res.writeHead(200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${channelId}.log"`,
+        'Cache-Control': 'no-store'
+      });
+      return res.end(content || '');
+    }
+    return send(res, 200, { ok: true, log: content });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/metrics') {
+    const channels = data.channels.map(publicChannel);
+    let hlsBytesTotal = 0;
+    try {
+      for (const dir of fs.readdirSync(HLS_DIR, { withFileTypes: true })) {
+        if (!dir.isDirectory()) continue;
+        for (const name of fs.readdirSync(path.join(HLS_DIR, dir.name))) {
+          if (!/\.(ts|m3u8|m4s|mp4)$/i.test(name)) continue;
+          try { hlsBytesTotal += fs.statSync(path.join(HLS_DIR, dir.name, name)).size; } catch {}
+        }
+      }
+    } catch {}
+    return send(res, 200, {
+      ok: true,
+      cpuCount: os.cpus().length, cpuLoad: os.loadavg()[0] || 0,
+      uptimeSec: Math.floor(process.uptime()), memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+      currentViewers: channels.reduce((sum, c) => sum + (c.viewers || 0), 0),
+      watchedChannels: channels.filter(c => c.viewers > 0).length,
+      totalViewers: totalViewerCount,
+      runningChannels: channels.filter(c => c.status === 'running').length,
+      totalChannels: channels.length,
+      hlsBytesTotal, egressBytesTotal: servedBytes,
+      ingestBandwidthBps: 0, egressBandwidthBps: egressBps, internetBandwidthBps: 0
+    });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/settings/regenerate-nginx') {
+    const written = [], notes = [];
+    if (syncNginxPorts()) {
+      written.push(path.join(ROOT, 'nginx', 'conf', 'nginx.conf'));
+      notes.push('أعد تشغيل Nginx لتطبيق المنافذ الجديدة.');
+    } else {
+      notes.push('لم يُعثر على nginx/conf/nginx.conf داخل الحزمة؛ حدّث منافذ Nginx يدوياً.');
+    }
+    return send(res, 200, { ok: true, nginxPort: Number(data.settings.nginxPort) || 80, port: Number(data.settings.port) || 3001, written, notes });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/upload') {
+    const raw = await readRawBody(req).catch(() => null);
+    if (!raw) return apiError(res, 400, 'تعذر قراءة الملف المرفوع');
+    const part = parseMultipart(raw, req.headers['content-type']).find(x => x.filename && x.data.length);
+    if (!part) return apiError(res, 400, 'لم يتم اختيار ملف');
+    const name = safeUploadName(part.filename);
+    fs.writeFileSync(path.join(UPLOADS_DIR, name), part.data);
+    return send(res, 200, { ok: true, path: `srv/uploads/${name}`, url: `/uploads/${name}` });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/backup/download') {
+    const payload = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), settings: data.settings, sources: data.sources, channels: data.channels }, null, 2);
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="prince-live-backup-${new Date().toISOString().slice(0, 10)}.json"`,
+      'Cache-Control': 'no-store'
+    });
+    return res.end(payload);
+  }
+  if (req.method === 'POST' && url.pathname === '/api/backup/restore') {
+    const raw = await readRawBody(req).catch(() => null);
+    if (!raw) return apiError(res, 400, 'تعذر قراءة ملف النسخة الاحتياطية');
+    const part = parseMultipart(raw, req.headers['content-type']).find(x => x.filename);
+    let parsed = null;
+    try {
+      parsed = JSON.parse(String(part ? part.data.toString('utf8') : raw.toString('utf8')).replace(/^\uFEFF/, ''));
+    } catch {
+      return apiError(res, 400, 'ملف النسخة الاحتياطية غير صالح');
+    }
+    if (!parsed || typeof parsed !== 'object' || !parsed.settings || typeof parsed.settings !== 'object') {
+      return apiError(res, 400, 'ملف النسخة لا يحتوي إعدادات صالحة');
+    }
+    data.settings = { ...defaultData().settings, ...parsed.settings };
+    writeData(data); syncNginxPorts();
+    return send(res, 200, { ok: true, message: 'تم استرجاع الإعدادات. أعد تشغيل النظام لتطبيق تغييرات المنافذ.' });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/update/status') {
+    return send(res, 200, { ok: true, available: false, currentVersion: '8.0.0', latestVersion: '8.0.0' });
+  }
+
   if (url.pathname.startsWith('/api/')) {
     return send(res, 404, { error: 'Not found' });
   }
@@ -901,6 +1200,15 @@ setInterval(() => {
   cpuPercent = totalDelta > 0 ? Math.round((1 - idleDelta / totalDelta) * 100) : 0;
   previousCpu = current;
 }, 2000).unref();
+
+setInterval(() => {
+  const now = Date.now();
+  const elapsed = Math.max(1, (now - lastServedSample.at) / 1000);
+  egressBps = Math.max(0, Math.round((servedBytes - lastServedSample.bytes) / elapsed));
+  lastServedSample = { bytes: servedBytes, at: now };
+  probeNginxPort();
+}, 3000).unref();
+probeNginxPort();
 
 server.listen(LISTEN_PORT, LISTEN_HOST, () => {
   logLine(`الخادم يعمل على http://${LISTEN_HOST}:${LISTEN_PORT} (منفذ Nginx: ${Number(data.settings.nginxPort) || 80})`);

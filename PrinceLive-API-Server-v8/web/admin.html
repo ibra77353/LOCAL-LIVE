@@ -1,167 +1,240 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0b171e">
-  <title>لوحة الإدارة — البرنس لايف</title>
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <link rel="stylesheet" href="/admin.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لوحة التحكم — أمان لايف</title>
+<link rel="icon" type="image/png" href="/admin/favicon.png">
+<link rel="stylesheet" href="admin.css">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <img class="brand-logo" src="/favicon.png" alt="شعار البرنس لايف">
-        <div class="brand-copy"><strong>البرنس لايف</strong><span>BRINCE LIVE</span></div>
-      </div>
-      <div class="live-strip" id="live-strip"><i></i><span id="live-label">جارٍ فحص البث</span></div>
-      <nav class="nav" aria-label="القائمة الرئيسية">
-        <a class="nav-link active" href="#overview" aria-current="page"><span class="nav-icon">▦</span> نظرة عامة</a>
-        <a class="nav-link" href="#controls"><span class="nav-icon">▶</span> التحكم بالبث</a>
-        <a class="nav-link" href="#sources"><span class="nav-icon">⌁</span> حالة المصدر</a>
-        <a class="nav-link" href="#network-access"><span class="nav-icon">⌘</span> عناوين الشبكة</a>
-        <a class="nav-link" href="#source-settings"><span class="nav-icon">⚙</span> إعدادات الالتقاط</a>
-        <a class="nav-link" href="#channel-settings"><span class="nav-icon">▣</span> إعدادات القناة</a>
-        <a class="nav-link" href="#site-settings"><span class="nav-icon">⚙</span> إعدادات المنصة</a>
-        <a class="nav-link" href="#logs-section"><span class="nav-icon">≡</span> سجل الخادم</a>
-      </nav>
-      <div class="sidebar-bottom">
-        <a class="side-action" href="/">↗ صفحة المشاهدين</a>
-        <span class="local-note"><i></i> نظام بث محلي</span>
-      </div>
-    </aside>
 
-    <main class="main">
-      <header class="topbar">
-        <div><span class="eyebrow">مركز الإدارة</span><h1>لوحة التحكم</h1><p>إدارة البث المحلي ومراقبة حالة الخادم لحظياً.</p></div>
-        <a class="viewer-button" href="/" target="_blank" rel="noopener">مشاهدة الموقع <span>↗</span></a>
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand" id="brandBox">
+      <img id="brandLogo" class="brand-logo hidden" alt="">
+      <div class="brand-name" id="brandName">أمان لايف</div>
+      <div class="onair-strip" id="onairStrip">OFF AIR</div>
+    </div>
+    <nav class="nav">
+      <button data-view="dashboard" class="nav-btn active">المراقبة والسجلات</button>
+      <button data-view="channels" class="nav-btn">القنوات</button>
+      
+      <button data-view="sources" class="nav-btn">مصادر البث</button>
+      
+      
+      
+      
+      <button data-view="settings" class="nav-btn">الإعدادات</button>
+      
+    </nav>
+    <div class="sidebar-foot">
+      <a href="/" target="_blank" class="btn btn-ghost btn-block">صفحة المشاهدين ↗</a>
+      <button id="logoutBtn" class="btn btn-ghost btn-block">تسجيل الخروج</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="sysMsgBar" class="hidden"></div>
+    <div id="nginxBindBar" class="hidden sys-msg-wrap"></div>
+    <!-- ===== Dashboard ===== -->
+    <section id="view-dashboard" class="view">
+      <header class="view-head"><h1>المراقبة والسجلات</h1>
+        <div class="head-stats" id="sysStats"></div>
       </header>
+      <div class="dash-grid" id="dashGrid"></div>
+      <div class="table-wrap">
+        <table class="table" id="statusTable">
+          <thead><tr>
+            <th>القناة</th><th>الحالة</th><th>المشاهدون</th><th>البيانات</th><th>إعادة التشغيل</th><th>آخر الأخطاء</th><th>إجراءات</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card log-card hidden" id="logCard">
+        <div class="card-head"><h3 id="logTitle">سجل القناة</h3>
+          <div class="row-actions">
+            <button class="btn btn-sm" onclick="downloadLog()">⬇ حفظ كملف</button>
+            <button class="btn btn-sm btn-danger" onclick="clearLog()">🗑 تصفير</button>
+            <button class="btn btn-ghost" onclick="hideLog()">إغلاق</button>
+          </div></div>
+        <pre id="logBody" class="log-body"></pre>
+      </div>
+    </section>
 
-      <section id="overview" class="is-active">
-        <div class="section-heading"><div><span class="eyebrow">الحالة الحالية</span><h2>ملخص البث</h2></div><span class="refresh-note"><i></i> تحديث تلقائي كل 3 ثوانٍ</span></div>
-        <div class="stats-grid">
-          <article class="stat-card state-card"><div class="stat-top"><span class="stat-icon">●</span><span class="stat-caption">حالة FFmpeg</span></div><b id="running" class="stat-value">—</b><small>حالة محرك البث</small></article>
-          <article class="stat-card"><div class="stat-top"><span class="stat-icon blue">▤</span><span class="stat-caption">ملف HLS</span></div><b id="playlist" class="stat-value">—</b><small>حالة قائمة البث المباشر</small></article>
-          <article class="stat-card"><div class="stat-top"><span class="stat-icon amber">↻</span><span class="stat-caption">إعادات التشغيل</span></div><b id="restarts" class="stat-value">0</b><small>عدد مرات إعادة التشغيل</small></article>
+    <!-- ===== Channels ===== -->
+    <section id="view-channels" class="view hidden">
+      <header class="view-head"><h1>القنوات</h1>
+        <button class="btn btn-primary" onclick="openChannelModal()">+ إضافة قناة</button></header>
+      <div class="table-wrap">
+        <table class="table" id="channelsTable">
+          <thead><tr><th>الترتيب</th><th>القناة</th><th>المعرّف</th><th>التصنيف</th><th>المصدر</th><th>الجودات</th><th>تشغيل تلقائي</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== Online Channels ===== -->
+    
+
+    <!-- ===== Sources ===== -->
+    <section id="view-sources" class="view hidden">
+      <header class="view-head"><h1>مصادر البث</h1>
+        <button class="btn btn-primary" onclick="openSourceModal()">+ إضافة مصدر</button></header>
+      <div class="table-wrap">
+        <table class="table" id="sourcesTable">
+          <thead><tr><th>الاسم</th><th>النوع</th><th>التفاصيل</th><th>إجراءات</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== IPTV (مكتبة القنوات + Xtream Codes + اشتراك MH في نافذة واحدة) =====
+         الدمج واجهةٌ فقط: محتوى الأقسام الثلاثة القديمة نُقل كما هو بنفس المعرّفات
+         والدوال، فكل منطق admin.js يعمل دون أي تعديل. -->
+    
+
+    <!-- ===== Scheduler ===== -->
+    
+
+    <!-- ===== الإعلانات ===== -->
+    
+
+    <!-- ===== World Cup ===== -->
+    
+
+    <!-- ===== Settings ===== -->
+    <section id="view-settings" class="view hidden">
+      <header class="view-head"><h1>الإعدادات العامة</h1>
+        <button class="btn btn-primary" onclick="saveSettings()">حفظ الإعدادات</button></header>
+      <div class="grid-2">
+        <div class="card">
+          <h3>المنصة</h3>
+          <label>اسم المنصة<input class="input" id="s_siteName"></label>
+          <label>الاسم اللاتيني<input class="input" id="s_siteNameLatin"></label>
+          <label>الشعار
+            <span class="with-browse">
+              <input class="input" id="s_logo" placeholder="srv/uploads/logo.png">
+              <button class="btn" onclick="browseUpload('s_logo')">استعراض / رفع</button>
+            </span></label>
+          <label>رقم التواصل (يظهر تحت العنوان)<input class="input" id="s_phone"></label>
+          <label class="switch-row"><input type="checkbox" id="s_tickerEnabled"> تفعيل الشريط الإخباري</label>
+          <label>نص الشريط الإخباري<textarea class="input" id="s_ticker" rows="2"></textarea></label>
         </div>
-      </section>
-
-      <section class="panel" id="controls">
-        <div class="panel-heading"><div><span class="eyebrow">إجراءات مباشرة</span><h2>التحكم في البث</h2><p>الأوامر التالية تؤثر في البث الفعلي للمشاهدين.</p></div><span class="panel-symbol">▶</span></div>
-        <div class="control-row">
-          <button id="start" class="btn btn-start"><span>▶</span> تشغيل البث</button>
-          <button id="stop" class="btn btn-stop"><span>■</span> إيقاف البث</button>
-          <button id="devices" class="btn btn-secondary"><span>⌕</span> فحص أجهزة الالتقاط</button>
-          <button id="auto-config" class="btn btn-auto"><span>✦</span> ضبط تلقائي للقطعة المناسبة</button>
+        <div class="card">
+          <h3>الأداء والبث</h3>
+          <label>x264 Preset
+            <select class="input" id="s_x264Preset">
+              <option>ultrafast</option><option>superfast</option><option>veryfast</option>
+              <option>faster</option><option>fast</option><option>medium</option><option>slow</option>
+            </select></label>
+          <label>عدد الـ Threads لكل قناة<input class="input" id="s_x264Threads" type="number" min="1" max="16"></label>
+          <label class="switch-row"><input type="checkbox" id="s_x264QualityMode"> وضع الجودة: ضغط أفضل واستقرار أعلى (يزيد تأخير البث ثوانٍ)</label>
+          <p class="sub" style="margin-top:-4px">يعطّل «البث الفوري» (zerolatency) فيستفيد المرمّز من B-frames وlookahead: نفس الجودة بحجم بيانات أقل بـ10–15٪ تقريباً، وجودة أثبت في المشاهد الصعبة. مناسب عندما يكون الاستقرار أهم من التأخير. يُطبَّق على القنوات عند تشغيلها التالي.</p>
+          <label>طول مقطع HLS بالثواني (hls_time)<input class="input" id="s_hlsTime" type="number" min="1" max="10"></label>
+          <label>عدد المقاطع في القائمة (hls_list_size)<input class="input" id="s_hlsListSize" type="number" min="3" max="20"></label>
+          <label>GOP بالثواني<input class="input" id="s_gopSeconds" type="number" min="1" max="10"></label>
+          <label>تأخير طابور التشغيل عند الإقلاع (مللي ثانية)<input class="input" id="s_startupQueueDelayMs" type="number" min="0" step="1000"></label>
+          <label class="switch-row"><input type="checkbox" id="s_autoRestartCrashed"> إعادة تشغيل القناة تلقائياً عند الانهيار</label>
+          <label class="switch-row"><input type="checkbox" id="s_idleStopEnabled"> إيقاف القنوات المستمرة تلقائياً عند عدم وجود مشاهدين (توفير الموارد)</label>
+          <label>إيقاف بعد (دقائق بلا مشاهدين)<input class="input" id="s_idleStopMinutes" type="number" min="1" max="60"></label>
+          <p class="sub" style="margin-top:-4px">تنطبق فقط على القنوات المستمرة (بلا جدولة وقتية) والمفعّلة. تعمل القناة تلقائياً من جديد فور فتح أحد المشاهدين لها.</p>
+          <label>إيقاف عند فشل تام في المصدر — إعادة المحاولة بعد (دقائق)<input class="input" id="s_sourceFailStopMinutes" type="number" min="1" max="120"></label>
+          <p class="sub" style="margin-top:-4px">عند فشل تشغيل القناة بسبب مشكلة في المصدر، تتوقف هذه المدة ثم يُعاد تشغيلها تلقائياً.</p>
+          <label>إيقاف عند الحظر / عدم استجابة سيرفر IPTV — إعادة المحاولة بعد (دقائق)<input class="input" id="s_blockedStopMinutes" type="number" min="1" max="120"></label>
+          <p class="sub" style="margin-top:-4px">عند رفض المصدر (403) أو عدم استجابته، يحاول النظام كشف الطريقة الصحيحة وإصلاح المصدر تلقائياً؛ وإن فشلت كل المحاولات يتوقف هذه المدة ثم يعيد المحاولة.</p>
         </div>
-        <div id="action-message" class="message" role="status"><span class="message-dot"></span> جاهز.</div>
-        <pre id="device-output" class="device-output" hidden></pre>
-      </section>
-
-      <section class="panel" id="network-access">
-        <div class="panel-heading"><div><span class="eyebrow">الوصول عبر الشبكة المحلية</span><h2>عناوين IP المكتشفة تلقائيًا</h2><p>يعرض جميع عناوين IPv4 على واجهات الكمبيوتر، ويمكن فتح رابط المشاهدة من هاتف متصل بالشبكة نفسها.</p></div><span class="panel-symbol">⌘</span></div>
-        <div class="control-row"><button id="refresh-network" class="btn btn-secondary" type="button">↻ تحديث عناوين الشبكة</button><span id="network-message" role="status"></span></div>
-        <div id="network-addresses" class="source-info">جارٍ اكتشاف عناوين الشبكة…</div>
-        <small>يستخدم الموقع المنفذ 80. يجب أن تسمح الشبكة باتصال الأجهزة، وأن يسمح جدار حماية Windows بالاتصالات الواردة على المنفذ 80.</small>
-      </section>
-
-      <section class="panel" id="sources">
-        <div class="panel-heading"><div><span class="eyebrow">إعدادات المصدر</span><h2>مصادر الالتقاط</h2><p>معلومات أجهزة الفيديو والصوت وإعدادات الإخراج الحالية.</p></div><span class="panel-symbol">⌁</span></div>
-        <div id="source" class="source-info">جارٍ قراءة إعدادات المصدر…</div>
-        <div id="channel-status-list" class="channel-status-list"></div>
-      </section>
-
-      <section class="panel" id="source-settings">
-        <div class="panel-heading"><div><span class="eyebrow">مصدر الالتقاط الفعلي</span><h2>مصادر البث</h2><p>أضف مصدراً جديداً أو عدّل المصدر المحدد. عند إضافة مصدر صالح تُنشأ قناة مرتبطة به تلقائياً.</p></div><span class="panel-symbol">⌁</span></div>
-        <div class="form-actions"><button id="new-source" class="btn btn-secondary" type="button">+ إضافة مصدر</button><button id="edit-source" class="btn btn-secondary" type="button">تعديل المصدر المحدد</button><button id="delete-source" class="btn btn-stop" type="button">حذف المصدر</button></div><dialog id="source-dialog" class="editor-dialog"><div class="dialog-head"><h3 id="source-dialog-title">إضافة مصدر</h3><button type="button" class="dialog-close" data-close="source-dialog">×</button></div><form id="source-form" class="settings-form">
-          <label class="wide">المصدر المحدد للتعديل<select id="source-select" name="sourceSelect"></select></label>
-          <label>نوع المصدر<select name="type"><option value="usb">جهاز USB محلي</option><option value="http-hls">رابط بث شبكي (HTTP/HLS)</option><option value="rtsp">كاميرا شبكية RTSP</option></select></label>
-          <label>اسم المصدر<input name="name" maxlength="100" required></label>
-          <label id="stream-url-field" class="wide" hidden>رابط البث الشبكي<input name="streamUrl" type="url" maxlength="4096" placeholder="http://192.168.1.20:8080/live.m3u8" autocomplete="off"><small>يدعم HTTP وHTTPS، بما فيها روابط HLS التي تنتهي غالبًا بـ .m3u8. يجب أن يستطيع FFmpeg الوصول إلى الرابط من جهاز الخادم.</small></label>
-          <label id="video-device-field">جهاز الفيديو في DirectShow<select name="videoDevice"><option value="">جارٍ فحص الأجهزة…</option></select></label>
-          <label id="audio-device-field">جهاز الصوت في DirectShow<select name="audioDevice"><option value="">بدون صوت</option></select></label>
-          <label id="video-size-field">دقة الالتقاط المدعومة<select name="videoSize"><option value="" disabled selected>اختر جهازاً لعرض الدقات المدعومة</option></select></label>
-          <label id="fps-field">معدل التقاط الإطارات<select name="fps"><option value="" disabled selected>اختر جهازاً لعرض المعدلات المدعومة</option></select></label>
-          <label id="pixel-format-field">تنسيق الفيديو المدعوم<select name="pixelFormat"><option value="" disabled selected>اختر جهازاً لعرض الصيغ المدعومة</option></select></label>
-          <label class="check-label"><input type="checkbox" name="enabled"> المصدر مفعّل</label>
-          <div class="wide form-actions"><button id="source-devices" class="btn btn-secondary" type="button">إعادة فحص الأجهزة</button><button id="source-auto-config" class="btn btn-auto" type="button">ضبط تلقائي لأفضل إعدادات</button><button id="test-source" class="btn btn-secondary" type="button">اختبار الفيديو/المصدر</button><button id="test-audio" class="btn btn-secondary" type="button">اختبار الصوت</button><button class="btn btn-start" type="submit">حفظ مصدر الالتقاط</button><span id="source-message" role="status"></span></div>
-        </form></dialog>
-      </section>
-
-      <section class="panel" id="site-settings">
-        <div class="panel-heading"><div><span class="eyebrow">إعدادات الموقع</span><h2>بيانات إعدادات المنصة</h2><p>تُحفظ القيم في data.json وتُستخدم في صفحة المشاهدين.</p></div><span class="panel-symbol">⚙</span></div>
-        <div class="form-actions">
-          <button id="open-settings" class="btn btn-secondary" type="button">فتح نافذة الإعدادات</button>
-          <span class="settings-hint">تُفتح جميع حقول إعدادات المنصة داخل نافذة منبثقة.</span>
+        <div class="card">
+          <h3>المشغّل (صفحة المشاهدين)</h3>
+          <label>حجم البفر الأقصى بالثواني<input class="input" id="s_playerMaxBufferLength" type="number" min="5" max="120"></label>
+          <label>البفر الخلفي بالثواني<input class="input" id="s_playerBackBufferLength" type="number" min="0" max="120"></label>
+          <label>تأخير البث المباشر بالثواني (live sync)<input class="input" id="s_playerLiveSyncDuration" type="number" min="2" max="60"></label>
+          <p class="sub" style="margin-top:-4px">يُرفَع تلقائياً إلى (طول مقطع HLS × 2 + 1) كحد أدنى — قيمة أقصر تجعل المشغّل يلتصق بحافة البث فيتقطع.</p>
+          <label class="switch-row"><input type="checkbox" id="s_capLevelToPlayerSize"> منع اختيار جودة أعلى من حجم المشغّل</label>
+          <label class="switch-row"><input type="checkbox" id="s_cpuSaverDefault"> تفعيل وضع توفير المعالج افتراضياً</label>
         </div>
-        <dialog id="settings-dialog" class="editor-dialog settings-dialog">
-          <div class="dialog-head"><h3>إعدادات المنصة والخادم</h3><button type="button" class="dialog-close" data-close="settings-dialog" aria-label="إغلاق">×</button></div>
-                  <form id="settings-form" class="settings-form">
-          <label>اسم الموقع<input name="siteName" maxlength="100" required></label>
-          <label>الاسم اللاتيني<input name="siteNameLatin" maxlength="100"></label>
-          <label>رقم التواصل<input name="phone" maxlength="40"></label>
-          <label>رابط/اسم الشعار<input name="logo" maxlength="300" placeholder="logo.png"></label>
-          <label class="wide">الشريط الإخباري<textarea name="ticker" rows="2" maxlength="500"></textarea></label>
-          <label class="check-label"><input type="checkbox" name="tickerEnabled"> تفعيل الشريط الإخباري</label>
-          <label class="check-label"><input type="checkbox" name="autoStartOnDemand"> تشغيل البث عند طلب المشاهدة</label>
-          <label>أقصى طول للتخزين المؤقت (ثانية)<input name="playerMaxBufferLength" type="number" min="5" max="120"></label>
-          <label>تخزين المقاطع السابقة (ثانية)<input name="playerBackBufferLength" type="number" min="0" max="120"></label>
-          <label>مزامنة البث الحي (ثانية)<input name="playerLiveSyncDuration" type="number" min="1" max="30"></label>
-          <label class="check-label"><input type="checkbox" name="cpuSaverDefault"> تفعيل وضع توفير الموارد افتراضيًا</label>
-          <label class="check-label"><input type="checkbox" name="capLevelToPlayerSize"> تقييد الجودة حسب حجم المشغل</label>
-          <label>Preset الترميز<select name="x264Preset"><option>ultrafast</option><option>superfast</option><option>veryfast</option><option>faster</option><option>fast</option><option>medium</option><option>slow</option></select></label>
-          <label>عدد Threads<input name="x264Threads" type="number" min="1" max="64"></label>
-          <label class="check-label"><input type="checkbox" name="x264QualityMode"> وضع جودة x264</label>
-          <label>Output Width<input name="outputWidth" type="number" min="160" max="3840"></label>
-          <label>Output Height<input name="outputHeight" type="number" min="120" max="2160"></label>
-          <label>Output FPS<input name="outputFps" type="number" min="1" max="60"></label>
-          <label>GOP بالثواني<input name="gopSeconds" type="number" min="1" max="10"></label>
-          <label>HLS Time<input name="hlsTime" type="number" min="1" max="10"></label>
-          <label>HLS List Size<input name="hlsListSize" type="number" min="3" max="30"></label>
-          <label>HLS Delete Threshold<input name="hlsDeleteThreshold" type="number" min="1" max="100"></label>
-          <label>منفذ Node.js<input name="port" type="number" min="1024" max="65535"></label><label>منفذ Nginx<input name="nginxPort" type="number" min="1" max="65535"></label>
-          <label>Startup Queue Delay (ms)<input name="startupQueueDelayMs" type="number" min="0" max="120000"></label>
-          <label class="check-label"><input type="checkbox" name="autoRestartCrashed"> إعادة تشغيل القناة عند التعطل</label>
-          <label>Max Restarts<input name="maxRestarts" type="number" min="0" max="100"></label>
-          <label>Restart Backoff (ms)<input name="restartBackoffMs" type="number" min="1000" max="120000"></label>
-          <label class="check-label"><input type="checkbox" name="idleStopEnabled"> إيقاف القنوات الخاملة</label>
-          <label>مدة الخمول بالدقائق<input name="idleStopMinutes" type="number" min="1" max="1440"></label>
-          <label>مسار FFmpeg<input name="ffmpegPath" maxlength="500"></label><label>مسار FFprobe<input name="ffprobePath" maxlength="500"></label><label>مسار Nginx<input name="nginxPath" maxlength="500"></label>
-          <div class="wide form-actions"><button class="btn btn-start" type="submit">حفظ الإعدادات</button><button class="btn btn-secondary" type="button" data-close="settings-dialog">إلغاء</button><span id="settings-message" role="status"></span></div>
-        </form>
-        </dialog>
-      </section>
+        <!-- شعار القنوات: معطَّل مؤقتاً بالكامل (من packages/core/src/ffmpeg.js:
+             LOGO_FEATURE_ENABLED) لضمان أفضل أداء بث دون مشاكل، بعد بلاغات
+             تهنيج/تجمّد وتضارب محتوى بين الأجهزة عند تفعيله. أُخفيت عناصر
+             التحكّم هنا لتطابق الواجهة سلوك الخادم. لإعادة التفعيل مستقبلاً:
+             أعد هذا القسم واضبط LOGO_FEATURE_ENABLED=true. -->
+        <div class="card" style="display:none">
+          <h3>شعار القنوات</h3>
+          <p class="hint">إعدادات عامة تنطبق على شعار كل القنوات المُطبوع فوق البث. الشعار موحّد لكل القنوات؛ ويُفعّل لكل قناة من خيار «تفعيل الشعار» في نافذة القناة.</p>
+          <label>صورة الشعار (موحّدة لجميع القنوات)
+            <span class="with-browse">
+              <input class="input" id="s_logoImage" placeholder="srv/uploads/logo.png">
+              <button class="btn" type="button" onclick="browseUpload('s_logoImage','image/png')">استعراض / رفع</button>
+            </span></label>
+          <label>الموقع
+            <select class="input" id="s_logoPosition">
+              <option value="top-right">أعلى اليمين</option>
+              <option value="top-left">أعلى اليسار</option>
+              <option value="bottom-right">أسفل اليمين</option>
+              <option value="bottom-left">أسفل اليسار</option>
+            </select></label>
+          <label>الحجم (٪ من عرض الشاشة): <span id="logoSizeVal" dir="ltr"></span>
+            <input type="range" id="s_logoSizePct" min="2" max="40" step="1" oninput="document.getElementById('logoSizeVal').textContent=this.value+'٪'"></label>
+          <label>الشفافية (٪): <span id="logoOpacityVal" dir="ltr"></span>
+            <input type="range" id="s_logoOpacityPct" min="0" max="100" step="5" oninput="document.getElementById('logoOpacityVal').textContent=this.value+'٪'"></label>
+        </div>
+        <div class="card">
+          <h3>المنافذ والشبكة</h3>
+          <p class="hint">إن حدث تعارض على المنفذ (خطأ 80 مشغول)، غيّر منفذ Nginx هنا. منفذ النظام الداخلي (Node) نادراً ما يحتاج تغييراً.</p>
+          <label>منفذ Nginx (المنفذ الذي يفتحه المشاهدون، الافتراضي 80)
+            <input class="input" id="s_nginxPort" type="number" min="1" max="65535" placeholder="80"></label>
+          <label>منفذ النظام الداخلي Node (الافتراضي 3000)
+            <input class="input" id="s_port" type="number" min="1" max="65535" placeholder="3000"></label>
+          <button class="btn" onclick="regenerateNginx()">تحديث ملف nginx.conf بالمنافذ الحالية</button>
+          <p class="hint">بعد تغيير المنافذ: احفظ الإعدادات، اضغط الزر أعلاه لتحديث ملف الإعداد، ثم أعد تشغيل النظام و Nginx. إن غيّرت منفذ Nginx فالعنوان يصبح مثل <span dir="ltr">http://SERVER_IP:المنفذ</span></p>
+        </div>
+        <div class="card">
+          <h3>المسارات</h3>
+          <label>مسار FFmpeg<input class="input" id="s_ffmpegPath"></label>
+          <label>مسار Nginx<input class="input" id="s_nginxPath"></label>
+          <label>User-Agent للبث (لقنوات Xtream/IPTV التي ترفض بـ 403)<input class="input" id="s_streamUserAgent" dir="ltr" placeholder="VLC/3.0.20 LibVLC/3.0.20"></label>
+          
+        </div>
+        <div class="card">
+          <h3>النسخ الاحتياطي</h3>
+          <p class="hint">احفظ نسخة من كل الإعدادات (القنوات، المصادر، الإعلانات، الصور، إعدادات النظام) في ملف واحد، أو استرجع نسخة سابقة.</p>
+          <button class="btn btn-primary" onclick="downloadBackup()">⬇ حفظ نسخة احتياطية</button>
+          <hr class="sep">
+          <label>استرجاع من ملف نسخة احتياطية (.zip)
+            <span class="with-browse">
+              <input class="input" id="restoreFileName" placeholder="اختر ملف النسخة..." readonly>
+              <button class="btn" onclick="document.getElementById('restoreFileInput').click()">اختيار ملف</button>
+            </span>
+          </label>
+          <input type="file" id="restoreFileInput" accept=".zip" style="display:none" onchange="restoreFileChosen(this)">
+          <button class="btn btn-danger" id="restoreBtn" onclick="doRestore()" disabled>♻ استرجاع النسخة المختارة</button>
+          <p class="hint" style="color:var(--accent)">تنبيه: الاسترجاع يستبدل كل الإعدادات الحالية ويعيد تشغيل النظام.</p>
+        </div>
+      </div>
+    </section>
 
-      <section class="panel" id="channel-settings">
-        <div class="panel-heading"><div><span class="eyebrow">إدارة القنوات</span><h2>إدارة القنوات</h2><p>اختر القناة لتعديل بياناتها. تُنشأ قناة تلقائياً عند إضافة مصدر جديد.</p></div><span class="panel-symbol">▣</span></div>
-        <label class="wide">القناة المحددة<select id="channel-select"></select></label><div class="form-actions"><button id="edit-channel" class="btn btn-secondary" type="button">تعديل القناة المحددة</button><button id="delete-channel" class="btn btn-stop" type="button">حذف القناة</button></div><dialog id="channel-dialog" class="editor-dialog"><div class="dialog-head"><h3>تعديل قناة</h3><button type="button" class="dialog-close" data-close="channel-dialog">×</button></div><form id="channel-form" class="settings-form">
-          <label>مصدر القناة<select name="sourceId" id="channel-source-select"></select></label>
-          <label>اسم القناة<input name="name" maxlength="100" required></label>
-          <label>التصنيف<input name="category" maxlength="80"></label>
-          <label>رابط صورة الغلاف<input name="cover" maxlength="500"></label><label>ترتيب القناة<input name="sortOrder" type="number" min="0" max="999"></label>
-          <label>الدقة<select name="quality"><option value="source">نسخ المصدر (دون ترميز)</option><option value="240p">240p</option><option value="360p">360p</option><option value="480p">480p</option><option value="720p">720p</option></select></label>
-          <small class="wide">نسخ المصدر دون إعادة ترميز يحتاج إلى مصدر شبكي متوافق مع HLS. مصادر USB تحتاج إلى إعادة ترميز.</small>
-          <label>FPS الإخراج (اختياري)<input name="fps" type="number" min="1" max="60" placeholder="افتراضي حسب الجودة"></label>
-          <label>معدل البت Bitrate (اختياري)<input name="bitrate" maxlength="20" placeholder="1500k"></label><label class="check-label"><input name="autoStart" type="checkbox"> تشغيل تلقائي عند إقلاع النظام</label><label class="check-label"><input name="alwaysOn" type="checkbox"> تشغيل دائم 24/7 دون مشاهدين</label>
-          <label class="check-label"><input type="checkbox" name="enabled"> القناة مفعّلة</label>
-          <div class="wide form-actions"><button id="channel-start" class="btn btn-start" type="button">تشغيل القناة المحددة</button><button id="channel-stop" class="btn btn-stop" type="button">إيقاف القناة المحددة</button><button id="channel-restart" class="btn btn-secondary" type="button">إعادة تشغيل</button></div>
-          <div class="wide form-actions"><button class="btn btn-start" type="submit">حفظ بيانات القناة</button><span id="channel-message" role="status"></span></div>
-        </form></dialog>
-      </section>
+    <!-- ===== License ===== -->
+    
+  </main>
+</div>
 
-      <dialog id="confirm-dialog" class="editor-dialog confirm-dialog">
-        <div class="dialog-head"><h3 id="confirm-title">تأكيد العملية</h3><button type="button" class="dialog-close" data-close="confirm-dialog" aria-label="إغلاق">×</button></div>
-        <p id="confirm-text">هل أنت متأكد؟</p>
-        <div class="form-actions"><button id="confirm-yes" class="btn btn-stop" type="button">تأكيد الحذف</button><button type="button" class="btn btn-secondary" data-close="confirm-dialog">إلغاء</button></div>
-      </dialog>
-      <section class="panel" id="logs-section">
-        <div class="panel-heading"><div><span class="eyebrow">تشخيص النظام</span><h2>سجل الخادم</h2><p>آخر الرسائل المسجلة من خدمة البث.</p></div><span class="log-tag">SERVER LOG</span></div>
-        <pre id="logs" class="logs">لا توجد رسائل بعد.</pre>
-      </section>
-      <footer class="footer"><span>البرنس لايف · BRINCE LIVE</span><span>لوحة إدارة محلية</span></footer>
-    </main>
+<!-- ======== Modals ======== -->
+<div id="modalOverlay" class="modal-overlay hidden">
+  <div class="modal" id="modalBox">
+    <div class="modal-head"><h3 id="modalTitle"></h3>
+      <button class="modal-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">إلغاء</button>
+      <button class="btn btn-primary" id="modalSave">حفظ</button>
+    </div>
+    <p id="modalError" class="form-error"></p>
   </div>
-  <script src="/admin.js"></script>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<footer class="admin-footer" id="adminFooter"></footer>
+
+<script src="admin.js"></script>
 </body>
 </html>
