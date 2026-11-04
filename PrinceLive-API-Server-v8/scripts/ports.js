@@ -18,4 +18,4 @@ const cfg = readJson('config.json');
 const settings = readJson('data.json').settings || {};
 const nginxPort = Number(settings.nginxPort) || 80;
 const nodePort = Number(settings.port) || Number(cfg.port) || 3001;
-process.stdout.write(`${nginxPort} ${nodePort}`);
+process.stdout.write(`${nginxPort} ${nodePort}\n`);

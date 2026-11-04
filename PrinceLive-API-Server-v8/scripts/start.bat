@@ -42,7 +42,7 @@ if not defined FW_PORT set "FW_PORT=80"
 netsh advfirewall firewall show rule name="PrinceLive HTTP %FW_PORT%" >nul 2>&1
 if errorlevel 1 (
   echo Setting up Windows Firewall for viewing port %FW_PORT% - approve the UAC prompt...
-  call "%~dp0scripts\firewall.bat" quiet
+  call "%ROOT%scripts\firewall.bat" quiet
 )
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $null=Invoke-RestMethod 'http://127.0.0.1:%API_PORT%/api/status' -TimeoutSec 2; exit 0 } catch { exit 1 }"
 if errorlevel 1 (
