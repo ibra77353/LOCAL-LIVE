@@ -1,9 +1,0 @@
-{
-  "host": "127.0.0.1",
-  "hlsRoot": "srv/hls",
-  "admin": {
-    "user": "admin",
-    "salt": "0dc9f280c43c1162d5370cdd8de99c0b",
-    "hash": "fe3756b3b74b8148b737b022a70e3c30dc0398cec6c3a39cba317ec37486ce74"
-  }
-}
