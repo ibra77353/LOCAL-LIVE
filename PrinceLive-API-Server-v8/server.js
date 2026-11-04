@@ -317,6 +317,14 @@ function safeText(value) {
   return String(value ?? '').replace(/[\r\n]/g, ' ').slice(0, 1000);
 }
 
+// هوية طالب الأمر في السجل: IP حقيقي (خلف Nginx) + المتصفح + المسار،
+// لتتبّع أوامر تشغيل/إيقاف القنوات القادمة من أجهزة خارجية بدقة.
+function clientInfo(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = forwarded || String(req.headers['x-real-ip'] || '').trim() || req.socket?.remoteAddress || 'غير معروف';
+  return `IP ${ip} | ${safeText(req.headers['user-agent'] || 'بدون وكيل')} | ${req.method} ${req.url}`;
+}
+
 function logLine(message) {
   const line = `[${new Date().toISOString()}] ${safeText(message)}`;
   console.log(line);
@@ -544,7 +552,7 @@ function startChannel(channelId) {
   proc.on('exit',(code,signal)=>{
     runtime.lastExit=`code=${code}; signal=${signal||''}`;
     runtime.proc=null;
-    logLine(`[${channel.name}] انتهى FFmpeg: ${runtime.lastExit}`);
+    logLine(`[${channel.name}] انتهى FFmpeg: ${runtime.lastExit} — ${runtime.stopping ? 'إيقاف مطلوب يدوياً' : 'خروج غير متوقع'}${runtime.forceTranscode ? ' | نسخ قسري بعد فشل' : ''}`);
     const currentSource=sourceForChannel(channel);
     const networkSource=currentSource && ['http-hls','http','hls','network','rtsp'].includes(String(currentSource.type||'').toLowerCase());
     if(code!==0 && isCopyQuality(channel.quality) && networkSource && !runtime.forceTranscode && !runtime.stopping){
@@ -563,13 +571,24 @@ function scheduleChannelRestart(channelId) {
   rt.restartTimer=setTimeout(()=>{if(!rt.stopping&&!rt.proc)startChannel(channelId);},delay);
   logLine(`إعادة تشغيل ${channel.name} بعد ${delay}ms (المحاولة ${rt.restartCount})`);
 }
-function stopChannel(channelId) {
-  const rt=streams.get(channelId); if(!rt)return {ok:true,message:'القناة متوقفة بالفعل',channelId};
+function stopChannel(channelId, origin = '') {
+  const channel = data.channels.find(c => c.id === channelId);
+  const label = channel ? channel.name : 'قناة غير معروفة';
+  const context = origin ? ` — الطالب: ${origin}` : '';
+  const rt = streams.get(channelId);
+  if (!rt) { logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية تشغيل مسجّلة، القناة متوقفة أصلاً`); return {ok:true,message:'القناة متوقفة بالفعل',channelId}; }
   rt.stopping=true;clearTimeout(rt.restartTimer);rt.restartTimer=null;
-  if(!rt.proc)return {ok:true,message:'القناة متوقفة بالفعل',channelId};
+  if (!rt.proc) { logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية FFmpeg نشطة | آخر خروج: ${rt.lastExit || 'لا يوجد'}`); return {ok:true,message:'القناة متوقفة بالفعل',channelId}; }
   const proc=rt.proc;
-  try{proc.kill();logLine(`تم إرسال أمر إيقاف القناة ${channelId}`);return {ok:true,message:'جارٍ إيقاف القناة؛ لن يعاد فتح المصدر قبل خروج FFmpeg',channelId};}
-  catch(e){return {ok:false,message:e.message,channelId};}
+  const uptimeSec = rt.startedAt ? Math.round((Date.now() - new Date(rt.startedAt).getTime()) / 1000) : null;
+  try {
+    proc.kill();
+    logLine(`إيقاف «${label}» (${channelId})${context}: أُرسلت إشارة الإيقاف إلى FFmpeg pid=${proc.pid}${uptimeSec !== null ? ` بعد تشغيل ${uptimeSec} ثانية` : ''}${rt.lastExit ? ` | آخر خروج: ${rt.lastExit}` : ''} | إعادات سابقة: ${rt.restartCount || 0}`);
+    return {ok:true,message:'جارٍ إيقاف القناة؛ لن يعاد فتح المصدر قبل خروج FFmpeg',channelId};
+  } catch(e) {
+    logLine(`فشل إيقاف «${label}» (${channelId})${context}: ${e.message}`);
+    return {ok:false,message:e.message,channelId};
+  }
 }
 function restartChannel(channelId) {
   const rt=streams.get(channelId);
@@ -582,7 +601,15 @@ function restartChannel(channelId) {
   return {ok:true,message:'تم طلب إعادة التشغيل بعد إغلاق FFmpeg الحالي',channelId};
 }
 function startStream() { const channel=activeChannel(); return channel?startChannel(channel.id):{ok:false,message:'لا توجد قنوات'}; }
-function stopStream() { let results=data.channels.map(c=>stopChannel(c.id));return {ok:true,message:'تم إرسال أوامر إيقاف جميع القنوات',results}; }
+function stopStream(origin = '') {
+  const context = origin ? ` — الطالب: ${origin}` : '';
+  const running = data.channels.filter(c => streams.get(c.id)?.proc).length;
+  logLine(`طلب إيقاف كل القنوات${context}: ${data.channels.length} قناة معرّفة، ${running} عملية FFmpeg قيد التشغيل`);
+  const results = data.channels.map(c => stopChannel(c.id, origin));
+  const signaled = results.filter(r => /جارٍ إيقاف/.test(r.message)).length;
+  logLine(`اكتمل إرسال أوامر الإيقاف${context}: ${signaled} قناة أُرسل لها الإيقاف، ${results.length - signaled} كانت متوقفة أصلاً`);
+  return {ok:true,message:'تم إرسال أوامر إيقاف جميع القنوات',results};
+}
 
 function listDevices(res) {
   execFile(
@@ -899,7 +926,10 @@ const server = http.createServer(async (req, res) => {
   const adminApiPath = url.pathname === '/api/channels' || url.pathname.startsWith('/api/channels/') || url.pathname === '/api/sources' || url.pathname.startsWith('/api/sources/') || url.pathname === '/api/settings' || url.pathname === '/api/stats' || url.pathname.startsWith('/api/devices') || url.pathname === '/api/start' || url.pathname === '/api/stop' || url.pathname === '/api/logs' || url.pathname.startsWith('/api/logs/') || url.pathname.startsWith('/api/backup') || url.pathname === '/api/upload' || url.pathname === '/api/metrics' || url.pathname.startsWith('/api/settings/');
   if (url.pathname === '/api/status' && req.method === 'GET') {
     // Status is intentionally public for the viewer page; it contains no credentials or filesystem paths.
-  } else if (adminApiPath && !requireAdmin(req, res)) return;
+  } else if (adminApiPath && !requireAdmin(req, res)) {
+    if (url.pathname === '/api/stop' || url.pathname === '/api/start') logLine(`رفض ${url.pathname} (401) لعدم وجود مصادقة: ${clientInfo(req)}`);
+    return;
+  }
   // Admin/local management API: channel/source CRUD and settings persistence.
   if (url.pathname === '/api/channels' && req.method === 'GET') return send(res, 200, { ok: true, channels: data.channels.map(publicChannel) });
   if (url.pathname === '/api/sources' && req.method === 'GET') return send(res, 200, { ok: true, sources: data.sources.map(s => ({ ...s, url: s.streamUrl || '' })) });
@@ -1082,15 +1112,17 @@ const server = http.createServer(async (req, res) => {
   const channelAction = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)\/(start|stop|restart)$/);
   if (channelAction && req.method === 'POST') {
     const [,id,action]=channelAction;
-    if(action==='stop') return send(res,200,stopChannel(id));
+    if(action==='stop') return send(res,200,stopChannel(id,clientInfo(req)));
     if(action==='restart')return send(res,202,restartChannel(id));
+    logLine(`طلب تشغيل القناة ${id}: ${clientInfo(req)}`);
     return send(res,200,startChannel(id));
   }
   if (req.method === 'POST' && url.pathname === '/api/start') {
+    logLine(`طلب تشغيل القنوات التلقائية: ${clientInfo(req)}`);
     const started=data.channels.filter(c=>c.enabled!==false && c.autoStart).map(c=>startChannel(c.id));
     return send(res,200,{ok:true,message:'تم إرسال أوامر تشغيل القنوات المحددة للتشغيل التلقائي',results:started});
   }
-  if (req.method === 'POST' && url.pathname === '/api/stop') return send(res,200,stopStream());
+  if (req.method === 'POST' && url.pathname === '/api/stop') return send(res,200,stopStream(clientInfo(req)));
 
   if (req.method === 'GET' && url.pathname === '/api/logs') {
     return send(res, 200, { logs: ffmpegLog });
