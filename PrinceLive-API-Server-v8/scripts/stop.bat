@@ -20,7 +20,7 @@ for /f "delims=" %%P in ('node -e "const c=require('./config.json');process.stdo
 if not defined API_PORT set "API_PORT=3001"
 
 echo Requesting stream stop through the local API (port %API_PORT%)...
-node -e "const http=require('http'),c=require('./config.json');const auth=Buffer.from(String(c.adminUsername||'admin')+':'+String(c.adminPassword||'')).toString('base64');const r=http.request({host:'127.0.0.1',port:Number(c.port)||3001,path:'/api/stop',method:'POST',headers:{Authorization:'Basic '+auth,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.end();"
+node -e "const http=require('http'),c=require('./config.json');const auth=Buffer.from(String((c.admin&&c.admin.user)||c.adminUsername||'admin')+':'+String((c.admin&&c.admin.defaultPassword)||c.adminPassword||'')).toString('base64');const r=http.request({host:'127.0.0.1',port:Number(c.port)||3001,path:'/api/stop',method:'POST',headers:{Authorization:'Basic '+auth,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.end();"
 echo.
 
 if not exist "nginx\nginx.exe" goto :stopnode

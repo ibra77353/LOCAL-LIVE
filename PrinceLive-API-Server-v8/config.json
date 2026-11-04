@@ -32,6 +32,10 @@
   "audioBitrate": "96k",
   "audioSampleRate": 44100,
   "audioChannels": 2,
-  "adminUsername": "admin",
-  "adminPassword": "cTSbRR^!rNsM$EMloAgl3a_s"
+  "admin": {
+    "user": "admin",
+    "salt": "d4140333dcdebe62f8b513aa3485a490",
+    "hash": "f5ec05fd6394961ce115695000e879822a29668eeacab7cfe64b3aa5ed21960a",
+    "defaultPassword": "admin123"
+  }
 }

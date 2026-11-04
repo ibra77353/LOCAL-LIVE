@@ -26,7 +26,7 @@
 
 1. فك ضغط الحزمة في مجلد مستقل، ولا تستبدل ملفات إصدار سابق مباشرة.
 2. افتح `config.json` واضبط `ffmpegPath` و`ffprobePath` و`nginxPath` حسب المسارات الفعلية.
-3. راجع `adminUsername` و`adminPassword` وغيّر كلمة المرور قبل الاستخدام.
+3. راجع كائن `admin` في `config.json` (`user` و`salt` و`hash` و`defaultPassword`) وغيّر كلمة المرور قبل الاستخدام.
 4. راجع المنفذين `port` و`nginxPort` وعنوان `host`.
 5. تأكد من وجود `nginx/conf/nginx.conf` وأن `proxy_pass` يشير إلى منفذ Node.js.
 6. شغّل `scripts/start.bat` أو نفّذ `node server.js` من مجلد المشروع.

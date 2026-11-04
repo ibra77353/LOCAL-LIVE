@@ -6,6 +6,7 @@ const path = require('path');
 const { spawn, execFile } = require('child_process');
 const os = require('os');
 const net = require('net');
+const crypto = require('crypto');
 
 const ROOT = __dirname;
 const CONFIG_PATH = path.join(ROOT, 'config.json');
@@ -259,19 +260,42 @@ function getNetworkInterfaces() {
     return rank(a) - rank(b) || a.name.localeCompare(b.name) || a.address.localeCompare(b.address);
   });
 }
+// حساب الإدارة: كلمة المرور مشفّرة بـ scrypt(salt) داخل cfg.admin،
+// مع السماح بالحقول القديمة adminUsername/adminPassword وبـ defaultPassword.
+function adminAccount() {
+  const admin = cfg.admin || {};
+  return {
+    user: String(admin.user || cfg.adminUsername || 'admin'),
+    salt: String(admin.salt || ''),
+    hash: String(admin.hash || '').toLowerCase(),
+    plain: String(admin.defaultPassword || cfg.adminPassword || '')
+  };
+}
+
+function sameSecret(a, b) {
+  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+function isAdminPassword(password) {
+  const account = adminAccount();
+  if (account.salt && account.hash) {
+    try {
+      if (sameSecret(crypto.scryptSync(password, account.salt, 32).toString('hex'), account.hash)) return true;
+    } catch { /* القيمة غير صالحة للتجزئة؛ نتابع للتحقق النصي */ }
+  }
+  return Boolean(account.plain) && sameSecret(password, account.plain);
+}
+
 function isAdminAuthorized(req) {
-  const expectedUser = String(cfg.adminUsername || 'admin');
-  const expectedPassword = String(cfg.adminPassword || '');
   const header = String(req.headers.authorization || '');
-  if (!expectedPassword || !header.startsWith('Basic ')) return false;
+  if (!header.startsWith('Basic ')) return false;
   let decoded = '';
   try { decoded = Buffer.from(header.slice(6), 'base64').toString('utf8'); } catch { return false; }
   const split = decoded.indexOf(':');
   if (split < 0) return false;
-  const user = decoded.slice(0, split), password = decoded.slice(split + 1);
-  const a = Buffer.from(`${expectedUser}:${expectedPassword}`);
-  const b = Buffer.from(`${user}:${password}`);
-  return a.length === b.length && require('crypto').timingSafeEqual(a, b);
+  if (!sameSecret(decoded.slice(0, split), adminAccount().user)) return false;
+  return isAdminPassword(decoded.slice(split + 1));
 }
 function requireAdmin(req, res) {
   if (isAdminAuthorized(req)) return true;
