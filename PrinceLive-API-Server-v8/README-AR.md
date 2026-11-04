@@ -2,6 +2,8 @@
 
 منصة بث محلي متعددة القنوات تعتمد Node.js وFFmpeg وHLS، مع لوحة أدمن وواجهة مشاهد منفصلتين.
 
+**رابط الحزمة النظيفة (ZIP):** [PrinceLive-API-Server-v8-FINAL-MODALS.zip](../PrinceLive-API-Server-v8-FINAL-MODALS.zip) — نسخة جاهزة للتشغيل على Windows 10 بلا ملفات تشغيل (سجلات، مقاطع HLS، رموز، `node_modules`، و`ffmpeg.exe`/`ffprobe.exe`).
+
 ## ما تتضمنه هذه النسخة
 
 - إدارة عدة مصادر USB/DirectShow وHTTP/HLS وRTSP.
