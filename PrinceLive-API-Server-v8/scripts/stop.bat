@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 rem إيقاف كامل: قنوات البث ثم Nginx ثم خادم Node.js.
-rem المنفذ من data.json وبيانات الإدارة من config.json بدل تثبيت 3001 أو تجاهل المصادقة.
+rem المنفذ من data.json ورمز التحكّم المحلي من run/control.token بدل تثبيت 3001 أو تجاهل المصادقة.
 set "ROOT=%~dp0"
 if not exist "%ROOT%server.js" (
   if exist "%ROOT%..\server.js" (
@@ -20,7 +20,7 @@ for /f "tokens=2" %%P in ('node scripts\ports.js 2^>nul') do set "API_PORT=%%P"
 if not defined API_PORT set "API_PORT=3001"
 
 echo Requesting stream stop through the local API (port %API_PORT%)...
-node -e "const http=require('http'),c=require('./config.json');const auth=Buffer.from(String((c.admin&&c.admin.user)||c.adminUsername||'admin')+':'+String((c.admin&&c.admin.defaultPassword)||c.adminPassword||'')).toString('base64');const r=http.request({host:'127.0.0.1',port:(()=>{let p=3001;try{p=Number(require('./data.json').settings.port)||p}catch{}return p})(),path:'/api/stop',method:'POST',headers:{Authorization:'Basic '+auth,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.end();"
+node -e "const http=require('http'),fs=require('fs');let token='';try{token=fs.readFileSync('run/control.token','utf8').trim()}catch{};if(!token){console.log('run/control.token missing: Node may not be running');process.exit(0)}const r=http.request({host:'127.0.0.1',port:(()=>{let p=3001;try{p=Number(require('./data.json').settings.port)||p}catch{}return p})(),path:'/api/stop',method:'POST',headers:{'X-Control-Token':token,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.end();"
 echo.
 
 if not exist "nginx\nginx.exe" goto :stopnode

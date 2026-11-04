@@ -293,9 +293,16 @@ function isAdminPassword(password) {
 }
 
 // جلسة لوحة التحكم: كوكي HttpOnly موقّع بمفتاح مشتق من حساب الإدارة في config.json،
-// فلا حاجة لملف أسرار إضافي، وتبقى Basic Auth مدعومة كما هي لكل الطلبات.
+// فلا حاجة لملف أسرار إضافي. تسجيل الدخول بالجلسة هو الطريقة الوحيدة للمصادقة؛
+// لا يوجد Basic Auth، وسكربتات الإيقاف المحلية تستخدم رمز التحكّم في run/control.token.
 const ADMIN_COOKIE = 'pl_admin';
 const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+// رمز تحكّم محلي بديل عن Basic Auth: يُكتب في run/control.token عند كل تشغيل،
+// ويُقبل فقط في طلبات 127.0.0.1 التي تحمله في ترويسة X-Control-Token، حتى تستطيع
+// scripts/stop.bat إيقاف البث بأمان دون كلمة مرور مكتوبة داخل السكربت.
+const RUN_DIR = path.join(ROOT, 'run');
+const CONTROL_TOKEN_FILE = path.join(RUN_DIR, 'control.token');
+const CONTROL_TOKEN = crypto.randomBytes(24).toString('hex');
 function sessionKey() {
   const account = adminAccount();
   return crypto.createHash('sha256').update(`prince-live-session:${account.user}:${account.hash}:${account.salt}`).digest();
@@ -368,27 +375,33 @@ function noteLoginFailure(ip) {
   else record.count += 1;
 }
 
+function isLoopback(req) {
+  const address = String((req.socket && req.socket.remoteAddress) || '');
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+// المصادقة: جلسة اللوحة فقط (لا Basic Auth). الاستثناء الوحيد رمز التحكّم المحلي
+// في run/control.token لسكربتات الجهاز نفسه، ولا يُقبل إلا من 127.0.0.1.
 function isAdminAuthorized(req) {
   if (hasAdminSession(req)) return true;
-  const header = String(req.headers.authorization || '');
-  if (!header.startsWith('Basic ')) return false;
-  let decoded = '';
-  try { decoded = Buffer.from(header.slice(6), 'base64').toString('utf8'); } catch { return false; }
-  const split = decoded.indexOf(':');
-  if (split < 0) return false;
-  if (!sameSecret(decoded.slice(0, split), adminAccount().user)) return false;
-  return isAdminPassword(decoded.slice(split + 1));
+  const token = String(req.headers['x-control-token'] || '');
+  return !!token && isLoopback(req) && sameSecret(token, CONTROL_TOKEN);
 }
 function requireAdmin(req, res) {
   if (isAdminAuthorized(req)) return true;
-  res.writeHead(401, { 'WWW-Authenticate': 'Basic realm=\"Prince Live Admin\", charset=\"UTF-8\"', 'Cache-Control': 'no-store' });
-  res.end('Authentication required');
+  apiError(res, 401, 'يجب تسجيل الدخول إلى لوحة التحكم');
   return false;
 }
 
 fs.mkdirSync(HLS_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(LOG_DIR, { recursive: true });
+// يُحدَّث رمز التحكّم عند كل تشغيل ليقرأه scripts/stop.bat من نفس الجهاز.
+try {
+  fs.mkdirSync(RUN_DIR, { recursive: true });
+  fs.writeFileSync(CONTROL_TOKEN_FILE, CONTROL_TOKEN, 'utf8');
+} catch (err) {
+  console.error(`تعذر كتابة ${CONTROL_TOKEN_FILE}: ${err.message}`);
+}
 
 function safeText(value) {
   return String(value ?? '').replace(/[\r\n]/g, ' ').slice(0, 1000);
@@ -864,7 +877,7 @@ function serveStatic(req, res) {
   }
 
   // صفحة اللوحة تُخدَم دائماً لأنها تعرض شاشة الدخول بنفسها؛ حماية البيانات تبقى
-  // على كل مسارات /api/* (جلسة موقّعة أو Basic Auth) ولا يكشف الملف أي بيانات.
+  // على كل مسارات /api/* (جلسة موقّعة فقط) ولا يكشف الملف أي بيانات.
 
   fs.readFile(fullPath, (err, data) => {
     if (err) {
