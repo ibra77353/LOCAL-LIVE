@@ -605,9 +605,14 @@ function buildArgs(channel, forceTranscode = false) {
     args.push('-f','dshow','-rtbufsize','256M');
     // الوضع الآمن: لا نفرض الدقة/الإطارات على الجهاز (يعالج خطأ "Could not set video options").
     if (!source.captureSafeMode) args.push('-framerate',String(Number(source.fps)||30),'-video_size',String(source.videoSize||'1280x720'));
-    // صيغة الإدخال: pixelFormat أولاً، وإلا vcodec (اختيار «mjpeg» في الواجهة كان يُهمَل سابقاً).
-    const inputFormat = String(source.pixelFormat || source.vcodec || '').trim();
-    if (inputFormat) args.push('-pixel_format',inputFormat);
+    // صيغة الإدخال: pixelFormat → -pixel_format، أما codec مثل mjpeg فيُمرَّر بـ -vcodec (mjpeg ليس pixel format).
+    const inputPixelFormat = String(source.pixelFormat || '').trim();
+    const inputCodec = String(source.vcodec || '').trim();
+    const isCodecName = (value) => ['mjpeg', 'rawvideo', 'h264'].includes(value.toLowerCase());
+    const pixelSpec = isCodecName(inputPixelFormat) ? '' : inputPixelFormat;
+    const codecSpec = inputCodec || (isCodecName(inputPixelFormat) ? inputPixelFormat : '');
+    if (/^[a-z0-9_]{2,30}$/i.test(pixelSpec)) args.push('-pixel_format',pixelSpec);
+    if (/^[a-z0-9_]{2,30}$/i.test(codecSpec)) args.push('-vcodec',codecSpec);
     args.push('-i',inputSpec);
   }
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
@@ -822,10 +827,17 @@ function testCapture(body, callback) {
   const videoDevice=String(body.videoDevice||'').trim(), audioDevice=String(body.audioDevice||'').trim();
   if(body.mode==='audio'){if(!audioDevice||audioDevice.length>300||/[\r\n\0]/.test(audioDevice))return callback(new Error('اختر جهاز صوت صالحاً'));const a=spawn(ffmpegBin(),['-hide_banner','-loglevel','error','-f','dshow','-i',`audio=${audioDevice}`,'-t','3','-f','null','-'],{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']});let out='';const timer=setTimeout(()=>{try{a.kill();}catch{}},10000);a.stderr.on('data',b=>out=(out+b.toString()).slice(-8000));a.on('error',e=>{clearTimeout(timer);callback(new Error(e.message));});a.on('close',code=>{clearTimeout(timer);code===0?callback(null,{ok:true,audio:true,output:'نجح اختبار الصوت لمدة 3 ثوانٍ.'}):callback(new Error(`فشل اختبار الصوت (exit ${code}). ${out.slice(-1800)}`));});return;}
   if(!videoDevice || videoDevice.length>300 || /[\r\n\0]/.test(videoDevice)) return callback(new Error('جهاز الفيديو غير صالح'));
-  const size=String(body.videoSize||'1280x720'), fps=Number(body.fps)||30, pixel=String(body.pixelFormat||'mjpeg');
-  if(!/^\d{2,5}x\d{2,5}$/.test(size)||fps<1||fps>60||!/^[a-z0-9_]{2,30}$/i.test(pixel)) return callback(new Error('إعدادات الالتقاط غير صالحة'));
+  const size=String(body.videoSize||'1280x720'), fps=Number(body.fps)||30;
+  // mjpeg اسم codec لا pixel format: يُمرَّر بـ -vcodec، وبقية القيم تذهب إلى -pixel_format.
+  const formatRaw=String(body.pixelFormat||'').trim(), codecRaw=String(body.vcodec||'').trim();
+  const isCodecName=(value)=>['mjpeg','rawvideo','h264'].includes(value.toLowerCase());
+  const pixel=isCodecName(formatRaw)?'':formatRaw, vcodec=codecRaw||(isCodecName(formatRaw)?formatRaw:'');
+  if(!/^\d{2,5}x\d{2,5}$/.test(size)||fps<1||fps>60||(pixel&&!/^[a-z0-9_]{2,30}$/i.test(pixel))||(vcodec&&!/^[a-z0-9_]{2,30}$/i.test(vcodec))) return callback(new Error('إعدادات الالتقاط غير صالحة'));
   const input=audioDevice?`video=${videoDevice}:audio=${audioDevice}`:`video=${videoDevice}`;
-  const args=['-hide_banner','-loglevel','error','-f','dshow','-rtbufsize','128M','-framerate',String(fps),'-video_size',size,'-pixel_format',pixel,'-i',input,'-t','3','-f','null','-'];
+  const args=['-hide_banner','-loglevel','error','-f','dshow','-rtbufsize','128M','-framerate',String(fps),'-video_size',size];
+  if(pixel) args.push('-pixel_format',pixel);
+  if(vcodec) args.push('-vcodec',vcodec);
+  args.push('-i',input,'-t','3','-f','null','-');
   const child=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']});
   let output='';const timer=setTimeout(()=>{try{child.kill();}catch{}},10000);
   child.stderr.on('data',b=>{output=(output+b.toString()).slice(-12000);});
