@@ -420,7 +420,7 @@ function syncNginxPorts(){
     if(!fs.existsSync(file))return false;
     let text=fs.readFileSync(file,'utf8');
     text=text.replace(/(listen\s+)\d+(\s*;)/,`$1${Number(data.settings.nginxPort)||80}$2`);
-    text=text.replace(/(proxy_pass\s+http:\/\/127\.0\.0\.1:)\d+(\s*;)/,`$1${Number(data.settings.port)||3001}$2`);
+    text=text.replace(/(proxy_pass\s+http:\/\/127\.0\.0\.1:)\d+(\s*;)/g,`$1${Number(data.settings.port)||3001}$2`);
     // تنقية نسخ قديمة من nginx.conf: reuseport غير مدعوم في بناء ويندوز،
     // وكتلة types المكررة (موجودة في mime.types) تنتج تحذير duplicate extension.
     text=text.replace(/\s+reuseport\b/g,'');
