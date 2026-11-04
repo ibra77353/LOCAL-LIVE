@@ -1,0 +1,16 @@
+{
+  "name": "prince-live-local",
+  "version": "8.0.1",
+  "private": true,
+  "description": "Prince Live local multi-channel streaming platform - v8 release candidate",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "devices": "node server.js --devices",
+    "test": "node scripts/verify-v8.js",
+    "test:stop": "node scripts/test-stop.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
