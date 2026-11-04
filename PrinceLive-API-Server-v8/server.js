@@ -272,6 +272,9 @@ function getNetworkInterfaces() {
   for (const [name, addresses] of Object.entries(all)) {
     for (const item of (addresses || [])) {
       if (item.family !== 'IPv4' || item.internal || !item.address || item.address.startsWith('169.254.')) continue;
+      // عناوين المحوّلات الافتراضية (Hyper-V/WSL/VMware...) لا تُفتح من أجهزة الشبكة،
+      // فإظهارها بين روابط المشاهدة يجعل المستخدم يجرّب رابطاً لا يعمل من جهاز آخر.
+      if (/vEthernet|VirtualBox|VMware|Hyper-V|Loopback|WSL|Docker|TAP-|Tailscale|ZeroTier/i.test(name)) continue;
       result.push({ name, address: item.address, netmask: item.netmask || '', cidr: item.cidr || '', url: `http://${item.address}/`, adminUrl: `http://${item.address}/admin` });
     }
   }
