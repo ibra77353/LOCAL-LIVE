@@ -65,8 +65,8 @@
 | الاختبار | النتيجة |
 | --- | --- |
 | `npm test` (scripts/verify-v8.js) | ناجح |
-| `node --check` لـ `server.js` و`web/admin.js` و`web/app.js` | ناجح |
-| صفحة المشاهدين `/` و`/app.js` و`/vendor/hls.min.js` | 200 |
+| `node --check` لـ `server.js` و`web/admin.js` و`web/viewer.js` | ناجح |
+| صفحة المشاهدين `/` و`/viewer.js` و`/vendor/hls.min.js` | 200 |
 | لوحة الإدارة `/admin/` بلا مصادقة / مع مصادقة | 401 / 200 |
 | واجهات الإدارة `/api/channels` و`/api/settings` بلا مصادقة | 401 |
 | `/api/stop` بلا مصادقة | 401 |

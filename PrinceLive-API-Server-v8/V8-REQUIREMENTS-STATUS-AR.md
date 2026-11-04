@@ -73,7 +73,7 @@
 
 ## الاختبارات المنفذة في بيئة البناء
 
-- [x] `node --check` على server.js وweb/admin.js وweb/app.js.
+- [x] `node --check` على server.js وweb/admin.js وweb/viewer.js.
 - [x] اختبار API لإضافة مصدر وإنشاء قناة مرتبطة تلقائياً.
 - [x] اختبار تعديل القناة وإعدادات الجودة وalwaysOn.
 - [x] اختبار منع حذف مصدر مرتبط بقناة.
