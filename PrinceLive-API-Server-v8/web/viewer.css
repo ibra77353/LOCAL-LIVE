@@ -40,6 +40,8 @@ a{color:var(--accent);text-decoration:none}
 .np-live{color:var(--live);font-size:13px;animation:blink 1.6s infinite}
 @keyframes blink{50%{opacity:.35}}
 .player-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* عناصر الشريط لا تتقلّص ولا يلتف نصها؛ الشريط نفسه يلتف على الشاشات الضيقة */
+.player-bar>.np,.player-controls>*{flex:0 0 auto;white-space:nowrap}
 .pbtn{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;
   padding:7px 11px;cursor:pointer;font-size:14px}
 .pbtn:hover{border-color:var(--accent)}
