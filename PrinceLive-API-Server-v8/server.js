@@ -125,6 +125,15 @@ function writeData(value) {
 }
 let data = readData();
 if (Object.prototype.hasOwnProperty.call(data.settings,'ads')) delete data.settings.ads;
+// حقول قنوات ملغاة من المخطط (لا يقرأها أي كود): threads و manualStopped.
+// تُحذف من data.json عند الإقلاع حتى تتطابق الملفات القديمة مع المخطط الحالي.
+let prunedChannelFields = false;
+for (const channel of data.channels) {
+  for (const key of ['threads', 'manualStopped']) {
+    if (Object.prototype.hasOwnProperty.call(channel, key)) { delete channel[key]; prunedChannelFields = true; }
+  }
+}
+if (prunedChannelFields) writeData(data);
 data.settings = { ...defaultData().settings, ...data.settings };
 Object.assign(cfg, {
   ffmpegPath: data.settings.ffmpegPath ?? cfg.ffmpegPath,
