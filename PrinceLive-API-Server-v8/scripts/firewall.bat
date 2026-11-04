@@ -7,6 +7,7 @@ rem  يقرأ منافذ البث والمشاهدة من settings.json/config.j
 rem    firewall.bat          - السماح على الشبكات الخاصة والمكتبية (الافتراضي)
 rem    firewall.bat public   - السماح على كل الشبكات بما فيها العامة
 rem    firewall.bat remove   - حذف قواعد PrinceLive من جدار الحماية
+rem    firewall.bat quiet    - تشغيل تلقائي (بلا توقف في النهاية) يستخدمه start.bat
 rem ============================================================
 set "ROOT=%~dp0"
 if exist "%ROOT%..\server.js" for %%I in ("%ROOT%..") do set "ROOT=%%~fI\"
@@ -35,6 +36,8 @@ for /f "tokens=1,2" %%A in ("%PORTS%") do (
 set "RULE_HTTP=PrinceLive HTTP %NGINX_PORT%"
 set "RULE_NODE=PrinceLive API %NODE_PORT%"
 
+set "QUIET="
+if /i "%~1"=="quiet" set "QUIET=1"
 if /i "%~1"=="remove" goto REMOVE
 
 set "PROFILES=private,domain"
@@ -77,7 +80,7 @@ set "PUBLICNET="
 for /f "delims=" %%C in ('powershell -NoProfile -Command "Get-NetConnectionProfile ^| Select-Object -ExpandProperty NetworkCategory"') do if /i "%%C"=="Public" set "PUBLICNET=1"
 if defined PUBLICNET echo تنبيه: إحدى شبكاتك مصنّفة عامة ولن تتصل أجهزتها. شغّل firewall.bat public للسماح عليها.
 echo لإلغاء السماح: firewall.bat remove
-pause
+if not defined QUIET pause
 exit /b 0
 
 :REMOVE
@@ -85,5 +88,5 @@ netsh advfirewall firewall delete rule name="%RULE_HTTP%" >nul 2>&1
 netsh advfirewall firewall delete rule name="%RULE_NODE%" >nul 2>&1
 netsh advfirewall firewall delete rule name="PrinceLive HTTP LAN Port %NGINX_PORT%" >nul 2>&1
 echo تم حذف قواعد PrinceLive من جدار الحماية.
-pause
+if not defined QUIET pause
 exit /b 0

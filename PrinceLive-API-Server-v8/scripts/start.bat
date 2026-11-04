@@ -33,6 +33,15 @@ if not exist "ffmpeg.exe" (
   if errorlevel 1 echo WARNING: FFmpeg not found. Put ffmpeg.exe beside server.js or add FFmpeg to PATH.
 )
 for /f %%P in ('node -e "const c=require('./config.json');process.stdout.write(String(c.port||3001))"') do set "API_PORT=%%P"
+rem فتح منافذ المشاهدة في جدار الحماية تلقائياً عند أول تشغيل (نافذة صلاحيات واحدة)
+set "FW_PORT="
+for /f "tokens=1" %%P in ('node scripts\ports.js 2^>nul') do set "FW_PORT=%%P"
+if not defined FW_PORT set "FW_PORT=80"
+netsh advfirewall firewall show rule name="PrinceLive HTTP %FW_PORT%" >nul 2>&1
+if errorlevel 1 (
+  echo Setting up Windows Firewall for viewing port %FW_PORT% - approve the UAC prompt...
+  call "%~dp0scripts\firewall.bat" quiet
+)
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $null=Invoke-RestMethod 'http://127.0.0.1:%API_PORT%/api/status' -TimeoutSec 2; exit 0 } catch { exit 1 }"
 if errorlevel 1 (
   echo Starting Prince Live API on port %API_PORT%...
