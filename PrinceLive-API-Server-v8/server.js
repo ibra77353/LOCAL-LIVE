@@ -58,6 +58,8 @@ let lastServedSample = { bytes: 0, at: Date.now() };
 // API model: persisted locally in data.json. This release runs one capture pipeline
 // (one physical DirectShow input) and exposes it as a configurable channel.
 const DATA_PATH = path.resolve(process.env.DATA_FILE || path.join(ROOT, 'data.json'));
+// ملف الإعدادات المستقل للوحة AmaanLive: يُقرأ عند التشغيل ويُحدَّث مع كل حفظ.
+const SETTINGS_PATH = path.resolve(process.env.SETTINGS_FILE || path.join(path.dirname(DATA_PATH), 'settings.json'));
 // الإعدادات فقط هي الافتراضية؛ لا تُنشأ مصادر أو قنوات تلقائياً عند أول تشغيل.
 function defaultData() {
   return {
@@ -113,15 +115,32 @@ function readData() {
     return value;
   }
 }
+function writeSettingsFile(settings) {
+  const temp = SETTINGS_PATH + '.tmp';
+  try {
+    fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
+    fs.writeFileSync(temp, JSON.stringify(settings || {}, null, 2) + '\n', 'utf8');
+    fs.renameSync(temp, SETTINGS_PATH);
+  } catch (err) {
+    console.error(`تعذر تحديث settings.json: ${err.message}`);
+  }
+}
 function writeData(value) {
   fs.mkdirSync(path.dirname(DATA_PATH), { recursive: true });
   const temp = DATA_PATH + '.tmp';
   fs.writeFileSync(temp, JSON.stringify(value, null, 2), 'utf8');
   fs.renameSync(temp, DATA_PATH);
+  writeSettingsFile(value.settings);
 }
 let data = readData();
 if (Object.prototype.hasOwnProperty.call(data.settings,'ads')) delete data.settings.ads;
 data.settings = { ...defaultData().settings, ...data.settings };
+// settings.json هو مصدر الإعدادات الظاهر للوحة؛ يُدمج فوق data.json عند وجوده.
+try {
+  const saved = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8').replace(/^\uFEFF/, ''));
+  if (saved && typeof saved === 'object' && !Array.isArray(saved)) data.settings = { ...data.settings, ...saved };
+} catch { /* أول تشغيل: يُنشأ الملف أدناه */ }
+writeSettingsFile(data.settings);
 Object.assign(cfg, {
   port:data.settings.port ?? cfg.port, nginxPort:data.settings.nginxPort ?? cfg.nginxPort,
   outputWidth: data.settings.outputWidth ?? cfg.outputWidth,
@@ -267,8 +286,7 @@ function adminAccount() {
   return {
     user: String(admin.user || cfg.adminUsername || 'admin'),
     salt: String(admin.salt || ''),
-    hash: String(admin.hash || '').toLowerCase(),
-    plain: String(admin.defaultPassword || cfg.adminPassword || '')
+    hash: String(admin.hash || '').toLowerCase()
   };
 }
 
@@ -277,14 +295,13 @@ function sameSecret(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
+// كلمة مرور واحدة فقط: مطابقة hash(scrypt) مع salt من config.json.
 function isAdminPassword(password) {
   const account = adminAccount();
-  if (account.salt && account.hash) {
-    try {
-      if (sameSecret(crypto.scryptSync(password, account.salt, 32).toString('hex'), account.hash)) return true;
-    } catch { /* القيمة غير صالحة للتجزئة؛ نتابع للتحقق النصي */ }
-  }
-  return Boolean(account.plain) && sameSecret(password, account.plain);
+  if (!account.salt || !account.hash) return false;
+  try {
+    return sameSecret(crypto.scryptSync(password, account.salt, 32).toString('hex'), account.hash);
+  } catch { return false; }
 }
 
 function isAdminAuthorized(req) {

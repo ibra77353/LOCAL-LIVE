@@ -34,8 +34,8 @@
   "audioChannels": 2,
   "admin": {
     "user": "admin",
-    "salt": "d4140333dcdebe62f8b513aa3485a490",
-    "hash": "f5ec05fd6394961ce115695000e879822a29668eeacab7cfe64b3aa5ed21960a",
+    "salt": "0dc9f280c43c1162d5370cdd8de99c0b",
+    "hash": "fe3756b3b74b8148b737b022a70e3c30dc0398cec6c3a39cba317ec37486ce74",
     "defaultPassword": "admin123"
   }
 }
