@@ -593,8 +593,12 @@ function buildArgs(channel, forceTranscode = false) {
     else args.push('-f','x11grab','-framerate',screenFps,'-i',String(process.env.DISPLAY || ':0.0'));
   } else {
     const inputSpec = audioDevice ? `video=${source.videoDevice}:audio=${audioDevice}` : `video=${source.videoDevice}`;
-    args.push('-f','dshow','-rtbufsize','256M','-framerate',String(Number(source.fps)||30),'-video_size',String(source.videoSize||'1280x720'));
-    if (source.pixelFormat) args.push('-pixel_format',String(source.pixelFormat));
+    args.push('-f','dshow','-rtbufsize','256M');
+    // الوضع الآمن: لا نفرض الدقة/الإطارات على الجهاز (يعالج خطأ "Could not set video options").
+    if (!source.captureSafeMode) args.push('-framerate',String(Number(source.fps)||30),'-video_size',String(source.videoSize||'1280x720'));
+    // صيغة الإدخال: pixelFormat أولاً، وإلا vcodec (اختيار «mjpeg» في الواجهة كان يُهمَل سابقاً).
+    const inputFormat = String(source.pixelFormat || source.vcodec || '').trim();
+    if (inputFormat) args.push('-pixel_format',inputFormat);
     args.push('-i',inputSpec);
   }
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
