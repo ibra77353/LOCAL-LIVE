@@ -242,6 +242,16 @@ test('PATCH /api/channels/:id يبدّل حالة التفعيل', async () => {
   assert.equal(on.json.ok, true);
 });
 
+test('PATCH /api/channels/:id يرفض أي خاصية غير التفعيل', async () => {
+  const withCrf = await api.patch(`/api/channels/${state.channelId}`, { enabled: true, crf: 23 });
+  assert.equal(withCrf.status, 400);
+  assert.match(withCrf.json.error, /crf/);
+  const widthOnly = await api.patch(`/api/channels/${state.channelId}`, { outputWidth: 1280 });
+  assert.equal(widthOnly.status, 400);
+  const stillOn = (await api.get('/api/channels')).json.channels.find((c) => c.id === state.channelId);
+  assert.equal(stillOn.enabled, true);
+});
+
 // 409 Conflict هو السلوك المقصود في server.js (سطر 1362): المصدر المرتبط بقناة لا يُحذف.
 test('DELETE /api/sources يرفض مصدراً مرتبطاً بقناة (409)', async () => {
   const res = await api.del(`/api/sources/${state.sourceId}`);

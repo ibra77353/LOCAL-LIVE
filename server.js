@@ -343,9 +343,11 @@ function readBody(req, maxBytes=1024*1024) {
 // الحقول الوحيدة المسموح بها عند إنشاء القناة أو تحديثها. أي خاصية أخرى في جسم
 // الطلب (مثل الدقة أو CRF أو GOP) تُرفض صراحةً بدل تجاهلها بصمت.
 const CHANNEL_WRITE_FIELDS = ['name','chanId','sourceId','category','sort','sortOrder','cover','enabled','quality','bitrate','fps','autoStart','alwaysOn'];
-function unexpectedChannelField(body) {
+// مسار PATCH مخصّص لتبديل التفعيل فقط، فلا يقبل أي حقل آخر.
+const CHANNEL_PATCH_FIELDS = ['enabled'];
+function unexpectedChannelField(body, fields = CHANNEL_WRITE_FIELDS) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
-  return Object.keys(body).find(key => !CHANNEL_WRITE_FIELDS.includes(key)) || null;
+  return Object.keys(body).find(key => !fields.includes(key)) || null;
 }
 // اختبار رابط بث: يقرأ الترويسات وأول بايتات ليحدد نوع المصدر (m3u8/ts/آخر).
 function probeStreamUrl(target) {
@@ -1533,6 +1535,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (channelMatch && req.method === 'PATCH') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedToggle = unexpectedChannelField(body, CHANNEL_PATCH_FIELDS);
+    if (unexpectedToggle) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedToggle}`);
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (Object.prototype.hasOwnProperty.call(body,'enabled')) {
