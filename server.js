@@ -315,6 +315,9 @@ const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 // scripts/stop.bat إيقاف البث بأمان دون كلمة مرور مكتوبة داخل السكربت.
 const RUN_DIR = path.join(ROOT, 'run');
 const CONTROL_TOKEN_FILE = path.join(RUN_DIR, 'control.token');
+// ملف معرّف العملية: يكتبه الخادم عند الإقلاع ليستطيع scripts\stop.bat التأكد من
+// أن العملية التي يوقفها هي خادم PrinceLive نفسه، لا عملية Node.js لبرنامج آخر.
+const PID_FILE = path.join(RUN_DIR, 'server.pid');
 const CONTROL_TOKEN = crypto.randomBytes(24).toString('hex');
 // عدّاد جلسات محفوظ في run/session.epoch: يزداد عند تسجيل الخروج فتُبطل كل الرموز
 // الصادرة قبل ذلك فوراً بدل أن تبقى صالحة حتى انتهاء مدة الـ12 ساعة.
@@ -428,6 +431,18 @@ try {
   fs.writeFileSync(CONTROL_TOKEN_FILE, CONTROL_TOKEN, 'utf8');
 } catch (err) {
   console.error(`تعذر كتابة ${CONTROL_TOKEN_FILE}: ${err.message}`);
+}
+try {
+  fs.mkdirSync(RUN_DIR, { recursive: true });
+  fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
+} catch (err) {
+  console.error(`تعذر كتابة ${PID_FILE}: ${err.message}`);
+}
+// يُحذف ملف العملية عند الخروج الطبيعي فقط، وحين يكون ما فيه معرّفنا الحالي.
+function removePidFile() {
+  try {
+    if (fs.readFileSync(PID_FILE, 'utf8').trim() === String(process.pid)) fs.unlinkSync(PID_FILE);
+  } catch {}
 }
 
 function safeText(value) {
@@ -1523,7 +1538,13 @@ const server = http.createServer(async (req, res) => {
 
 // المنفذ يأتي من settings.port في data.json (مصدر وحيد يتغيّر من اللوحة)،
 // ويبقى متغير البيئة PORT أعلى أولوية للتشغيل في حاوية أو خلف وكيل.
-const LISTEN_PORT = Number(process.env.PORT || data.settings.port) || 3001;
+// نفس القاعدة موجودة في scripts/ports.js الذي تقرأه ملفات BAT، فأي قيمة غير
+// صالحة في data.json أو PORT تُحوَّل إلى 3001 في الطرفين بدل اختلاف المنفذ.
+function resolvePort(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : fallback;
+}
+const LISTEN_PORT = resolvePort(process.env.PORT || data.settings.port, 3001);
 const LISTEN_HOST = process.env.HOST || cfg.host || '127.0.0.1';
 
 server.on('error', err => {
@@ -1578,6 +1599,7 @@ server.listen(LISTEN_PORT, LISTEN_HOST, () => {
 
 function shutdown() {
   stopStream();
+  removePidFile();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }

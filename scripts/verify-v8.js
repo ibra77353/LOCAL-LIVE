@@ -139,6 +139,49 @@ while ((fieldMatch = fieldRe.exec(settingsView))) {
   if (value === undefined) failures.push(`الحقل ${key}: لا توجد قيمة مخزنة ليُعرض`);
 }
 
+// 10) سكربتات Windows: مصدر منافذ واحد، عمليات PrinceLive فقط، وسجلات محفوظة
+const scriptsDir = path.join(root, 'scripts');
+const batScripts = fs.existsSync(scriptsDir)
+  ? fs.readdirSync(scriptsDir).filter((name) => /\.bat$/i.test(name)).map((name) => `scripts/${name}`)
+  : [];
+const requiredScripts = ['start.bat', 'stop.bat', 'check.bat', 'devices.bat', 'firewall.bat', 'allow-lan.bat',
+  'restart-nginx.bat', 'stop-nginx.bat', 'nginx-dirs.bat', 'nginx-stop.bat', 'check-v8.bat',
+  'ports.js', 'procs.js', 'test-stop.js', 'verify-v8.js'];
+for (const name of requiredScripts) if (!fs.existsSync(filePath(`scripts/${name}`))) failures.push(`سكربت مفقود: scripts/${name}`);
+// 10.1) كل ملف يقرأ المنافذ يجب أن يعتمد scripts\ports.js وحده (بلا افتراضي ثابت ثانٍ)
+const portReaders = ['scripts/start.bat', 'scripts/stop.bat', 'scripts/check.bat', 'scripts/firewall.bat', 'scripts/restart-nginx.bat'];
+for (const file of portReaders) {
+  if (!fs.existsSync(filePath(file))) continue;
+  const text = readText(file);
+  if (!text.includes('scripts\\ports.js')) failures.push(`${file} لا يقرأ المنافذ من scripts\\ports.js`);
+  const hardcoded = /(?:API_PORT|FW_PORT|NODE_PORT|NGINX_PORT)="?\s*(?:3001|80)\b/.exec(text.replace(/set\s+"/g, 'set "'));
+  if (hardcoded) failures.push(`${file} يضع منفذاً افتراضياً ثابتاً (${hardcoded[1]}) بدل مصدر المنافذ الوحيد`);
+}
+// 10.2) لا إيقاف بالاسم: أي taskkill يجب أن يكون بمعرّف عملية محقّق
+for (const file of batScripts) {
+  const text = readText(file);
+  if (/taskkill[^\r\n]*\/IM\b/i.test(text)) failures.push(`${file}: taskkill /IM يوقف كل عمليات الاسم نفسه وليس عمليات PrinceLive فقط`);
+  if (/del\s+\/q\s+"?logs\\/i.test(text) || /rd\s+\/s\s+\/q\s+"?logs\b/i.test(text) || /del\s+\/q\s+"?nginx\\logs/i.test(text)) {
+    failures.push(`${file}: يحذف سجلات التشغيل عند الإيقاف`);
+  }
+}
+// 10.3) تمييز العمليات يمر عبر scripts\procs.js في كل سكربت يوقف أو يفحص
+//       (nginx-stop.bat هو المسار المشترك لإيقاف Nginx، ويستخدم procs.js بنفسه)
+for (const file of ['scripts/start.bat', 'scripts/stop.bat', 'scripts/stop-nginx.bat', 'scripts/restart-nginx.bat', 'scripts/check.bat', 'scripts/nginx-stop.bat']) {
+  if (!fs.existsSync(filePath(file))) continue;
+  const text = readText(file);
+  if (!text.includes('procs.js') && !text.includes('nginx-stop.bat')) failures.push(`${file} لا يتحقق من ملكية العملية قبل إيقافها`);
+}
+// 10.4) start.bat يتحقق من استجابة الخادم ويرجع رمز فشل بدل إعلان نجاح كامل
+if (fs.existsSync(filePath('scripts/start.bat'))) {
+  const startBat = readText('scripts/start.bat');
+  if (!startBat.includes('/api/status')) failures.push('scripts/start.bat لا يتحقق من استجابة /api/status');
+  if (!/exit \/b 1/.test(startBat)) failures.push('scripts/start.bat لا يُرجع رمز فشل عند تعثر التشغيل');
+  if (!/did NOT start completely/i.test(startBat)) failures.push('scripts/start.bat لا يميّز التشغيل الجزئي عن التشغيل الكامل');
+}
+// 10.5) الخادم يكتب معرّف عمليته ليستخدمه stop.bat
+if (serverJs && !/server\.pid/.test(serverJs)) failures.push('server.js لا يكتب run\\server.pid اللازم لتمييز عملية PrinceLive');
+
 if (failures.length) {
   console.error('AmaanLive verification FAILED');
   console.error(failures.join('\n'));
