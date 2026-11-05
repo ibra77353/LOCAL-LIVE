@@ -47,34 +47,6 @@
     "logoSizePct": 10,
     "logoOpacityPct": 50
   },
-  "sources": [
-    {
-      "id": "src_6461d50bc4",
-      "name": "بث تجريبي محلي",
-      "type": "http-hls",
-      "enabled": true,
-      "streamUrl": "http://127.0.0.1:8099/index.m3u8"
-    }
-  ],
-  "channels": [
-    {
-      "id": "ch_2f485d75d3",
-      "chanId": "ch_2f485d75d3",
-      "name": "بث تجريبي محلي",
-      "category": "عام",
-      "sourceId": "src_6461d50bc4",
-      "cover": "",
-      "enabled": true,
-      "quality": "240p",
-      "fps": "20",
-      "bitrate": "1200k",
-      "encodingMode": "crf",
-      "crfValue": 26,
-      "autoStart": false,
-      "alwaysOn": false,
-      "logoEnabled": false,
-      "sortOrder": 0,
-      "url": "/hls/ch_2f485d75d3/index.m3u8"
-    }
-  ]
+  "sources": [],
+  "channels": []
 }
