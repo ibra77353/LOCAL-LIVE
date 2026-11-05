@@ -1545,7 +1545,7 @@ const server = http.createServer(async (req, res) => {
     if (encMode && !ENCODING_MODES.includes(encMode)) return apiError(res, 400, 'وضع ترميز القناة يجب أن يكون bitrate أو crf أو فارغاً لوراثة الإعدادات');
     const crfValue = body.crfValue === '' || body.crfValue === null || body.crfValue === undefined ? '' : Number(body.crfValue);
     if (crfValue !== '' && !CRF_VALUES.includes(crfValue)) return apiError(res, 400, `قيمة CRF للقناة يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);
-    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), encodingMode: encMode, crfValue, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, logoEnabled: !!body.logoEnabled, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
+    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), encodingMode: encMode, crfValue, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
     data.channels.push(channel); writeData(data); return send(res, 201, { ok: true, channel: publicChannel(channel) });
   }
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
@@ -1577,7 +1577,7 @@ const server = http.createServer(async (req, res) => {
     // إعدادات تؤثر في وسائط FFmpeg: تغييرها على قناة تعمل يحتاج إعادة تشغيل فورية.
     const encodingKeys = ['sourceId','quality','fps','bitrate','encodingMode','crfValue'];
     const encodingBefore = {}; for (const key of encodingKeys) encodingBefore[key] = channel[key];
-    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','encodingMode','crfValue','autoStart','alwaysOn','logoEnabled']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','encodingMode','crfValue','autoStart','alwaysOn']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
     if (channel.fps === null || channel.fps === undefined) channel.fps = '';
     if (channel.crfValue === null || channel.crfValue === undefined) channel.crfValue = '';
     if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;

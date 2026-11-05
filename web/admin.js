@@ -636,7 +636,7 @@ function syncChannelEncodingUI() {
 
 function openChannelModal(id) {
   const ch = id ? DATA.channels.find(c => c.id === id) : null;
-  const curQ = ch?.quality || (ch?.qualities && ch.qualities[0]) || 'copy';
+  const curQ = ch?.quality || 'copy';
   // معدّل بت القناة الحالي؛ إن كان خارج القائمة المعروضة يُضاف كخيار حتى لا تضيع قيمته عند الحفظ.
   const curBitrate = String(ch?.bitrate || '').trim();
   const bitrateOptions = CH_BITRATES.some(([v]) => v === curBitrate)
@@ -691,8 +691,6 @@ function openChannelModal(id) {
         name: $('#m_cname').value.trim(), chanId: $('#m_cid').value.trim(),
         sourceId: $('#m_csource').value, category: $('#m_ccat').value.trim(),
         sort: Number($('#m_csort').value || 0), cover: $('#m_ccover').value.trim(),
-        // خاصية الشعار معطَّلة من الخادم؛ نُبقي القيمة الحالية كما هي دون حقل في الواجهة.
-        logoEnabled: ch?.logoEnabled != null ? ch.logoEnabled : !!ch?.logoOverlay,
         quality: $('#m_cquality').value,
         fps: $('#m_cfps').value || null,
         bitrate: $('#m_cbitrate').value || null,
