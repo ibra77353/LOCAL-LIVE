@@ -50,7 +50,7 @@ PORT=3000 HOST=0.0.0.0 node server.js
 - Node.js 18 أو أحدث.
 - FFmpeg build يدعم DirectShow (Windows) أو v4l2/alsa (Linux)، مع libx264 وHLS.
 - FFprobe (موصى به للتحقق من توافق codecs).
-- Nginx for Windows إذا أردت تقديم الواجهة والبث عبر منفذ Nginx.
+- Nginx for Windows لتقديم الواجهة والبث عبر منفذ Nginx (المتوقع في `start.bat`). على Linux (Ubuntu/Debian وDocker) لا يلزم Nginx: خادم Node يخدم اللوحة وملفات HLS على المنفذ نفسه، فلا يُظهر التشخيص تحذيراً عند غيابه. (`/api/status` يعيد `nginxRequired`، والتحذير يظهر فقط عندما يكون Nginx مطلوباً وغير مستمع.)
 - كرت التقاط USB (أو `/dev/video*` على Linux) أو مصدر HTTP/HLS أو RTSP متاح للخادم.
 
 ## الإعداد الأولي

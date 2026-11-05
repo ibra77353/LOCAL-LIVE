@@ -62,6 +62,19 @@ test('GET /api/status يعيد ok:true مع قائمة القنوات', async ()
   assert.equal(res.json.running, false);
 });
 
+// Nginx مطلوب على Windows فقط؛ على Linux يخدم Node الواجهة والبث مباشرةً،
+// فلا يجب أن يظهر تحذير «لا يستجيب على المنفذ 80» كخطأ نشر.
+test('حالة Nginx تتبع منصة التشغيل: مطلوب على Windows فقط', async () => {
+  const res = await api.get('/api/status');
+  assert.equal(res.json.nginxRequired, IS_WIN);
+  assert.equal(res.json.nginxBinding.required, IS_WIN);
+  if (IS_WIN) {
+    assert.equal(res.json.nginxBinding.reason === '' , res.json.nginxBinding.listening);
+  } else {
+    assert.equal(res.json.nginxBinding.reason, '');
+  }
+});
+
 test('الصفحات الثابتة تُخدم من web/', async () => {
   const home = await api.get('/');
   assert.equal(home.status, 200);
