@@ -147,7 +147,8 @@ const batScripts = fs.existsSync(scriptsDir)
   : [];
 const requiredScripts = ['start.bat', 'stop.bat', 'check.bat', 'devices.bat', 'firewall.bat', 'allow-lan.bat',
   'restart-nginx.bat', 'stop-nginx.bat', 'nginx-dirs.bat', 'nginx-stop.bat', 'check-v8.bat',
-  'ports.js', 'procs.js', 'test-stop.js', 'verify-v8.js'];
+  'ports.js', 'procs.js', 'test-stop.js', 'verify-v8.js', 'devices.js',
+  'start.sh', 'stop.sh', 'check.sh', 'devices.sh'];
 for (const name of requiredScripts) if (!fs.existsSync(filePath(`scripts/${name}`))) failures.push(`سكربت مفقود: scripts/${name}`);
 // 10.1) كل ملف يقرأ المنافذ يجب أن يعتمد scripts\ports.js وحده (بلا افتراضي ثابت ثانٍ)
 const portReaders = ['scripts/start.bat', 'scripts/stop.bat', 'scripts/check.bat', 'scripts/firewall.bat', 'scripts/restart-nginx.bat'];
@@ -182,6 +183,20 @@ if (fs.existsSync(filePath('scripts/start.bat'))) {
 }
 // 10.5) الخادم يكتب معرّف عمليته ليستخدمه stop.bat
 if (serverJs && !/server\.pid/.test(serverJs)) failures.push('server.js لا يكتب run\\server.pid اللازم لتمييز عملية PrinceLive');
+// 10.6) حزمة Win-Lix: سكربتات Linux موجودة، بصيغة LF وبـ shebang، وstart.sh يتحقق من الخادم
+for (const file of ['scripts/start.sh', 'scripts/stop.sh', 'scripts/check.sh', 'scripts/devices.sh']) {
+  if (!fs.existsSync(filePath(file))) continue;
+  const text = readText(file);
+  if (!text.startsWith('#!/bin/sh')) failures.push(`${file} لا يبدأ بـ #!/bin/sh`);
+  if (text.includes('\r')) failures.push(`${file} يحتوي أسطر CRLF ويكسر التشغيل على Linux`);
+}
+if (fs.existsSync(filePath('scripts/start.sh')) && !readText('scripts/start.sh').includes('/api/status')) {
+  failures.push('scripts/start.sh لا يتحقق من استجابة /api/status');
+}
+// 10.7) أداة الأجهزة واحدة على النظامين: devices.bat يفوّض إلى scripts/devices.js
+if (fs.existsSync(filePath('scripts/devices.bat')) && !readText('scripts/devices.bat').includes('scripts\\devices.js')) {
+  failures.push('scripts/devices.bat لا يستخدم أداة الأجهزة المشتركة scripts\\devices.js');
+}
 
 if (failures.length) {
   console.error('PrinceLive verification FAILED');

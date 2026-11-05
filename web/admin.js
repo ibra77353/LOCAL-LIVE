@@ -405,11 +405,17 @@ async function renderSourceFields() {
           <select class="input" id="m_audioDevice">
             <option value="">بدون صوت منفصل</option>
             ${d.audio.map(a => `<option value="${esc(a.value)}" ${src?.audioDevice === a.value ? 'selected' : ''}>${esc(a.label)}</option>`).join('')}
-          </select></label>`;
+          </select></label>
+        ${(!d.video.length || !d.audio.length) ? `<p class="hint">${esc(d.note || '')}</p>` : ''}
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0">
+          <button class="btn btn-sm" type="button" onclick="testCaptureDevice('video')">📷 اختبار الفيديو (3 ثوانٍ)</button>
+          <button class="btn btn-sm" type="button" onclick="testCaptureDevice('audio')">🎤 اختبار الصوت (3 ثوانٍ)</button>
+          <span id="m_capTestResult" class="hint" style="margin:0"></span>
+        </div>`;
       await loadSizeOptions(src);
     } catch (e) {
       if (seq !== _srcFieldsSeq) return;
-      box.innerHTML = `<p class="form-error">${esc(e.message)} — على ويندوز يلزم دعم DirectShow، وعلى أندرويد/لينكس يظهر الجهاز كـ /dev/video* (كرت UVC مع صلاحية وصول).</p>`;
+      box.innerHTML = `<p class="form-error">${esc(e.message)} — على ويندوز يلزم دعم DirectShow، وعلى لينكس يظهر الجهاز كـ /dev/video* (كرت UVC مع صلاحية وصول).</p>`;
     }
   } else if (type === 'file') {
     box.innerHTML = `
@@ -484,6 +490,30 @@ async function autoRecommendCapture() {
   } catch (e) {
     $('#m_capHint').textContent = '';
     toast('تعذر الفحص التلقائي: ' + e.message, true);
+  }
+}
+
+// اختبار جهاز الالتقاط قبل الحفظ: يشغّل الجهاز 3 ثوانٍ على الخادم بنفس إعدادات النموذج،
+// فيتأكد المستخدم أن الجهاز المتصل يعمل فعلاً قبل ربطه بقناة.
+async function testCaptureDevice(mode) {
+  const result = $('#m_capTestResult');
+  if (!result) return;
+  const form = collectSourceForm();
+  if (mode === 'video' && !form.videoDevice) { result.textContent = 'اختر جهاز الفيديو أولاً'; result.style.color = 'var(--accent)'; return; }
+  if (mode === 'audio' && !form.audioDevice) { result.textContent = 'اختر جهاز الصوت أولاً'; result.style.color = 'var(--accent)'; return; }
+  result.textContent = 'جارٍ الاختبار (3 ثوانٍ)...';
+  result.style.color = '';
+  try {
+    const r = mode === 'audio'
+      ? await api('/devices/test-audio', { method: 'POST', body: { audioDevice: form.audioDevice } })
+      : await api('/devices/test', { method: 'POST', body: {
+          videoDevice: form.videoDevice, audioDevice: form.audioDevice,
+          videoSize: form.videoSize || '1280x720', fps: form.fps || 30,
+          pixelFormat: form.pixelFormat, vcodec: form.vcodec, captureSafeMode: form.captureSafeMode
+        } });
+    result.innerHTML = `<span style="color:var(--ok,#3a7)">✓ ${esc((r.result && r.result.output) || 'نجح الاختبار')}</span>`;
+  } catch (e) {
+    result.innerHTML = `<span style="color:var(--accent)">✗ ${esc(e.message)}</span>`;
   }
 }
 
