@@ -1515,7 +1515,7 @@ const server = http.createServer(async (req, res) => {
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
     if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','auto','240p','288p','320p','360p','432p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
-    // null/'' يعني «استخدم FPS الإعدادات» — نموذج اللوحة يرسل null عند إفراغ الحقل،
+    // null/'' يعني «استخدم الافتراضي 20» — نموذج القناة يرسل null عند إفراغ الحقل،
     // وكان يُرفض سابقاً فيتعذر حفظ القناة دون قيمة FPS.
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
