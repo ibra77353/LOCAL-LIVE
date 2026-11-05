@@ -302,26 +302,28 @@ function openSourceModal(id) {
     ${id ? '' : `<label class="switch-row" style="margin-top:10px"><input type="checkbox" id="m_autoChannel" checked> إضافة قناة تلقائياً لهذا المصدر بعد الحفظ</label>`}`;
   openModal(id ? 'تعديل مصدر' : 'إضافة مصدر', body, async () => {
     const payload = collectSourceForm();
+    let created = null;
     if (id) { await api('/sources/' + id, { method: 'PUT', body: payload }); }
-    else {
-      const created = await api('/sources', { method: 'POST', body: payload });
-      // إضافة قناة تلقائياً إن طُلب
-      if ($('#m_autoChannel') && $('#m_autoChannel').checked && created && created.source) {
-        try {
-          await api('/channels', { method: 'POST', body: { name: created.source.name, sourceId: created.source.id, enabled: true } });
-        } catch (e) {}
-        await loadChannels();
-      }
-    }
+    else { created = await api('/sources', { method: 'POST', body: payload }); }
+    // تحديث المصادر أولاً حتى يظهر اسم المصدر في جدول القنوات مباشرة
     await loadSources();
+    // إضافة قناة تلقائياً إن طُلب
+    if (created && $('#m_autoChannel') && $('#m_autoChannel').checked && created.source) {
+      try {
+        await api('/channels', { method: 'POST', body: { name: created.source.name, sourceId: created.source.id, enabled: true } });
+      } catch (e) {}
+      await loadChannels();
+    }
     toast('تم الحفظ');
   });
   window._editSrc = src;
   renderSourceFields();
 }
 
+let _srcFieldsSeq = 0;
 async function renderSourceFields() {
   const type = $('#m_type').value;
+  const seq = ++_srcFieldsSeq;
   const src = window._editSrc && window._editSrc.type === type ? window._editSrc : null;
   const box = $('#srcFields');
 
@@ -329,6 +331,8 @@ async function renderSourceFields() {
     box.innerHTML = `<p class="hint">جارٍ قراءة الأجهزة المتصلة...</p>`;
     try {
       const d = await api('/devices');
+      // تغيّر النوع أثناء جلب الأجهزة: تجاهل نتيجة هذا الطلب القديم
+      if (seq !== _srcFieldsSeq) return;
       box.innerHTML = `
         <label>جهاز الفيديو
           <select class="input" id="m_videoDevice" onchange="loadSizeOptions()">
@@ -356,6 +360,7 @@ async function renderSourceFields() {
           </select></label>`;
       await loadSizeOptions(src);
     } catch (e) {
+      if (seq !== _srcFieldsSeq) return;
       box.innerHTML = `<p class="form-error">${esc(e.message)} — على ويندوز يلزم دعم DirectShow، وعلى أندرويد/لينكس يظهر الجهاز كـ /dev/video* (كرت UVC مع صلاحية وصول).</p>`;
     }
   } else if (type === 'file') {
