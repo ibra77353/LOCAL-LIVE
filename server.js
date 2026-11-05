@@ -7,6 +7,9 @@ const { spawn, execFile } = require('child_process');
 const os = require('os');
 const net = require('net');
 const crypto = require('crypto');
+// طبقة الالتقاط الموحّدة: الخادم لا يتعامل مع dshow/v4l2 مباشرة.
+const capture = require('./lib/capture');
+const { clampNumber } = require('./lib/shared/clamp');
 
 const ROOT = __dirname;
 const CONFIG_PATH = path.join(ROOT, 'config.json');
@@ -603,11 +606,7 @@ function applySourceFields(source, body) {
 // قيم libx264 المقبولة (نفس قائمة واجهة الإعدادات) ونطاق عدد الخيوط.
 const X264_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'];
 const encoderWarningsLogged = new Set();
-function clampNumber(value, min, max, fallback) {
-  const n = Math.round(Number(value));
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
+// clampNumber مُستوردة من lib/shared/clamp.js: تطبيق واحد مشترك مع طبقة الالتقاط.
 // يقبل صور البِتريت التي يفهمها FFmpeg مثل 500k أو 2000K أو 2M؛ غير ذلك يعيد الافتراضي.
 function normalizeVideoBitrate(value, fallback) {
   const text = String(value || '').trim();
@@ -674,26 +673,11 @@ function buildArgs(channel, forceTranscode = false) {
     if (!filePath) throw new Error('مسار ملف المصدر غير محدد');
     args.push('-re','-stream_loop','-1','-i',filePath);
   } else if (sourceType === 'screen') {
-    const screenFps = String(Number(source.fps) || 15);
-    if (process.platform === 'win32') args.push('-f','gdigrab','-framerate',screenFps,'-i','desktop');
-    else args.push('-f','x11grab','-framerate',screenFps,'-i',String(process.env.DISPLAY || ':0.0'));
+    // التقاط الشاشة (gdigrab/x11grab) يأتي من طبقة الالتقاط.
+    args.push(...capture.screenInputArgs(source));
   } else {
-    const inputSpec = audioDevice ? `video=${source.videoDevice}:audio=${audioDevice}` : `video=${source.videoDevice}`;
-    args.push('-f','dshow','-rtbufsize','256M');
-    // الوضع الآمن: لا نفرض الدقة/الإطارات على الجهاز (يعالج خطأ "Could not set video options").
-    // نتحقق من الصيغة قبل تمريرها حتى لا تصل قيمة تالفة من data.json إلى FFmpeg.
-    const captureSize = String(source.videoSize || '').trim();
-    const safeSize = /^\d{3,4}x\d{3,4}$/.test(captureSize) ? captureSize : '1280x720';
-    if (!source.captureSafeMode) args.push('-framerate',String(clampNumber(source.fps, 1, 60, 30)),'-video_size',safeSize);
-    // صيغة الإدخال: pixelFormat → -pixel_format، أما codec مثل mjpeg فيُمرَّر بـ -vcodec (mjpeg ليس pixel format).
-    const inputPixelFormat = String(source.pixelFormat || '').trim();
-    const inputCodec = String(source.vcodec || '').trim();
-    const isCodecName = (value) => ['mjpeg', 'rawvideo', 'h264'].includes(value.toLowerCase());
-    const pixelSpec = isCodecName(inputPixelFormat) ? '' : inputPixelFormat;
-    const codecSpec = inputCodec || (isCodecName(inputPixelFormat) ? inputPixelFormat : '');
-    if (/^[a-z0-9_]{2,30}$/i.test(pixelSpec)) args.push('-pixel_format',pixelSpec);
-    if (/^[a-z0-9_]{2,30}$/i.test(codecSpec)) args.push('-vcodec',codecSpec);
-    args.push('-i',inputSpec);
+    // وسائط جهاز الالتقاط (DirectShow) تأتي من طبقة الالتقاط.
+    args.push(...capture.usbInputArgs(source));
   }
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
   if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 360p أو 480p أو 720p.');
@@ -844,25 +828,14 @@ function stopStream(origin = '') {
 function listDevices(res) {
   execFile(
     ffmpegBin(),
-    ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
+    capture.deviceListArgs(),
     { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
     (err, stdout, stderr) => {
       const output = `${stderr || ''}\n${stdout || ''}`.trim();
-      // FFmpeg DirectShow prints each device name followed by (video) or (audio).
-      // De-duplicate names while preserving the order returned by the device driver.
-      const video = [];
-      const audio = [];
-      const seenVideo = new Set();
-      const seenAudio = new Set();
-      for (const line of output.split(/\r?\n/)) {
-        const match = line.match(/\]\s*\"([^\"]+)\"\s*\((video|audio)\)/i);
-        if (!match) continue;
-        const name = match[1].trim();
-        const type = match[2].toLowerCase();
-        const list = type === 'video' ? video : audio;
-        const seen = type === 'video' ? seenVideo : seenAudio;
-        if (name && !seen.has(name)) { seen.add(name); list.push(name); }
-      }
+      // تعداد الأجهزة وتحليل مخرجاته في طبقة الالتقاط؛ هنا تُبنى استجابة الـAPI فقط.
+      const devices = capture.parseDeviceList(output);
+      const video = devices.video;
+      const audio = devices.audio;
       if (res) {
         send(res, 200, {
           ok: true,
@@ -870,7 +843,7 @@ function listDevices(res) {
           audio: audio.map(name => ({ value: name, label: name })),
           devices: { video, audio },
           output: output || (err ? err.message : 'لم تظهر أجهزة'),
-          note: err && !output ? `تعذر تشغيل فحص FFmpeg: ${err.message}` : (video.length || audio.length ? 'قوائم الفيديو والصوت مستخرجة من أجهزة DirectShow التي يعرضها FFmpeg.' : 'لم يعرض FFmpeg أي جهاز DirectShow متصل.')
+          note: capture.describeDevices(devices, err, output)
         });
       } else {
         console.log(output || (err ? err.message : 'لم تظهر أجهزة'));
@@ -879,62 +852,15 @@ function listDevices(res) {
   );
 }
 
-function parseCaptureCapabilities(output) {
-  const videoSizes = new Set();
-  const frameRates = new Set();
-  const pixelFormats = new Set();
-  // FFmpeg DirectShow lists mode options on stderr, often in forms such as:
-  // pixel_format=mjpeg min s=640x480 fps=30 max s=1280x720 fps=30
-  for (const line of String(output || '').split(/\r?\n/)) {
-    for (const match of line.matchAll(/(?:min\s+s=|max\s+s=|s=)(\d{2,5})x(\d{2,5})/gi)) {
-      const width = Number(match[1]), height = Number(match[2]);
-      if (width >= 160 && height >= 120 && width <= 8192 && height <= 4320) videoSizes.add(`${width}x${height}`);
-    }
-    for (const match of line.matchAll(/fps\s*=\s*(\d{1,3}(?:\.\d+)?)/gi)) {
-      const fps = Number(match[1]); if (fps >= 1 && fps <= 240) frameRates.add(String(Number(fps.toFixed(2))));
-    }
-    for (const match of line.matchAll(/(?:pixel_format|vcodec)=([a-zA-Z0-9_]+)/gi)) pixelFormats.add(match[1].toLowerCase());
-  }
-  // Some FFmpeg builds render modes as e.g. 1280x720 @ 30 fps.
-  for (const match of String(output || '').matchAll(/(\d{2,5})x(\d{2,5})\s*(?:@|,)?\s*(\d{1,3}(?:\.\d+)?)\s*fps/gi)) {
-    const w=Number(match[1]), h=Number(match[2]), fps=Number(match[3]);
-    if (w >= 160 && h >= 120 && w <= 8192 && h <= 4320) videoSizes.add(`${w}x${h}`);
-    if (fps >= 1 && fps <= 240) frameRates.add(String(Number(fps.toFixed(2))));
-  }
-  const sizeRank = value => { const [w,h]=value.split('x').map(Number); return {value, pixels:w*h, width:w, height:h}; };
-  const ranked = [...videoSizes].map(sizeRank).sort((a,b) => {
-    const aPreferred = a.width <= 1280 && a.height <= 720 ? 1 : 0;
-    const bPreferred = b.width <= 1280 && b.height <= 720 ? 1 : 0;
-    return bPreferred-aPreferred || b.pixels-a.pixels;
-  });
-  const fpsValues = [...frameRates].map(Number).sort((a,b)=>a-b);
-  const recommendedSize = ranked[0]?.value || '1280x720';
-  const recommendedFps = fpsValues.filter(x=>x<=30).sort((a,b)=>b-a)[0] || fpsValues[0] || 30;
-  const preferredFormats = ['mjpeg','yuyv422','uyvy422','nv12','yuv420p'];
-  const recommendedFormat = preferredFormats.find(x=>pixelFormats.has(x)) || [...pixelFormats][0] || '';
-  const modes=[];
-  for(const line of String(output||'').split(/\r?\n/)){
-    const fmt=(line.match(/(?:pixel_format|vcodec)=([a-zA-Z0-9_]+)/i)||[])[1]?.toLowerCase()||'';
-    const sizes=[...line.matchAll(/(?:min\s+s=|max\s+s=|s=)(\d{2,5})x(\d{2,5})/gi)].map(m=>`${m[1]}x${m[2]}`);
-    const rates=[...line.matchAll(/fps\s*=\s*(\d{1,3}(?:\.\d+)?)/gi)].map(m=>String(Number(Number(m[1]).toFixed(2))));
-    for(const size of new Set(sizes)) for(const rate of new Set(rates)) modes.push({pixelFormat:fmt||recommendedFormat,videoSize:size,fps:Number(rate)});
-  }
-  const uniqueModes=[...new Map(modes.map(m=>[`${m.pixelFormat}|${m.videoSize}|${m.fps}`,m])).values()];
-  return {
-    videoSizes: [...videoSizes].sort((a,b)=>sizeRank(b).pixels-sizeRank(a).pixels),
-    frameRates: fpsValues.map(String), pixelFormats: [...pixelFormats], modes: uniqueModes,
-    recommended: { videoSize: recommendedSize, fps: recommendedFps, pixelFormat: recommendedFormat }
-  };
-}
-
 function queryCaptureCapabilities(videoDevice, callback) {
   if (!videoDevice || String(videoDevice).length > 300 || /[\r\n\0]/.test(videoDevice)) {
     return callback(new Error('اسم جهاز الفيديو غير صالح'));
   }
-  execFile(ffmpegBin(), ['-hide_banner','-f','dshow','-list_options','true','-i',`video=${videoDevice}`],
+  execFile(ffmpegBin(), capture.capabilitiesArgs(videoDevice),
     { windowsHide: true, timeout: 20000, maxBuffer: 2*1024*1024 }, (err, stdout, stderr) => {
       const output = `${stderr || ''}\n${stdout || ''}`.trim();
-      const capabilities = parseCaptureCapabilities(output);
+      // تحليل قدرات الجهاز انتقل إلى lib/capture/dshow.js.
+      const capabilities = capture.parseCapabilities(output);
       if (!capabilities.videoSizes.length) {
         const error = new Error(err && !output ? `تعذر تشغيل FFmpeg: ${err.message}` : 'لم يعرض FFmpeg أو تعريف الجهاز أوضاع فيديو قابلة للاستخراج');
         error.output = output;
@@ -944,26 +870,35 @@ function queryCaptureCapabilities(videoDevice, callback) {
     });
 }
 
+// اختبار الالتقاط: بناء الوسائط في طبقة الالتقاط، والتنفيذ (spawn/مهلة/جمع الخرج)
+// يبقى هنا لأنه يحتاج مسار FFmpeg ومجلد المشروع.
 function testCapture(body, callback) {
-  const videoDevice=String(body.videoDevice||'').trim(), audioDevice=String(body.audioDevice||'').trim();
-  if(body.mode==='audio'){if(!audioDevice||audioDevice.length>300||/[\r\n\0]/.test(audioDevice))return callback(new Error('اختر جهاز صوت صالحاً'));const a=spawn(ffmpegBin(),['-hide_banner','-loglevel','error','-f','dshow','-i',`audio=${audioDevice}`,'-t','3','-f','null','-'],{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']});let out='';const timer=setTimeout(()=>{try{a.kill();}catch{}},10000);a.stderr.on('data',b=>out=(out+b.toString()).slice(-8000));a.on('error',e=>{clearTimeout(timer);callback(new Error(e.message));});a.on('close',code=>{clearTimeout(timer);code===0?callback(null,{ok:true,audio:true,output:'نجح اختبار الصوت لمدة 3 ثوانٍ.'}):callback(new Error(`فشل اختبار الصوت (exit ${code}). ${out.slice(-1800)}`));});return;}
-  if(!videoDevice || videoDevice.length>300 || /[\r\n\0]/.test(videoDevice)) return callback(new Error('جهاز الفيديو غير صالح'));
-  const size=String(body.videoSize||'1280x720'), fps=Number(body.fps)||30;
-  // mjpeg اسم codec لا pixel format: يُمرَّر بـ -vcodec، وبقية القيم تذهب إلى -pixel_format.
-  const formatRaw=String(body.pixelFormat||'').trim(), codecRaw=String(body.vcodec||'').trim();
-  const isCodecName=(value)=>['mjpeg','rawvideo','h264'].includes(value.toLowerCase());
-  const pixel=isCodecName(formatRaw)?'':formatRaw, vcodec=codecRaw||(isCodecName(formatRaw)?formatRaw:'');
-  if(!/^\d{2,5}x\d{2,5}$/.test(size)||fps<1||fps>60||(pixel&&!/^[a-z0-9_]{2,30}$/i.test(pixel))||(vcodec&&!/^[a-z0-9_]{2,30}$/i.test(vcodec))) return callback(new Error('إعدادات الالتقاط غير صالحة'));
-  const input=audioDevice?`video=${videoDevice}:audio=${audioDevice}`:`video=${videoDevice}`;
-  const args=['-hide_banner','-loglevel','error','-f','dshow','-rtbufsize','128M','-framerate',String(fps),'-video_size',size];
-  if(pixel) args.push('-pixel_format',pixel);
-  if(vcodec) args.push('-vcodec',vcodec);
-  args.push('-i',input,'-t','3','-f','null','-');
-  const child=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']});
-  let output='';const timer=setTimeout(()=>{try{child.kill();}catch{}},10000);
-  child.stderr.on('data',b=>{output=(output+b.toString()).slice(-12000);});
-  child.on('error',e=>{clearTimeout(timer);callback(new Error(`تعذر تشغيل FFmpeg: ${e.message}`));});
-  child.on('close',code=>{clearTimeout(timer);if(code===0)callback(null,{ok:true,video:true,audio:!!audioDevice,output:'نجح اختبار الالتقاط لمدة 3 ثوانٍ.'});else callback(new Error(`فشل اختبار الالتقاط (exit ${code}). ${output.slice(-2500)}`));});
+  const isAudio = body.mode === 'audio';
+  let args;
+  try {
+    args = isAudio ? capture.testAudioArgs(body.audioDevice) : capture.testVideoArgs(body);
+  } catch (err) {
+    return callback(err);
+  }
+  const child = spawn(ffmpegBin(), args, { cwd: ROOT, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  let output = '';
+  const timer = setTimeout(() => { try { child.kill(); } catch {} }, 10000);
+  child.stderr.on('data', b => { output = (output + b.toString()).slice(isAudio ? -8000 : -12000); });
+  child.on('error', e => {
+    clearTimeout(timer);
+    callback(new Error(isAudio ? e.message : `تعذر تشغيل FFmpeg: ${e.message}`));
+  });
+  child.on('close', code => {
+    clearTimeout(timer);
+    if (code === 0) {
+      return callback(null, isAudio
+        ? { ok: true, audio: true, output: 'نجح اختبار الصوت لمدة 3 ثوانٍ.' }
+        : { ok: true, video: true, audio: !!String(body.audioDevice || '').trim(), output: 'نجح اختبار الالتقاط لمدة 3 ثوانٍ.' });
+    }
+    callback(new Error(isAudio
+      ? `فشل اختبار الصوت (exit ${code}). ${output.slice(-1800)}`
+      : `فشل اختبار الالتقاط (exit ${code}). ${output.slice(-2500)}`));
+  });
 }
 
 function assetType(file) {

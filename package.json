@@ -8,7 +8,10 @@
     "start": "node server.js",
     "devices": "node server.js --devices",
     "test": "node scripts/verify-v8.js",
-    "test:stop": "node scripts/test-stop.js"
+    "test:stop": "node scripts/test-stop.js",
+    "test:http": "node --test tests/http/",
+    "test:capture": "node --test tests/capture/",
+    "test:all": "node --test tests/"
   },
   "engines": {
     "node": ">=18"
