@@ -916,7 +916,17 @@ function buildArgs(channel, forceTranscode = false) {
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
       '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
-    if(settings.x264QualityMode===true) args.push('-crf','23');
+    if(settings.x264QualityMode===true){
+      args.push('-crf','23');
+      // وضع CRF لا يستهدف معدّل بت ثابتاً؛ لذلك بتريت القناة كان يُتجاهل تماماً.
+      // الآن يُطبَّق كسقف أعلى (VBV) حتى يبقى الإعداد مؤثراً دون فرض معدّل ثابت.
+      if (String(channel.bitrate || '').trim()) {
+        const capKbps = Number(String(videoBitrate).replace(/[kKmM]$/, '')) || 0;
+        const isMegabit = /m$/i.test(videoBitrate);
+        const cap = isMegabit ? capKbps * 1000 : capKbps;
+        if (cap > 0) args.push('-maxrate',`${cap}k`,'-bufsize',`${cap * 2}k`);
+      }
+    }
     else args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize','1000k');
     if (isNetwork || audioDevice || sourceType === 'file') args.push('-map',audioMap,'-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
@@ -1474,7 +1484,9 @@ const server = http.createServer(async (req, res) => {
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
     if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','auto','240p','360p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
-    if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
+    // null/'' يعني «استخدم FPS الإعدادات» — نموذج اللوحة يرسل null عند إفراغ الحقل،
+    // وكان يُرفض سابقاً فيتعذر حفظ القناة دون قيمة FPS.
+    if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
     if (Object.prototype.hasOwnProperty.call(body,'chanId')) {
       const chanId = String(body.chanId || '').trim();
@@ -1482,6 +1494,7 @@ const server = http.createServer(async (req, res) => {
       channel.chanId = chanId || channel.id;
     }
     for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn','logoEnabled']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    if (channel.fps === null || channel.fps === undefined) channel.fps = '';
     if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;
     else if (Object.prototype.hasOwnProperty.call(body,'sortOrder')) channel.sortOrder = Number(body.sortOrder) || 0;
     channel.url = `/hls/${channel.id}/index.m3u8`;

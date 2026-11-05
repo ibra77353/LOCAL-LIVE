@@ -583,7 +583,7 @@ function openChannelModal(id) {
     <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
     <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
     <label>معدّل البت Bitrate (اختياري — مثل 1500k أو 2000k، فارغ = افتراضي الجودة)<input class="input" id="m_cbitrate" dir="ltr" value="${esc(ch?.bitrate)}" placeholder="مثال: 1500k"></label>
-    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام الافتراضي المناسب لكل جودة.</p>
+    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام الافتراضي المناسب لكل جودة. عند تفعيل «وضع الجودة (CRF)» من الإعدادات يُطبَّق هذا الرقم كسقف أعلى للمعدّل بدل قيمة مستهدفة.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,

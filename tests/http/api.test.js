@@ -377,3 +377,63 @@ test('حذف القناة ثم المصادر يعيد الحالة إلى ال�
   assert.equal(channels.json.channels.length, 0);
   assert.equal(sources.json.sources.length, 0);
 });
+
+// ------------------------------------------------- جودة الترميز (بتريت/FPS/CRF)
+// نموذج القناة في اللوحة يرسل fps: null عند إفراغ الحقل، وكان ذلك يُرفض بـ400
+// فيتعذر حفظ القناة. الإفراغ يجب أن يعني «استخدم FPS من الإعدادات».
+test('PUT /api/channels/:id يقبل إفراغ FPS ويعيده إلى إعدادات الخادم', async () => {
+  const src = await api.post('/api/sources', { name: 'مصدر جودة', type: 'file', path: 'srv/uploads/quality-test.mp4' });
+  assert.equal(src.status, 201);
+  const ch = await api.post('/api/channels', { name: 'قناة جودة', sourceId: src.json.source.id, quality: '360p', fps: 25, bitrate: '800k' });
+  assert.equal(ch.status, 201);
+  const id = ch.json.channel.id;
+
+  const nullFps = await api.put(`/api/channels/${id}`, { fps: null });
+  assert.equal(nullFps.status, 200);
+  assert.equal(nullFps.json.channel.fps, '');
+
+  const emptyFps = await api.put(`/api/channels/${id}`, { fps: '' });
+  assert.equal(emptyFps.status, 200);
+  assert.equal(emptyFps.json.channel.fps, '');
+  // القيمة الفارغة تعني الاعتماد على settings.outputFps عند بناء وسائط FFmpeg.
+  assert.equal(nullFps.json.channel.bitrate, '800k');
+
+  await api.del(`/api/channels/${id}`);
+  await api.del(`/api/sources/${src.json.source.id}`);
+});
+
+// وضع CRF لا يستهدف معدّل بت ثابتاً؛ بتريت القناة يجب ألا يُتجاهل بل يعمل كسقف
+// أعلى (maxrate)، ويبقى وضع المعدّل الثابت (ABR) كما هو عند إيقاف CRF.
+test('bitrate القناة يعمل كسقف أعلى في وضع CRF ويبقى مستهدفاً في وضع ABR', async () => {
+  const src = await api.post('/api/sources', { name: 'مصدر CRF', type: 'file', path: 'srv/uploads/quality-test.mp4' });
+  assert.equal(src.status, 201);
+  const ch = await api.post('/api/channels', { name: 'قناة CRF', sourceId: src.json.source.id, quality: '360p', fps: 25, bitrate: '400k' });
+  assert.equal(ch.status, 201);
+  const id = ch.json.channel.id;
+
+  const argsFor = async () => {
+    await api.post(`/api/channels/${id}/start`);
+    const logs = await waitFor(async () => {
+      const res = await api.get('/api/logs');
+      const hit = res.json.logs.split(/\r?\n/).filter((l) => l.includes('FFmpeg args:')).pop();
+      return hit || null;
+    }, 5000);
+    await api.post(`/api/channels/${id}/stop`);
+    return logs || '';
+  };
+
+  await api.put('/api/settings', { x264QualityMode: true });
+  const crf = await argsFor();
+  assert.match(crf, /-crf 23/);
+  assert.match(crf, /-maxrate 400k/);
+  assert.doesNotMatch(crf, /-b:v/);
+
+  await api.put('/api/settings', { x264QualityMode: false });
+  const abr = await argsFor();
+  assert.match(abr, /-b:v 400k/);
+  assert.match(abr, /-maxrate 400k/);
+  assert.doesNotMatch(abr, /-crf/);
+
+  await api.del(`/api/channels/${id}`);
+  await api.del(`/api/sources/${src.json.source.id}`);
+});
