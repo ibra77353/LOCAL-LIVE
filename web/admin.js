@@ -123,7 +123,7 @@ async function boot() {
 // ---------------- Settings ----------------
 const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
-  'x264Threads','x264QualityMode','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','outputWidth','outputHeight','outputFps','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
+  'x264Threads','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','outputWidth','outputHeight','outputFps','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
   'encodingMode','crfValue','defaultBitrate',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','autoStartOnDemand','idleStopEnabled','idleStopMinutes',
@@ -607,20 +607,13 @@ function openChannelModal(id) {
         <input class="input" id="m_ccover" value="${esc(ch?.cover)}" placeholder="srv/uploads/cover.jpg">
         <button class="btn" type="button" onclick="browseUpload('m_ccover','image/*')">استعراض / رفع</button>
       </span></label>
-    <!-- خاصية الشعار معطَّلة مؤقتاً بالكامل من الخادم (ffmpeg.js: LOGO_FEATURE_ENABLED)
-         لضمان أفضل أداء بث دون مشاكل — أُخفي عنصر التحكّم هنا لتطابق سلوك الخادم. -->
-    <div style="display:none">
-      <label class="switch-row"><input type="checkbox" id="m_clogoen" ${(ch?.logoEnabled != null ? ch.logoEnabled : !!ch?.logoOverlay) ? 'checked' : ''}> تفعيل الشعار فوق البث</label>
-      <p class="hint">صورة الشعار وموقعه وحجمه وشفافيته تُضبط من «الإعدادات ← شعار القنوات» (شعار موحّد لكل القنوات). يعمل مع كل الجودات بما فيها «نسخ المصدر».</p>
-    </div>
     <label>الجودة
       <select class="input" id="m_cquality">
         ${CH_QUALITIES.map(([v, l]) => `<option value="${v}" ${curQ === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
     <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
     <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
-    <label>معدّل البت Bitrate (اختياري — مثل 1500k أو 2000k، فارغ = افتراضي الجودة)<input class="input" id="m_cbitrate" dir="ltr" value="${esc(ch?.bitrate)}" placeholder="مثال: 1500k"></label>
-    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام معدّل البت الافتراضي من الإعدادات. عند اختيار وضع «CRF» يُطبَّق هذا الرقم كسقف أعلى للمعدّل بدل قيمة مستهدفة.</p>
+    <label>معدّل البت Bitrate (اختياري — مثل 1500k، فارغ = الافتراضي)<input class="input" id="m_cbitrate" dir="ltr" value="${esc(ch?.bitrate)}" placeholder="مثال: 1500k"></label>
     <label>وضع الترميز لهذه القناة
       <select class="input" id="m_cencmode" onchange="syncChannelEncodingUI()">
         <option value="">افتراضي — يتبع وضع الإعدادات</option>
@@ -631,7 +624,7 @@ function openChannelModal(id) {
       <select class="input" id="m_ccrf">
         ${CH_CRF_LEVELS.map(([v, l]) => `<option value="${v}" ${Number(ch?.crfValue) === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
-    <p class="hint">«افتراضي» يعني استخدام وضع الترميز ومستوى CRF من الإعدادات العامة. اختيار وضع هنا يتجاوز الإعدادات لهذه القناة وحدها، ويُطبَّق عند التشغيل التالي.</p>
+    <p class="hint">«افتراضي» يتبع وضع الترميز ومستوى CRF من الإعدادات العامة، واختيار وضع هنا يتجاوزها لهذه القناة وحدها ويُطبَّق عند التشغيل التالي. معدّل بت أعلى = جودة أوضح واستهلاك شبكة أكبر، وفي وضع CRF يعمل الرقم كسقف أعلى.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
@@ -640,7 +633,8 @@ function openChannelModal(id) {
         name: $('#m_cname').value.trim(), chanId: $('#m_cid').value.trim(),
         sourceId: $('#m_csource').value, category: $('#m_ccat').value.trim(),
         sort: Number($('#m_csort').value || 0), cover: $('#m_ccover').value.trim(),
-        logoEnabled: $('#m_clogoen').checked,
+        // خاصية الشعار معطَّلة من الخادم؛ نُبقي القيمة الحالية كما هي دون حقل في الواجهة.
+        logoEnabled: ch?.logoEnabled != null ? ch.logoEnabled : !!ch?.logoOverlay,
         quality: $('#m_cquality').value,
         fps: $('#m_cfps').value || null,
         bitrate: $('#m_cbitrate').value.trim() || null,

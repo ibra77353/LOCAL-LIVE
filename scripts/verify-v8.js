@@ -46,7 +46,8 @@ if (duplicated.length) failures.push(`config.json يحمل حقولاً مكرر
 // 4) حقول قسم الإعدادات: S_KEYS في admin.js ↔ id="s_*" في admin.html ↔ بيانات data.json
 const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'theme', 'ticker', 'tickerEnabled', 'x264Preset',
   'port', 'nginxPort',
-  'x264Threads', 'x264QualityMode', 'hlsTime', 'hlsListSize', 'hlsDeleteThreshold', 'gopSeconds', 'outputWidth', 'outputHeight', 'outputFps', 'startupQueueDelayMs', 'startupConcurrency', 'autoRestartCrashed', 'maxRestarts', 'restartBackoffMs', 'hideCosmeticLogs',
+  'x264Threads', 'hlsTime', 'hlsListSize', 'hlsDeleteThreshold', 'gopSeconds', 'outputWidth', 'outputHeight', 'outputFps', 'startupQueueDelayMs', 'startupConcurrency', 'autoRestartCrashed', 'maxRestarts', 'restartBackoffMs', 'hideCosmeticLogs',
+  'encodingMode', 'crfValue', 'defaultBitrate',
   'playerMaxBufferLength', 'playerBackBufferLength', 'playerLiveSyncDuration', 'capLevelToPlayerSize',
   'cpuSaverDefault', 'ffmpegPath', 'ffprobePath', 'nginxPath', 'streamUserAgent', 'autoStartOnDemand', 'idleStopEnabled', 'idleStopMinutes',
   'sourceFailStopMinutes', 'blockedStopMinutes', 'logoImage', 'logoPosition', 'logoSizePct', 'logoOpacityPct'];
