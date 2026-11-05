@@ -44,6 +44,32 @@
     "logoSizePct": 10,
     "logoOpacityPct": 50
   },
-  "sources": [],
-  "channels": []
+  "sources": [
+    {
+      "id": "src_521f20f53d",
+      "name": "بث تجريبي محلي",
+      "type": "file",
+      "enabled": true,
+      "path": "/data/media/pl-test-src.mp4"
+    }
+  ],
+  "channels": [
+    {
+      "id": "ch_386d2258a6",
+      "chanId": "ch_386d2258a6",
+      "name": "قناة الاختبار المباشرة",
+      "category": "عام",
+      "sourceId": "src_521f20f53d",
+      "cover": "",
+      "enabled": true,
+      "quality": "360p",
+      "fps": 20,
+      "bitrate": "500k",
+      "autoStart": false,
+      "alwaysOn": true,
+      "logoEnabled": false,
+      "sortOrder": 0,
+      "url": "/hls/ch_386d2258a6/index.m3u8"
+    }
+  ]
 }

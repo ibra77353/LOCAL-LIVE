@@ -178,6 +178,18 @@ async function checkChannelHealth(channelId) {
 }
 // تُستدعى عند بدء تجهيز قناة: تُسلّح مراقباً يعرض رسالة صريحة إن طال التجهيز
 // بدل ترك "جاري تجهيز القناة" تدور بلا نهاية حين يكون المصدر بطيئاً أو لا يستجيب.
+// بعض المتصفحات تمنع التشغيل التلقائي بالصوت؛ نكتم ونشغّل تلقائياً بدل ترك
+// صورة ثابتة بلا أي زر تشغيل، ويبقى زر الصوت لإعادة تفعيله بضغطة.
+function playWithFallback() {
+  const v = $('#video');
+  const p = v.play();
+  if (!p || !p.catch) return;
+  p.catch(() => {
+    v.muted = true;
+    $('#muteBtn').textContent = '🔇';
+    v.play().catch(() => {});
+  });
+}
 function armPrepWatchdog() {
   clearTimeout(prepWatchdog);
   prepWatchdog = setTimeout(() => {
@@ -203,7 +215,7 @@ function wireHlsEvents() {
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     // ملاحظة: تحليل القائمة الرئيسية لا يعني بدء العرض — التصفير يتم في hideLoading
     // عند بدء العرض الفعلي فقط، حتى يعمل مراقب التجهيز ضد المصادر التي لا تبثّ.
-    $('#video').play().catch(() => {});
+    playWithFallback();
     hideMsg();
     stallCount = 0;
   });
@@ -278,7 +290,7 @@ function loadIntoPlayer(ch) {
     hls.loadSource(ch.url + '?t=' + Date.now());
   } else {
     video.src = ch.url;
-    video.play().catch(() => {});
+    playWithFallback();
   }
 }
 
