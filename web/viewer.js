@@ -32,6 +32,20 @@ async function init() {
   $('#siteTitle').textContent = SETTINGS.siteName || 'البرنس لايف';
   // الفوتر ثابت في HTML (البرنس تيليكوم) — لا يُحقن من الإعدادات
   if (SETTINGS.phone) { $('#sitePhone').textContent = SETTINGS.phone; $('#sitePhone').href = 'tel:' + SETTINGS.phone; }
+  // الاسم اللاتيني تحت العنوان (اختياري — يظهر فقط عند ضبطه في الإعدادات)
+  const latin = $('#siteLatin');
+  if (latin) {
+    latin.textContent = SETTINGS.siteNameLatin || '';
+    latin.classList.toggle('hidden', !SETTINGS.siteNameLatin);
+  }
+  // الشريط الإخباري: يظهر فقط عند تفعيله ووجود نص
+  const tickerText = String(SETTINGS.ticker || '').trim();
+  const tickerBar = $('#tickerBar');
+  if (tickerBar) {
+    const showTicker = !!SETTINGS.tickerEnabled && !!tickerText;
+    tickerBar.classList.toggle('hidden', !showTicker);
+    if (showTicker) $('#tickerText').textContent = tickerText;
+  }
   if (SETTINGS.logo) {
     const l = $('#siteLogo');
     if (l) {

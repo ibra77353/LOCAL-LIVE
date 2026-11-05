@@ -117,6 +117,54 @@ a {
   letter-spacing: .5px
 }
 
+.site-latin {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted)
+}
+
+/* الشريط الإخباري */
+.ticker-bar {
+  overflow: hidden;
+  margin: 10px auto 0;
+  max-width: 1100px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text)
+}
+
+.ticker-track {
+  display: inline-block;
+  white-space: nowrap;
+  animation: ticker-scroll 22s linear infinite
+}
+
+.ticker-bar:hover .ticker-track {
+  animation-play-state: paused
+}
+
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(100%)
+  }
+
+  to {
+    transform: translateX(-100%)
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    animation: none;
+    white-space: normal
+  }
+}
+
 .site-phone {
   display: inline-block;
   margin-top: 6px;

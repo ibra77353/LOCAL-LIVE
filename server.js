@@ -46,6 +46,26 @@ function resolveTool(toolName) {
   return value;
 }
 function ffmpegBin() { return resolveTool(cfg.ffmpegPath); }
+function ffprobeBin() { return resolveTool(data.settings.ffprobePath || cfg.ffprobePath); }
+
+// أبعاد ملف مصدر محلي عبر FFprobe (المسار المضبوط في الإعدادات)، حتى تُحسب أبعاد
+// الخرج من نسبة الملف الحقيقية بدل الافتراض 1280x720 الذي يشوّه الدقة عند اختيار
+// جودة تختلف عن outputHeight.
+function probeFileDimensions(filePath) {
+  return new Promise(resolve => {
+    if (!filePath || !fs.existsSync(filePath)) return resolve('');
+    const args = ['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','json', filePath];
+    execFile(ffprobeBin(), args, { windowsHide: true, timeout: 8000, maxBuffer: 256 * 1024 }, (err, stdout) => {
+      if (err) return resolve('');
+      try {
+        const stream = (JSON.parse(stdout).streams || [])[0] || {};
+        const width = Number(stream.width), height = Number(stream.height);
+        if (width > 0 && height > 0) return resolve(`${width}x${height}`);
+      } catch {}
+      resolve('');
+    });
+  });
+}
 
 const streams = new Map(); // channelId -> independent FFmpeg runtime
 let ffmpegLog = '';
@@ -278,6 +298,11 @@ function readSystemRx(cb) {
   return cb(null, null);
 }
 function playlistPath(channel) { return path.join(channelHlsDir(channel), 'index.m3u8'); }
+// هل توجد قائمة تشغيل حديثة؟ نفس شرط «live» في publicChannel، ويُستخدم لتصفير
+// مؤقّتات أعطال المصدر بعد نجاح التشغيل.
+function channelIsLive(channel) {
+  try { const st = fs.statSync(playlistPath(channel)); return st.isFile() && Date.now() - st.mtimeMs < 15000; } catch { return false; }
+}
 // مسارات الملفات المرفوعة تُخزَّن كما في الحزمة (srv/uploads/x) وتُعرض عبر /uploads/x.
 function publicAsset(value) {
   const raw = String(value || '').trim();
@@ -605,6 +630,9 @@ const COSMETIC_FFMPEG_RE = /deprecated pixel format used|Guessed Channel Layout|
 // «Error submitting packet to decoder» يُعد شكلياً فقط حين يكون نتيجة الإطار المقطوع
 // من بطاقة MJPEG نفسها، لا حين يأتي منفرداً (حينها قد يعني مصدراً تالفاً فعلاً).
 const MJPEG_CONTEXT_RE = /mjpeg|Found EOI|No JPEG data/i;
+// ردّ مزوّد IPTV بحظر الوصول (403/451): يُستخدم لعدّ «حظر المصدر» بمؤقّت مستقل
+// عن أعطال الشبكة العادية (blockedStopMinutes مقابل sourceFailStopMinutes).
+const BLOCKED_SOURCE_RE = /Server returned (?:403|451)|403 Forbidden|451 Unavailable|HTTP error 403/i;
 function isCosmeticFfmpegLine(line) {
   const l = String(line).trim();
   return COSMETIC_FFMPEG_RE.test(l) || (/Error submitting packet to decoder/i.test(l) && MJPEG_CONTEXT_RE.test(l));
@@ -858,7 +886,7 @@ function formatLastExit(exit) {
   if (exit.cause) parts.push(`cause=${exit.cause}`);
   return parts.join('; ');
 }
-function startChannel(channelId) {
+function startChannel(channelId, manual = false) {
   const channel = data.channels.find(c=>c.id===channelId);
   if (!channel) return {ok:false,message:'القناة غير موجودة'};
   if (channel.enabled===false) return {ok:false,message:'القناة معطلة'};
@@ -870,7 +898,13 @@ function startChannel(channelId) {
   if (old?.proc && !old.stopping) return {ok:true,message:'القناة تعمل بالفعل',channelId};
   if (old?.proc && old.stopping) return {ok:false,message:'القناة ما زالت تغلق؛ انتظر اكتمال الإيقاف ثم أعد التشغيل',channelId};
   if(old?.restartTimer)clearTimeout(old.restartTimer);
-  const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:old?.lastExit||null,exits:Array.isArray(old?.exits)?old.exits:[],sourceId:source.id,forceTranscode:!!old?.forceTranscode,lastStderr:'',paramError:false};
+  const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:old?.lastExit||null,exits:Array.isArray(old?.exits)?old.exits:[],sourceId:source.id,forceTranscode:!!old?.forceTranscode,lastStderr:'',paramError:false,
+    // مؤقّتات التعافي: أول فشل للمصدر وأول ردّ حظر من المزوّد. تُصفَّر عند التشغيل
+    // اليدوي وعند نجاح البث، ويقارنها مؤقّت الخادم بحدود sourceFailStopMinutes
+    // وblockedStopMinutes لإيقاف القناة بدل حلقة إعادة تشغيل لا تنتهي.
+    failSince: manual || old?.failedStop ? null : (old?.failSince || null),
+    blockedSince: manual || old?.failedStop ? null : (old?.blockedSince || null),
+    failedStop: !!old?.failedStop && !manual};
   streams.set(channelId,runtime); clearTimeout(runtime.restartTimer); clearChannelHls(channel);
   let args; try { args=buildArgs(channel,runtime.forceTranscode); } catch(e) { recordExit(runtime,{reason:'فشل بناء أمر FFmpeg',cause:e.message}); return {ok:false,message:e.message}; }
   const safeArgs=args.map((a,i)=> i>0 && args[i-1]==='-i' && /^(https?|rtsp):/i.test(a) ? '[network-url-hidden]' : a);
@@ -880,6 +914,9 @@ function startChannel(channelId) {
   const proc=runtime.proc; runtime.startedAt=new Date().toISOString();
   proc.stderr.on('data',b=>{
     runtime.lastStderr=(runtime.lastStderr+b.toString()).slice(-4000);
+    // ردّ حظر من مزوّد IPTV (403/451): يُسجَّل أول وقت له فقط، ويوقفه
+    // blockedStopMinutes من مؤقّت الخادم.
+    if (!runtime.blockedSince && BLOCKED_SOURCE_RE.test(b.toString())) runtime.blockedSince = Date.now();
     let m=b.toString().trim(); if(!m) return;
     if(data.settings.hideCosmeticLogs===true){ m=filterCosmeticFfmpegLines(m); if(!m) return; }
     logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);
@@ -889,6 +926,7 @@ function startChannel(channelId) {
     const exitReason = runtime.stopping ? 'إيقاف يدوي' : (code === 0 ? 'انتهى بنجاح' : 'خروج غير متوقع');
     recordExit(runtime,{code,signal,reason:exitReason});
     runtime.proc=null;
+    if (code !== 0 && !runtime.stopping && !runtime.failSince) runtime.failSince = Date.now();
     logLine(`[${channel.name}] انتهى FFmpeg: ${formatLastExit(runtime.lastExit)} — ${runtime.stopping ? 'إيقاف مطلوب يدوياً' : 'خروج غير متوقع'}${runtime.forceTranscode ? ' | نسخ قسري بعد فشل' : ''}`);
     // بعد الإيقاف لا تُترك مقاطع/قوائم HLS قديمة على القرص، وإلا بقي المشاهدون
     // يستطيعون تشغيل بث متوقف أو محتوى قديم من الملفات المتبقية.
@@ -912,7 +950,7 @@ function startChannel(channelId) {
 }
 function scheduleChannelRestart(channelId) {
   const rt=streams.get(channelId), channel=data.channels.find(c=>c.id===channelId);
-  if(!rt||!channel||rt.stopping||!data.settings.autoRestartCrashed||rt.restartCount>=Number(data.settings.maxRestarts||20))return;
+  if(!rt||!channel||rt.stopping||rt.failedStop||!data.settings.autoRestartCrashed||rt.restartCount>=Number(data.settings.maxRestarts||20))return;
   clearTimeout(rt.restartTimer);rt.restartCount++;
   const delay=Number(data.settings.restartBackoffMs)||5000;
   rt.restartTimer=setTimeout(()=>{if(!rt.stopping&&!rt.proc)startChannel(channelId);},delay);
@@ -947,9 +985,9 @@ function stopChannel(channelId, origin = '') {
 }
 function restartChannel(channelId) {
   const rt=streams.get(channelId);
-  if (!rt?.proc) return startChannel(channelId);
+  if (!rt?.proc) return startChannel(channelId, true);
   const proc=rt.proc;
-  const begin=()=>setTimeout(()=>startChannel(channelId),250);
+  const begin=()=>setTimeout(()=>startChannel(channelId, true),250);
   proc.once('exit',begin);
   const stopped=stopChannel(channelId);
   if (!stopped.ok) return stopped;
@@ -1224,7 +1262,7 @@ const server = http.createServer(async (req, res) => {
     const channel = data.channels.find(c => c.id === body.id && c.enabled !== false);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة أو معطلة');
     if (!data.settings.autoStartOnDemand) return send(res, 200, { ok: true, started: false, reason: 'disabled', message: 'التشغيل عند الطلب غير مفعّل' });
-    const result = startChannel(channel.id);
+    const result = startChannel(channel.id, true);
     return send(res, result.ok ? 200 : 503, { ...result, started: !!result.ok });
   }
   if (url.pathname === '/api/public/heartbeat' && req.method === 'POST') {
@@ -1283,6 +1321,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/settings' && req.method === 'GET') return send(res, 200, { ok: true, settings: data.settings });
   if (url.pathname === '/api/settings' && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const previousPort = Number(data.settings.port), previousNginxPort = Number(data.settings.nginxPort);
     const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','logoImage','logoPosition'];
     for (const key of textKeys) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const value = String(body[key] ?? '');
@@ -1326,7 +1365,11 @@ const server = http.createServer(async (req, res) => {
       hlsListSize:data.settings.hlsListSize, autoRestart:data.settings.autoRestartCrashed,
       maxRestarts:data.settings.maxRestarts, restartDelayMs:data.settings.restartBackoffMs
     });
-    writeData(data); syncNginxPorts(); return send(res, 200, { ok: true, settings: data.settings, message: 'تم حفظ الإعدادات. تغييرات المنافذ تتطلب إعادة تشغيل Node.js وNginx، وتغييرات الترميز تتطلب إعادة تشغيل القنوات.' });
+    // المنفذ يُقرأ مرة واحدة عند الإقلاع، لذا تغييره يحتاج إعادة تشغيل؛ نُبلّغ اللوحة
+    // لتظهر رسالة إعادة التشغيل بدل حفظ صامت لا أثر له.
+    const restartRequired = Number(data.settings.port) !== previousPort;
+    const nginxRestartRequired = Number(data.settings.nginxPort) !== previousNginxPort;
+    writeData(data); syncNginxPorts(); return send(res, 200, { ok: true, settings: data.settings, restartRequired, nginxRestartRequired, message: 'تم حفظ الإعدادات. تغييرات المنافذ تتطلب إعادة تشغيل Node.js وNginx، وتغييرات الترميز تتطلب إعادة تشغيل القنوات.' });
   }
   // تغيير كلمة مرور اللوحة: يتحقق من الحالية ثم يحفظ hash جديداً ويعيد فتح جلسة للمستخدم الحالي.
   if (url.pathname === '/api/settings/password' && req.method === 'POST') {
@@ -1406,6 +1449,11 @@ const server = http.createServer(async (req, res) => {
     const source = { id: 'src_' + require('crypto').randomBytes(5).toString('hex'), name: String(body.name).trim().slice(0,100), type, enabled: body.enabled !== false };
     const invalid = applySourceFields(source, body);
     if (invalid) return apiError(res, 400, invalid);
+    // أبعاد الملف الحقيقية عبر FFprobe: تُستخدم في حساب أبعاد الخرج عند تشغيل القناة.
+    if (source.type === 'file') {
+      const dimensions = await probeFileDimensions(source.path);
+      if (dimensions) source.videoSize = dimensions;
+    }
     data.sources.push(source);
     writeData(data);
     return send(res, 201, { ok: true, source, message: 'تم حفظ المصدر. أضف قناة مرتبطة به من صفحة القنوات.' });
@@ -1437,6 +1485,10 @@ const server = http.createServer(async (req, res) => {
     if (previousType !== nextType) { delete source.streamUrl; delete source.path; delete source.videoDevice; }
     const invalid = applySourceFields(source, body);
     if (invalid) { source.type = previousType; return apiError(res, 400, invalid); }
+    if (source.type === 'file') {
+      const dimensions = await probeFileDimensions(source.path);
+      if (dimensions) source.videoSize = dimensions;
+    }
     writeData(data);
     wasRunning.forEach(id => {
       const rt = streams.get(id);
@@ -1489,11 +1541,11 @@ const server = http.createServer(async (req, res) => {
     if(action==='stop') return send(res,200,stopChannel(id,clientInfo(req)));
     if(action==='restart')return send(res,202,restartChannel(id));
     logLine(`طلب تشغيل القناة ${id}: ${clientInfo(req)}`);
-    return send(res,200,startChannel(id));
+    return send(res,200,startChannel(id, true));
   }
   if (req.method === 'POST' && url.pathname === '/api/start') {
     logLine(`طلب تشغيل القنوات التلقائية: ${clientInfo(req)}`);
-    const started=data.channels.filter(c=>c.enabled!==false && c.autoStart).map(c=>startChannel(c.id));
+    const started=data.channels.filter(c=>c.enabled!==false && c.autoStart).map(c=>startChannel(c.id, true));
     return send(res,200,{ok:true,message:'تم إرسال أوامر تشغيل القنوات المحددة للتشغيل التلقائي',results:started});
   }
   if (req.method === 'POST' && url.pathname === '/api/stop') return send(res,200,stopStream(clientInfo(req)));
@@ -1641,6 +1693,27 @@ server.on('error', err => {
 setInterval(() => {
   const now=Date.now();
   for (const [id,session] of viewerSessions) if(now-session.lastSeen>45000)viewerSessions.delete(id);
+  // التعافي من أعطال المصدر: فشل متكرر أو حظر (403/451) يستمر حدّاً زمنياً يوقف
+  // القناة بدل حلقة إعادة تشغيل لا تنتهي. تُصفَّر المؤقّتات بمجرد نجاح البث.
+  for (const channel of data.channels) {
+    const rt = channelRuntime(channel.id);
+    if (!rt || rt.failedStop) continue;
+    if (!rt.stopping && channelIsLive(channel)) { rt.failSince = null; rt.blockedSince = null; continue; }
+    const failLimitMs = Math.max(1, Number(data.settings.sourceFailStopMinutes) || 3) * 60000;
+    const blockLimitMs = Math.max(1, Number(data.settings.blockedStopMinutes) || 1000) * 60000;
+    let reason = '';
+    if (rt.blockedSince && now - rt.blockedSince >= blockLimitMs) {
+      reason = `المصدر يحظر الاتصال (403) منذ ${Math.round((now - rt.blockedSince) / 60000)} دقيقة`;
+    } else if (rt.failSince && now - rt.failSince >= failLimitMs) {
+      reason = `المصدر يفشل منذ ${Math.round((now - rt.failSince) / 60000)} دقيقة`;
+    }
+    if (!reason) continue;
+    rt.failedStop = true;
+    clearTimeout(rt.restartTimer); rt.restartTimer = null;
+    logLine(`إيقاف القناة ${channel.name}: ${reason} — الحدود من الإعدادات: فشل المصدر ${data.settings.sourceFailStopMinutes} دقيقة، حظر IPTV ${data.settings.blockedStopMinutes} دقيقة. أعد التشغيل يدوياً بعد إصلاح المصدر.`);
+    appendChannelLog(channel.id, `إيقاف تلقائي: ${reason}`);
+    stopChannel(channel.id, 'توقف تلقائي بعد استمرار العطل');
+  }
   if(!data.settings.idleStopEnabled)return;
   const idleMs=Math.max(1,Number(data.settings.idleStopMinutes)||2)*60000;
   for(const channel of data.channels){

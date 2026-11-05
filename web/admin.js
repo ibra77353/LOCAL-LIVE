@@ -152,7 +152,7 @@ async function saveSettings() {
     const r = await api('/settings', { method: 'PUT', body });
     toast('تم حفظ الإعدادات');
     loadSettings();
-    if (r.restartRequired) {
+    if (r.restartRequired || r.nginxRestartRequired) {
       alert('تم تغيير المنفذ. لتطبيق التغيير:\n1) اضغط «تحديث ملف nginx.conf بالمنافذ الحالية».\n2) أعد تشغيل النظام (أغلق نافذة الأوامر وشغّل start.bat).\n3) أعد تشغيل Nginx.');
     }
   } catch (e) { toast(e.message, true); }
