@@ -111,6 +111,18 @@ function crfValueOf(settings) {
   const value = Number(settings && settings.crfValue);
   return CRF_VALUES.includes(value) ? value : 23;
 }
+// وضع الترميز لكل قناة: قيمة القناة (bitrate أو crf) تتقدّم على وضع الإعدادات،
+// والقيمة الفارغة تعني «وراثة وضع الإعدادات العامة».
+function channelEncodingModeOf(channel, settings) {
+  const mode = String((channel && channel.encodingMode) || '').toLowerCase();
+  if (ENCODING_MODES.includes(mode)) return mode;
+  return encodingModeOf(settings);
+}
+// قيمة CRF للقناة إن حُدّدت، وإلا قيمة الإعدادات العامة.
+function channelCrfValueOf(channel, settings) {
+  const value = Number(channel && channel.crfValue);
+  return CRF_VALUES.includes(value) ? value : crfValueOf(settings);
+}
 // الإعدادات فقط هي الافتراضية؛ لا تُنشأ مصادر أو قنوات تلقائياً عند أول تشغيل.
 function defaultData() {
   return {
@@ -941,9 +953,9 @@ function buildArgs(channel, forceTranscode = false) {
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
       '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
-    if (encodingModeOf(settings) === 'crf') {
-      // قيمة CRF المختارة في الإعدادات هي التي تُطبَّق فعلياً (كانت 23 ثابتة).
-      args.push('-crf', String(crfValueOf(settings)));
+    if (channelEncodingModeOf(channel, settings) === 'crf') {
+      // قيمة CRF للقناة إن حُدّدت، وإلا قيمة الإعدادات العامة (كانت 23 ثابتة).
+      args.push('-crf', String(channelCrfValueOf(channel, settings)));
       // وضع CRF لا يستهدف معدّل بت ثابتاً؛ لذلك بتريت القناة كان يُتجاهل تماماً.
       // الآن يُطبَّق كسقف أعلى (VBV) حتى يبقى الإعداد مؤثراً دون فرض معدّل ثابت.
       if (String(channel.bitrate || '').trim()) {
@@ -1520,7 +1532,12 @@ const server = http.createServer(async (req, res) => {
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
     const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
-    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, logoEnabled: !!body.logoEnabled, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
+    // وضع الترميز لكل قناة: فارغ = وراثة وضع الإعدادات العامة.
+    const encMode = String(body.encodingMode || '').toLowerCase();
+    if (encMode && !ENCODING_MODES.includes(encMode)) return apiError(res, 400, 'وضع ترميز القناة يجب أن يكون bitrate أو crf أو فارغاً لوراثة الإعدادات');
+    const crfValue = body.crfValue === '' || body.crfValue === null || body.crfValue === undefined ? '' : Number(body.crfValue);
+    if (crfValue !== '' && !CRF_VALUES.includes(crfValue)) return apiError(res, 400, `قيمة CRF للقناة يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);
+    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), encodingMode: encMode, crfValue, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, logoEnabled: !!body.logoEnabled, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
     data.channels.push(channel); writeData(data); return send(res, 201, { ok: true, channel: publicChannel(channel) });
   }
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
@@ -1534,13 +1551,24 @@ const server = http.createServer(async (req, res) => {
     // وكان يُرفض سابقاً فيتعذر حفظ القناة دون قيمة FPS.
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
+    // وضع الترميز الخاص بالقناة: '' = وراثة وضع الإعدادات العامة.
+    if (Object.prototype.hasOwnProperty.call(body,'encodingMode')) {
+      const mode = String(body.encodingMode || '').toLowerCase();
+      if (mode && !ENCODING_MODES.includes(mode)) return apiError(res,400,'وضع ترميز القناة يجب أن يكون bitrate أو crf أو فارغاً لوراثة الإعدادات');
+      body.encodingMode = mode;
+    }
+    if (Object.prototype.hasOwnProperty.call(body,'crfValue') && body.crfValue !== '' && body.crfValue !== null && body.crfValue !== undefined) {
+      if (!CRF_VALUES.includes(Number(body.crfValue))) return apiError(res,400,`قيمة CRF للقناة يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);
+      body.crfValue = Number(body.crfValue);
+    }
     if (Object.prototype.hasOwnProperty.call(body,'chanId')) {
       const chanId = String(body.chanId || '').trim();
       if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId && c.id !== channel.id))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
       channel.chanId = chanId || channel.id;
     }
-    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn','logoEnabled']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','encodingMode','crfValue','autoStart','alwaysOn','logoEnabled']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
     if (channel.fps === null || channel.fps === undefined) channel.fps = '';
+    if (channel.crfValue === null || channel.crfValue === undefined) channel.crfValue = '';
     if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;
     else if (Object.prototype.hasOwnProperty.call(body,'sortOrder')) channel.sortOrder = Number(body.sortOrder) || 0;
     channel.url = `/hls/${channel.id}/index.m3u8`;

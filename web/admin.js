@@ -21,6 +21,11 @@ const CH_QUALITIES = [
   ['auto', 'تلقائي (أبعاد الخرج من الإعدادات)'],
   ['240p', '240p'], ['360p', '360p'], ['480p', '480p'], ['720p', '720p']
 ];
+// مستويات CRF المتاحة لكل قناة (نفس قيم الإعدادات العامة).
+const CH_CRF_LEVELS = [
+  [18, '18 — جودة عالية جداً'], [20, '20 — جودة عالية'], [23, '23 — توازن جيد'],
+  [26, '26 — جودة أقل'], [28, '28 — ضغط أكبر وجودة أقل']
+];
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const TYPE_LABELS = {
   usb: 'كرت التقاط (DirectShow / V4L2)', http: 'HTTP مباشر', hls: 'HLS / M3U8',
@@ -578,6 +583,13 @@ function deleteChannel(id) {
     });
 }
 
+// وضع ترميز القناة: يُظهر مستوى CRF فقط عند اختيار CRF، ويبقى «افتراضي» بلا حقول.
+function syncChannelEncodingUI() {
+  const mode = $('#m_cencmode')?.value || '';
+  const box = $('#m_ccrfBox');
+  if (box) box.style.display = mode === 'crf' ? '' : 'none';
+}
+
 function openChannelModal(id) {
   const ch = id ? DATA.channels.find(c => c.id === id) : null;
   const curQ = ch?.quality || (ch?.qualities && ch.qualities[0]) || 'copy';
@@ -608,7 +620,18 @@ function openChannelModal(id) {
     <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
     <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
     <label>معدّل البت Bitrate (اختياري — مثل 1500k أو 2000k، فارغ = افتراضي الجودة)<input class="input" id="m_cbitrate" dir="ltr" value="${esc(ch?.bitrate)}" placeholder="مثال: 1500k"></label>
-    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام معدّل البت الافتراضي من الإعدادات. عند اختيار وضع «CRF» من الإعدادات يُطبَّق هذا الرقم كسقف أعلى للمعدّل بدل قيمة مستهدفة.</p>
+    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام معدّل البت الافتراضي من الإعدادات. عند اختيار وضع «CRF» يُطبَّق هذا الرقم كسقف أعلى للمعدّل بدل قيمة مستهدفة.</p>
+    <label>وضع الترميز لهذه القناة
+      <select class="input" id="m_cencmode" onchange="syncChannelEncodingUI()">
+        <option value="">افتراضي — يتبع وضع الإعدادات</option>
+        <option value="bitrate" ${ch?.encodingMode === 'bitrate' ? 'selected' : ''}>Bitrate — معدّل بت محدّد</option>
+        <option value="crf" ${ch?.encodingMode === 'crf' ? 'selected' : ''}>CRF — جودة ثابتة</option>
+      </select></label>
+    <label id="m_ccrfBox">مستوى CRF لهذه القناة
+      <select class="input" id="m_ccrf">
+        ${CH_CRF_LEVELS.map(([v, l]) => `<option value="${v}" ${Number(ch?.crfValue) === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>
+    <p class="hint">«افتراضي» يعني استخدام وضع الترميز ومستوى CRF من الإعدادات العامة. اختيار وضع هنا يتجاوز الإعدادات لهذه القناة وحدها، ويُطبَّق عند التشغيل التالي.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
@@ -621,6 +644,8 @@ function openChannelModal(id) {
         quality: $('#m_cquality').value,
         fps: $('#m_cfps').value || null,
         bitrate: $('#m_cbitrate').value.trim() || null,
+        encodingMode: $('#m_cencmode').value,
+        crfValue: $('#m_cencmode').value === 'crf' ? Number($('#m_ccrf').value) : null,
         autoStart: $('#m_cauto').checked, alwaysOn: $('#m_calwayson').checked
       };
       if (id) await api('/channels/' + id, { method: 'PUT', body });
@@ -628,6 +653,7 @@ function openChannelModal(id) {
       await loadChannels();
       toast('تم الحفظ');
     });
+  syncChannelEncodingUI();
 }
 
 // =====================================================================
