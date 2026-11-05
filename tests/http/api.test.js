@@ -441,6 +441,28 @@ test('bitrate القناة يعمل كسقف أعلى في وضع CRF ويبقى
   await api.del(`/api/sources/${src.json.source.id}`);
 });
 
+// تغيير إعدادات الترميز (Bitrate/CRF/الجودة/FPS) لا يحتاج إعادة تشغيل يدوية:
+// الخادم يبلّغ عن الحقول المتغيّرة، ويعيد تشغيل القناة تلقائياً إن كانت تعمل.
+test('حفظ إعدادات الترميز يبلّغ عن الحقول المتغيّرة لتطبيقها تلقائياً', async () => {
+  const src = await api.post('/api/sources', { name: 'مصدر إعادة التشغيل', type: 'file', path: 'srv/uploads/quality-test.mp4' });
+  assert.equal(src.status, 201);
+  const ch = await api.post('/api/channels', { name: 'قناة إعادة التشغيل', sourceId: src.json.source.id, quality: '360p', fps: 25, bitrate: '400k' });
+  assert.equal(ch.status, 201);
+  const id = ch.json.channel.id;
+
+  const changed = await api.put(`/api/channels/${id}`, { bitrate: '800k' });
+  assert.equal(changed.status, 200);
+  assert.deepEqual(changed.json.changedEncoding, ['bitrate']);
+  // القناة متوقفة في هذا الاختبار، فلا إعادة تشغيل.
+  assert.equal(changed.json.restarted, false);
+
+  const namesOnly = await api.put(`/api/channels/${id}`, { name: 'قناة إعادة التشغيل' });
+  assert.deepEqual(namesOnly.json.changedEncoding, []);
+
+  await api.del(`/api/channels/${id}`);
+  await api.del(`/api/sources/${src.json.source.id}`);
+});
+
 // yuv420p لا يقبل أبعاداً فردية: كانت قيمة مثل 641 تُحفظ ثم تُفشل بدء كل قناة
 // تتبع مقاس الإعدادات، فيجب رفضها من الإعدادات بوضوح.
 test('إعدادات الدقة ترفض الأبعاد الفردية وتقبل الزوجية', async () => {

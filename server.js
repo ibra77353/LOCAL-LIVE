@@ -1104,11 +1104,15 @@ function stopChannel(channelId, origin = '') {
 function restartChannel(channelId) {
   const rt=streams.get(channelId);
   if (!rt?.proc) return startChannel(channelId, true);
+  // إعادة تشغيل قيد التنفيذ: لا تُسجَّل مستمعات خروج إضافية، وإلا بدأت نسختان من
+  // FFmpeg عند حفظ إعدادات متتابع بسرعة. النسخة القادمة تقرأ أحدث إعدادات من data.
+  if (rt.restartPending) return {ok:true,message:'إعادة التشغيل قيد التنفيذ (ستُطبَّق أحدث إعدادات)',channelId};
+  rt.restartPending=true;
   const proc=rt.proc;
   const begin=()=>setTimeout(()=>startChannel(channelId, true),250);
   proc.once('exit',begin);
   const stopped=stopChannel(channelId);
-  if (!stopped.ok) return stopped;
+  if (!stopped.ok) { rt.restartPending=false; return stopped; }
   return {ok:true,message:'تم طلب إعادة التشغيل بعد إغلاق FFmpeg الحالي',channelId};
 }
 function stopStream(origin = '') {
@@ -1576,13 +1580,25 @@ const server = http.createServer(async (req, res) => {
       if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId && c.id !== channel.id))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
       channel.chanId = chanId || channel.id;
     }
+    // إعدادات تؤثر في وسائط FFmpeg: تغييرها على قناة تعمل يحتاج إعادة تشغيل فورية.
+    const encodingKeys = ['sourceId','quality','fps','bitrate','encodingMode','crfValue'];
+    const encodingBefore = {}; for (const key of encodingKeys) encodingBefore[key] = channel[key];
     for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','encodingMode','crfValue','autoStart','alwaysOn','logoEnabled']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
     if (channel.fps === null || channel.fps === undefined) channel.fps = '';
     if (channel.crfValue === null || channel.crfValue === undefined) channel.crfValue = '';
     if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;
     else if (Object.prototype.hasOwnProperty.call(body,'sortOrder')) channel.sortOrder = Number(body.sortOrder) || 0;
     channel.url = `/hls/${channel.id}/index.m3u8`;
-    writeData(data); return send(res, 200, { ok: true, channel: publicChannel(channel) });
+    const changedEncoding = encodingKeys.filter(key => String(encodingBefore[key] ?? '') !== String(channel[key] ?? ''));
+    writeData(data);
+    // إعادة التشغيل تلقائياً بدل مطالبة المستخدم بها: تُطبَّق القيم الجديدة فوراً
+    // على قناة تعمل (وإلا بقيت تعمل بإعدادات الترميز القديمة حتى إعادة تشغيل يدوية).
+    let restarted = false;
+    if (changedEncoding.length && channel.enabled !== false && streams.get(channel.id)?.proc) {
+      logLine(`تغيّرت إعدادات الترميز في «${channel.name}» (${changedEncoding.join(', ')})؛ إعادة تشغيل القناة تلقائياً`);
+      restarted = restartChannel(channel.id).ok;
+    }
+    return send(res, 200, { ok: true, channel: publicChannel(channel), restarted, changedEncoding });
   }
   if (channelMatch && req.method === 'PATCH') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }

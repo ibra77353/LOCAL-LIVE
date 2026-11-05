@@ -672,7 +672,7 @@ function openChannelModal(id) {
       <select class="input" id="m_ccrf">
         ${CH_CRF_LEVELS.map(([v, l]) => `<option value="${v}" ${Number(ch?.crfValue) === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
-    <p class="hint">«افتراضي» يتبع وضع الترميز ومستوى CRF من الإعدادات العامة، واختيار وضع هنا يتجاوزها لهذه القناة وحدها ويُطبَّق عند التشغيل التالي. اختيار «Bitrate» يُظهر خيارات معدّل البت (أعلى = جودة أوضح واستهلاك شبكة أكبر)، واختيار «CRF» يُظهر مستوى الجودة الثابتة.</p>
+    <p class="hint">«افتراضي» يتبع وضع الترميز ومستوى CRF من الإعدادات العامة، واختيار وضع هنا يتجاوزها لهذه القناة وحدها. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ. اختيار «Bitrate» يُظهر خيارات معدّل البت (أعلى = جودة أوضح واستهلاك شبكة أكبر)، واختيار «CRF» يُظهر مستوى الجودة الثابتة.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
@@ -690,10 +690,11 @@ function openChannelModal(id) {
         crfValue: $('#m_cencmode').value === 'crf' ? Number($('#m_ccrf').value) : null,
         autoStart: $('#m_cauto').checked, alwaysOn: $('#m_calwayson').checked
       };
-      if (id) await api('/channels/' + id, { method: 'PUT', body });
-      else await api('/channels', { method: 'POST', body });
+      const saved = id
+        ? await api('/channels/' + id, { method: 'PUT', body })
+        : await api('/channels', { method: 'POST', body });
       await loadChannels();
-      toast('تم الحفظ');
+      toast(saved && saved.restarted ? 'تم الحفظ وإعادة تشغيل القناة' : 'تم الحفظ');
     });
   syncChannelEncodingUI();
 }
