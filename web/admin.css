@@ -12,8 +12,97 @@
   --ok: #3FA66A;
   --text: #E9EEF2;
   --muted: #8FA3B0;
+  --field-bg: #0C151D;
+  --log-bg: #0A1118;
+  --log-text: #C9D6DF;
+  --modal-backdrop: rgba(5, 10, 14, .7);
+  --row-line: rgba(35, 57, 74, .55);
+  --login-glow: #1C3140;
+  --card-shadow: 0 24px 60px rgba(0, 0, 0, .45);
   --radius: 10px;
   --font: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+}
+
+/* ===== الوضع النهاري ===== */
+html[data-theme="light"] {
+  --bg: #EDF2F6;
+  --panel: #FFFFFF;
+  --panel2: #F5F8FA;
+  --line: #D5E0E9;
+  --brass: #A9680B;
+  --brass-soft: #F7EBD6;
+  --live: #C9342A;
+  --ok: #2C8355;
+  --text: #14202A;
+  --muted: #5B6C7A;
+  --field-bg: #FFFFFF;
+  --log-bg: #F6F9FB;
+  --log-text: #33454F;
+  --modal-backdrop: rgba(16, 27, 36, .45);
+  --row-line: #E4EBF1;
+  --login-glow: #DDE9F2;
+  --card-shadow: 0 20px 50px rgba(16, 27, 36, .16)
+}
+
+html[data-theme="light"] .form-error,
+html[data-theme="light"] .chip.error,
+html[data-theme="light"] .chip.error::before,
+html[data-theme="light"] .err-lines,
+html[data-theme="light"] .err-lines.err-high {
+  color: #B3261E
+}
+
+html[data-theme="light"] .chip.error::before {
+  color: inherit
+}
+
+html[data-theme="light"] .chip.running {
+  color: #14603B
+}
+
+html[data-theme="light"] .err-lines.err-medium {
+  color: #9A6108
+}
+
+html[data-theme="light"] .err-lines.err-low {
+  color: #5B6C7A
+}
+
+html[data-theme="light"] .sys-msg-close:hover {
+  background: rgba(20, 32, 42, .07)
+}
+
+/* زر تبديل الثيم */
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  cursor: pointer
+}
+
+.theme-btn svg {
+  display: block;
+  flex: 0 0 auto
+}
+
+.theme-btn-float {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 6;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 13px
+}
+
+.theme-btn-float:hover {
+  border-color: var(--brass)
 }
 
 * {
@@ -49,7 +138,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(1100px 600px at 80% -10%, #1C3140 0%, var(--bg) 60%)
+  background: radial-gradient(1100px 600px at 80% -10%, var(--login-glow) 0%, var(--bg) 60%)
 }
 
 .login-card {
@@ -58,7 +147,7 @@ a {
   border-radius: 14px;
   padding: 34px 30px;
   width: min(380px, 92vw);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, .45)
+  box-shadow: var(--card-shadow)
 }
 
 .login-mark {
@@ -414,7 +503,7 @@ a {
 
 .input,
 .login-card input {
-  background: #0C151D;
+  background: var(--field-bg);
   border: 1px solid var(--line);
   color: var(--text);
   border-radius: 8px;
@@ -635,7 +724,7 @@ label .input {
 
 .table td {
   padding: 11px 14px;
-  border-bottom: 1px solid rgba(35, 57, 74, .55);
+  border-bottom: 1px solid var(--row-line);
   vertical-align: middle;
   font-size: 14px
 }
@@ -709,7 +798,7 @@ label .input {
     grid-template-columns: 1fr 1fr;
     gap: 8px 16px;
     padding: 12px 14px;
-    border-bottom: 1px solid rgba(35, 57, 74, .55)
+    border-bottom: 1px solid var(--row-line)
   }
 
   .table tbody tr:last-child {
@@ -868,7 +957,7 @@ label .input {
   width: 34px;
   height: 34px;
   object-fit: contain;
-  background: #0C151D;
+  background: var(--field-bg);
   border-radius: 6px
 }
 
@@ -932,7 +1021,7 @@ label .input {
 }
 
 .log-body {
-  background: #0A1118;
+  background: var(--log-bg);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
@@ -941,7 +1030,7 @@ label .input {
   direction: ltr;
   text-align: left;
   font: 12.5px/1.6 Consolas, monospace;
-  color: #C9D6DF;
+  color: var(--log-text);
   white-space: pre-wrap;
   word-break: break-all
 }
@@ -993,7 +1082,7 @@ label .input {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(5, 10, 14, .7);
+  background: var(--modal-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;

@@ -3,9 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0E141B">
+<script>try{document.documentElement.setAttribute('data-theme',localStorage.getItem('pl_theme')==='light'?'light':'dark')}catch(e){document.documentElement.setAttribute('data-theme','dark')}</script>
 <title>لوحة التحكم — البرنس لايف</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="stylesheet" href="/admin.css">
+<script src="/theme.js" defer></script>
 </head>
 <body>
 
@@ -19,6 +22,11 @@
     <button class="btn btn-primary btn-block" type="submit">دخول</button>
     <p id="loginError" class="form-error"></p>
   </form>
+  <button class="theme-btn theme-btn-float" type="button" data-theme-toggle aria-label="الوضع النهاري" title="الوضع النهاري">
+    <svg class="ico-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>
+    <svg class="ico-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.5 14.2A8.6 8.6 0 0 1 9.8 3.5a8.6 8.6 0 1 0 10.7 10.7z"/></svg>
+    <span class="theme-label">الوضع النهاري</span>
+  </button>
 </div>
 
 <div id="app" class="app hidden">
@@ -41,6 +49,11 @@
       
     </nav>
     <div class="sidebar-foot">
+      <button class="btn btn-ghost btn-block theme-btn" type="button" data-theme-toggle aria-label="الوضع النهاري" title="الوضع النهاري">
+        <svg class="ico-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>
+        <svg class="ico-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.5 14.2A8.6 8.6 0 0 1 9.8 3.5a8.6 8.6 0 1 0 10.7 10.7z"/></svg>
+        <span class="theme-label">الوضع النهاري</span>
+      </button>
       <a href="/" target="_blank" class="btn btn-ghost btn-block">صفحة المشاهدين ↗</a>
       <button id="logoutBtn" class="btn btn-ghost btn-block">تسجيل الخروج</button>
     </div>
