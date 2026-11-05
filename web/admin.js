@@ -845,7 +845,7 @@ async function refreshDashboard() {
     dashCard('live-accent', '⬆️', fmtBytes(m.egressBytesTotal), '', 'البيانات الخارجة للمشتركين', 'تقدير حسب المشاهدين', false),
     dashCard('blue-accent', '📡', fmtBps(m.ingestBandwidthBps), '', 'باندويث البث الحالي', 'وارد من المصادر', m.ingestBandwidthBps > 0),
     dashCard('amber-accent', '🌐', fmtBps(m.egressBandwidthBps), '', 'باندويث الخروج للمشاهدين', 'تقدير فعلي حالي', m.egressBandwidthBps > 0),
-    dashCard('purple-accent', '🔌', fmtBps(m.internetBandwidthBps), '', 'باندويث الإنترنت المستهلك', 'حالياً (وارد)', m.internetBandwidthBps > 0)
+    dashCard('purple-accent', '🔌', m.internetBandwidthBps == null ? '—' : fmtBps(m.internetBandwidthBps), '', 'باندويث الإنترنت المستهلك', m.internetBandwidthBps == null ? 'غير متاح على هذا النظام' : 'حالياً (وارد)', m.internetBandwidthBps > 0)
   ].join('');
 }
 

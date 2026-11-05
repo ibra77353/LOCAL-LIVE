@@ -53,6 +53,15 @@ let servedBytes = 0;
 const channelServedBytes = new Map(); // channelId -> بايتات /hls المخدومة لتلك القناة
 let ingestBps = 0;
 let lastHlsFiles = new Map(); // مسار مقطع -> آخر حجم معروف (لحساب معدل التوليد)
+// باندويث الإنترنت: مجموع البايتات المستقبَلة على واجهات الشبكة الفعلية.
+// null تعني أن النظام لا يوفّر عدّادات شبكة مقروءة (تظهر «—» في اللوحة).
+let internetBps = null;
+let internetRxTotal = null, internetRxAt = 0;
+// سجلات Nginx: على ويندوز تُخدَم مقاطع HLS من القرص مباشرةً فلا يراها Node،
+// لذلك نحتسب بايتات /hls من سجلّ الوصول كي تعمل مقاييس البيانات.
+const NGINX_LOG_DIR = path.resolve(process.env.NGINX_LOG_DIR || path.join(ROOT, 'nginx', 'logs'));
+const nginxLogOffsets = new Map();
+let nginxLogActive = false;
 const viewerSessions = new Map();
 let previousCpu = os.cpus().map(c => ({ idle: c.times.idle, total: Object.values(c.times).reduce((a,b) => a+b, 0) }));
 let cpuPercent = null;
@@ -175,6 +184,71 @@ function hlsFileSizes() {
     }
   } catch {}
   return { total, sizes };
+}
+// يقرأ ما أُضيف إلى سجلات Nginx منذ آخر قراءة ويضيف بايتات /hls إلى عدّادات
+// القنوات والإجمالي. عند وجود سجلّ Nginx يتوقف Node عن العدّ بنفسه (وإلا تكرّرت
+// البايتات) لأن كل المقاطع تمرّ عبر Nginx في هذه الحالة.
+function readNginxLogs() {
+  for (const name of ['stream.log', 'access.log']) {
+    const file = path.join(NGINX_LOG_DIR, name);
+    let stat;
+    try { stat = fs.statSync(file); } catch { continue; }
+    if (!stat.isFile()) continue;
+    nginxLogActive = true;
+    const previous = nginxLogOffsets.get(file);
+    if (previous == null || stat.size < previous) { nginxLogOffsets.set(file, stat.size); continue; }
+    if (stat.size === previous) continue;
+    let chunk = '';
+    try {
+      const length = stat.size - previous;
+      const buffer = Buffer.alloc(length);
+      const fd = fs.openSync(file, 'r');
+      try { fs.readSync(fd, buffer, 0, length, previous); } finally { fs.closeSync(fd); }
+      chunk = buffer.toString('utf8');
+    } catch { continue; }
+    const end = chunk.lastIndexOf('\n');
+    if (end < 0) continue; // لا سطر مكتمل بعد: ننتظر القراءة التالية
+    const complete = chunk.slice(0, end + 1);
+    nginxLogOffsets.set(file, previous + Buffer.byteLength(complete, 'utf8'));
+    for (const line of complete.split('\n')) {
+      const match = line.match(/"\w+ (\/hls\/[^"\s]+) [^"]*" (\d{3}) (\d+)/);
+      if (!match) continue;
+      const status = Number(match[2]);
+      if (status !== 200 && status !== 206) continue;
+      const channelId = match[1].split('/')[2];
+      const bytes = Number(match[3]) || 0;
+      if (!channelId || !bytes || !data.channels.some(c => c.id === channelId)) continue;
+      servedBytes += bytes;
+      channelServedBytes.set(channelId, (channelServedBytes.get(channelId) || 0) + bytes);
+    }
+  }
+}
+// بايتات الشبكة الواردة على مستوى النظام: Linux من /proc/net/dev،
+// وWindows من netstat -e. غير المدعوم يعيد null فتظهر القيمة «—».
+function readSystemRx(cb) {
+  if (process.platform === 'linux') {
+    try {
+      let total = 0;
+      for (const line of fs.readFileSync('/proc/net/dev', 'utf8').split('\n').slice(2)) {
+        const parts = line.split(':');
+        if (!parts[1]) continue;
+        const iface = parts[0].trim();
+        if (!iface || iface === 'lo') continue;
+        total += Number(parts[1].trim().split(/\s+/)[0]) || 0;
+      }
+      return cb(null, total);
+    } catch { return cb(null, null); }
+  }
+  if (process.platform === 'win32') {
+    execFile('netstat', ['-e'], { encoding: 'utf8', windowsHide: true, timeout: 5000 }, (err, stdout) => {
+      if (err || !stdout) return cb(null, null);
+      // أول سطر رقمي بعد الترويسة هو سطر Bytes (تسميته مترجمة على ويندوز).
+      const row = stdout.match(/^\s*[^\d\s][^\d]*?(\d+)\s+(\d+)\s*$/m);
+      return cb(null, row ? Number(row[1]) : null);
+    });
+    return;
+  }
+  return cb(null, null);
 }
 function playlistPath(channel) { return path.join(channelHlsDir(channel), 'index.m3u8'); }
 // مسارات الملفات المرفوعة تُخزَّن كما في الحزمة (srv/uploads/x) وتُعرض عبر /uploads/x.
@@ -1058,8 +1132,11 @@ function serveHls(req, res, pathname) {
       'Cache-Control': ext === '.m3u8' ? 'no-store, no-cache, must-revalidate' : 'public, max-age=60',
       'Access-Control-Allow-Origin': '*'
     });
-    servedBytes += data.length;
-    channelServedBytes.set(ownerId, (channelServedBytes.get(ownerId) || 0) + data.length);
+    // عند وجود سجلّ Nginx تتكفّل قراءته بالعدّ (المقاطع تُخدَم من nginx مباشرةً).
+    if (!nginxLogActive) {
+      servedBytes += data.length;
+      channelServedBytes.set(ownerId, (channelServedBytes.get(ownerId) || 0) + data.length);
+    }
     res.end(data);
   });
 }
@@ -1440,7 +1517,7 @@ const server = http.createServer(async (req, res) => {
       runningChannels: channels.filter(c => c.status === 'running').length,
       totalChannels: channels.length,
       hlsBytesTotal, egressBytesTotal: servedBytes,
-      ingestBandwidthBps: ingestBps, egressBandwidthBps: egressBps, internetBandwidthBps: 0
+      ingestBandwidthBps: ingestBps, egressBandwidthBps: egressBps, internetBandwidthBps: internetBps
     });
   }
   if (req.method === 'POST' && url.pathname === '/api/settings/regenerate-nginx') {
@@ -1543,9 +1620,20 @@ setInterval(() => {
 
 setInterval(() => {
   const now = Date.now();
+  readNginxLogs();
   const elapsed = Math.max(1, (now - lastServedSample.at) / 1000);
   egressBps = Math.max(0, Math.round((servedBytes - lastServedSample.bytes) / elapsed));
   lastServedSample = { bytes: servedBytes, at: now };
+  readSystemRx((err, rx) => {
+    if (err || rx == null) { internetBps = null; return; }
+    const at = Date.now();
+    if (internetRxTotal == null || rx < internetRxTotal) {
+      internetRxTotal = rx; internetRxAt = at; internetBps = 0; return;
+    }
+    const seconds = Math.max(1, (at - internetRxAt) / 1000);
+    internetBps = Math.max(0, Math.round((rx - internetRxTotal) / seconds));
+    internetRxTotal = rx; internetRxAt = at;
+  });
   // باندويث الإدخال: نمو مقاطع HLS بين عينتين. يُحسب لكل ملف على حدة حتى لا
   // يُلغي حذف المقاطع القديمة (hlsDeleteThreshold) البايتات المولَّدة حديثاً.
   const hls = hlsFileSizes();
