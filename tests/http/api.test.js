@@ -426,12 +426,15 @@ test('bitrate القناة يعمل كسقف أعلى في وضع CRF ويبقى
   const crf = await argsFor();
   assert.match(crf, /-crf 23/);
   assert.match(crf, /-maxrate 400k/);
+  assert.match(crf, /-bufsize 800k/);
   assert.doesNotMatch(crf, /-b:v/);
 
   await api.put('/api/settings', { x264QualityMode: false });
   const abr = await argsFor();
   assert.match(abr, /-b:v 400k/);
   assert.match(abr, /-maxrate 400k/);
+  // bufsize يتبع المعدّل المختار (ضعفه) لا قيمة ثابتة.
+  assert.match(abr, /-bufsize 800k/);
   assert.doesNotMatch(abr, /-crf/);
 
   await api.del(`/api/channels/${id}`);

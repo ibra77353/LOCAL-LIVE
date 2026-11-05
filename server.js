@@ -858,6 +858,13 @@ function normalizeVideoBitrate(value, fallback) {
   const text = String(value || '').trim();
   return /^\d{2,6}[kKmM]?$/.test(text) ? text : fallback;
 }
+// يحوّل بِتريت نصياً (500k أو 2M أو 2000) إلى كيلوبت/ثانية لاشتقاق bufsize؛ 0 لقيمة غير صالحة.
+function bitrateKbps(value) {
+  const text = String(value || '').trim().toLowerCase();
+  const num = Number(text.replace(/[km]$/, ''));
+  if (!Number.isFinite(num) || num <= 0) return 0;
+  return /m$/.test(text) ? num * 1000 : Math.round(num);
+}
 // يضمن أن preset وعدد الخيوط صالحان حتى لو عُدّلت data.json يدوياً.
 function resolveEncoderSettings(settings) {
   const warnings = [];
@@ -959,13 +966,16 @@ function buildArgs(channel, forceTranscode = false) {
       // وضع CRF لا يستهدف معدّل بت ثابتاً؛ لذلك بتريت القناة كان يُتجاهل تماماً.
       // الآن يُطبَّق كسقف أعلى (VBV) حتى يبقى الإعداد مؤثراً دون فرض معدّل ثابت.
       if (String(channel.bitrate || '').trim()) {
-        const capKbps = Number(String(videoBitrate).replace(/[kKmM]$/, '')) || 0;
-        const isMegabit = /m$/i.test(videoBitrate);
-        const cap = isMegabit ? capKbps * 1000 : capKbps;
+        // السقف (VBV) يأتي من البِتريت نفسه، وحجم المخزن ضعفه دائماً.
+        const cap = bitrateKbps(videoBitrate);
         if (cap > 0) args.push('-maxrate',`${cap}k`,'-bufsize',`${cap * 2}k`);
       }
     }
-    else args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize','1000k');
+    else {
+      // bufsize يتبع معدّل البت المختار (ضعفه) بدل قيمة ثابتة، فيتغيّر مع 500k/2000k.
+      const cap = bitrateKbps(videoBitrate);
+      args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize',`${cap ? cap * 2 : 2000}k`);
+    }
     if (isNetwork || audioDevice || sourceType === 'file') args.push('-map',audioMap,'-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
   }
