@@ -59,14 +59,6 @@
       "enabled": true,
       "videoSize": "",
       "fps": 15
-    },
-    {
-      "id": "src_27555410f1",
-      "name": "ٍHD",
-      "type": "screen",
-      "enabled": true,
-      "videoSize": "",
-      "fps": 15
     }
   ],
   "channels": [
