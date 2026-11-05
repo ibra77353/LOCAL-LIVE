@@ -340,6 +340,13 @@ function readBody(req, maxBytes=1024*1024) {
     req.on('error', reject);
   });
 }
+// الحقول الوحيدة المسموح بها عند إنشاء القناة أو تحديثها. أي خاصية أخرى في جسم
+// الطلب (مثل الدقة أو CRF أو GOP) تُرفض صراحةً بدل تجاهلها بصمت.
+const CHANNEL_WRITE_FIELDS = ['name','chanId','sourceId','category','sort','sortOrder','cover','enabled','quality','bitrate','fps','autoStart','alwaysOn'];
+function unexpectedChannelField(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  return Object.keys(body).find(key => !CHANNEL_WRITE_FIELDS.includes(key)) || null;
+}
 // اختبار رابط بث: يقرأ الترويسات وأول بايتات ليحدد نوع المصدر (m3u8/ts/آخر).
 function probeStreamUrl(target) {
   return new Promise((resolve, reject) => {
@@ -1474,6 +1481,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/channels' && req.method === 'POST') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedNew = unexpectedChannelField(body);
+    if (unexpectedNew) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedNew}`);
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم القناة مطلوب');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
     const channelId = 'ch_' + require('crypto').randomBytes(5).toString('hex');
@@ -1486,6 +1496,9 @@ const server = http.createServer(async (req, res) => {
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
   if (channelMatch && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedUpdate = unexpectedChannelField(body);
+    if (unexpectedUpdate) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedUpdate}`);
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');

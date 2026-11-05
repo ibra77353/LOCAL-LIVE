@@ -212,6 +212,22 @@ test('PUT /api/channels/:id يرفض الجودة وFPS والبِتريت غي�
   assert.equal(badBitrate.status, 400);
 });
 
+test('POST/PUT /api/channels يرفضان الخصائص غير المتوقعة (دقة/CRF/GOP)', async () => {
+  const postCrf = await api.post('/api/channels', { name: 'قناة CRF', sourceId: state.sourceId, crf: 23 });
+  assert.equal(postCrf.status, 400);
+  assert.match(postCrf.json.error, /crf/);
+  const postDims = await api.post('/api/channels', { name: 'قناة دقة', sourceId: state.sourceId, outputWidth: 1280, outputHeight: 720 });
+  assert.equal(postDims.status, 400);
+  const putCrf = await api.put(`/api/channels/${state.channelId}`, { crf: 23 });
+  assert.equal(putCrf.status, 400);
+  const putEnc = await api.put(`/api/channels/${state.channelId}`, { name: 'اسم مرفوض', outputFps: 30, gopSeconds: 2 });
+  assert.equal(putEnc.status, 400);
+  // لا يتغيّر شيء في القناة بعد الرفض.
+  const after = await api.get('/api/channels');
+  const channel = after.json.channels.find((c) => c.id === state.channelId);
+  assert.notEqual(channel.name, 'اسم مرفوض');
+});
+
 test('PUT /api/channels/:id يقبل تعديلاً صالحاً', async () => {
   const res = await api.put(`/api/channels/${state.channelId}`, { name: 'قناة اختبار محدّثة', quality: '720p' });
   assert.equal(res.status, 200);
@@ -508,11 +524,10 @@ test('Bitrate خاص بكل قناة ويُطبَّق في وسائط FFmpeg ب�
   assert.equal(emptyBitrate.status, 200);
   assert.match(await argsFor(), /-b:v 500k/);
 
-  // حقول CRF القديمة تُتجاهل ولا تُحفظ في القناة
+  // حقول CRF القديمة تُرفض صراحةً ولا تُحفظ في القناة
   const legacy = await api.put(`/api/channels/${id}`, { encodingMode: 'crf', crfValue: 18 });
-  assert.equal(legacy.status, 200);
-  assert.equal(legacy.json.channel.encodingMode, undefined);
-  assert.equal(legacy.json.channel.crfValue, undefined);
+  assert.equal(legacy.status, 400);
+  assert.match(legacy.json.error, /encodingMode|crfValue/);
 
   // الإعدادات العامة لا تحمل وضع ترميز أو بِتريت افتراضياً
   const settings = (await api.get('/api/settings')).json.settings;
