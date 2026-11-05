@@ -617,7 +617,6 @@ function openChannelModal(id) {
         ${CH_QUALITIES.map(([v, l]) => `<option value="${v}" ${curQ === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
     <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
-    <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
     <label>معدّل البت (Bitrate) لهذه القناة
       <select class="input" id="m_cbitrate" dir="ltr">
         ${bitrateOptions.map(([v, l]) => `<option value="${v}" ${curBitrate === v ? 'selected' : ''}>${l}</option>`).join('')}
@@ -632,7 +631,6 @@ function openChannelModal(id) {
         sourceId: $('#m_csource').value, category: $('#m_ccat').value.trim(),
         sort: Number($('#m_csort').value || 0), cover: $('#m_ccover').value.trim(),
         quality: $('#m_cquality').value,
-        fps: $('#m_cfps').value || null,
         bitrate: $('#m_cbitrate').value || null,
         autoStart: $('#m_cauto').checked, alwaysOn: $('#m_calwayson').checked
       };
