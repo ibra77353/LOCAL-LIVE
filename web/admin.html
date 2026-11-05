@@ -254,6 +254,11 @@
           </div>
           <button class="btn" onclick="regenerateNginx()">تحديث ملف nginx.conf</button>
           <p class="field-note">بعد التغيير: احفظ الإعدادات، ثم اضغط الزر، ثم أعد تشغيل النظام و Nginx.</p>
+          <div class="fields-grid" style="margin-top:8px">
+            <button class="btn" onclick="nginxAction('test')">اختبار مسار Nginx</button>
+            <button class="btn" onclick="nginxAction('restart')">إعادة تشغيل Nginx</button>
+          </div>
+          <p class="field-note" id="nginxPathNote"></p>
         </div>
 
         <div class="card">

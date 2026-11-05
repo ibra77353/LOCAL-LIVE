@@ -321,7 +321,9 @@ function publicChannel(channel) {
   // الإيقاف اليدوي والخروج الناجح ليسا خطأ: سبب الإنهاء الحقيقي هو ما يحدد الحالة.
   const exit = runtime?.lastExit || null;
   const exitBenign = !!exit && typeof exit === 'object' && (exit.reason === 'إيقاف يدوي' || exit.code === 0);
-  const lastErrorText = exit && !exitBenign ? formatLastExit(exit) : '';
+  // الخطأ يُعرض فقط ما دامت القناة متوقفة فعلاً؛ بعد نجاح إعادة التشغيل وظهور
+  // قائمة تشغيل حديثة يُمحى الخطأ القديم تلقائياً حتى لا يبدو البث معطلاً.
+  const lastErrorText = exit && !exitBenign && !live ? formatLastExit(exit) : '';
   return { ...channel, chanId: channel.chanId || channel.id, sort: Number(channel.sortOrder) || 0,
     url: `/hls/${channel.id}/index.m3u8`, cover: publicAsset(channel.cover),
     device: source?.videoDevice || '', sourceName: source?.name || '', live,
@@ -720,6 +722,58 @@ function syncNginxPorts(){
   }catch(err){logLine(`تعذر تحديث منافذ Nginx: ${err.message}`);return false;}
 }
 
+// مسار ملف Nginx يأتي من settings.nginxPath ويُستخدم فعلياً في أوامر الاختبار
+// والتشغيل والإيقاف. المسار النسبي يُبحث عنه في جذر المشروع ثم داخل مجلد nginx،
+// والمسار غير الموجود يُعاد كما هو لتظهر رسالة واضحة بالمسار المتوقع.
+function nginxPrefix() { return path.join(ROOT, 'nginx') + path.sep; }
+function nginxExecutable() {
+  const raw = String(data.settings.nginxPath || cfg.nginxPath || '').trim();
+  if (!raw) return '';
+  if (path.isAbsolute(raw)) return raw;
+  for (const candidate of [path.join(ROOT, raw), path.join(ROOT, 'nginx', raw)]) {
+    try { if (fs.statSync(candidate).isFile()) return candidate; } catch {}
+  }
+  return path.join(ROOT, raw);
+}
+function nginxBinaryExists() {
+  const bin = nginxExecutable();
+  try { return !!bin && fs.statSync(bin).isFile(); } catch { return false; }
+}
+// ينفّذ nginx.exe من المسار المحفوظ مع بادئة مجلد nginx وملف الإعداد نفسه الذي
+// تستخدمه السكربتات (nginx -p <root>/nginx/ -c conf/nginx.conf ...).
+function runNginxCommand(extraArgs) {
+  return new Promise(resolve => {
+    const bin = nginxExecutable();
+    if (!bin) return resolve({ ok:false, binary:'', output:'', message:'مسار Nginx غير محدد؛ اضبط «مسار Nginx» في الإعدادات.' });
+    if (!nginxBinaryExists()) return resolve({ ok:false, binary:bin, output:'', message:`ملف Nginx غير موجود في المسار «${bin}»؛ صحّح «مسار Nginx» في الإعدادات.` });
+    const args = ['-p', nginxPrefix(), '-c', 'conf/nginx.conf', ...extraArgs];
+    execFile(bin, args, { cwd: ROOT, windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      const output = `${stdout || ''}${stderr || ''}`.trim();
+      if (!err) return resolve({ ok:true, binary:bin, output, message:'تم تنفيذ أمر Nginx بنجاح.' });
+      const reason = ['ENOEXEC','EACCES','EPERM'].includes(err.code)
+        ? `تعذر تنفيذ ملف Nginx «${bin}» على نظام ${process.platform} (${err.code}); استخدم نسخة Nginx الصحيحة لهذا النظام.`
+        : (output || err.message);
+      resolve({ ok:false, binary:bin, output, message:reason });
+    });
+  });
+}
+async function nginxAction(action) {
+  if (action === 'test') return runNginxCommand(['-t']);
+  if (action === 'reload') return runNginxCommand(['-s','reload']);
+  if (action === 'stop') return runNginxCommand(['-s','quit']);
+  if (action === 'start') return runNginxCommand([]);
+  if (action === 'restart') {
+    // لا يعتمد على "nginx -s quit" وحده: مهلة صغيرة تتيح للعملية القديمة تحرير
+    // المنفذ قبل تشغيل النسخة الجديدة، ثم يُبلَّغ بنتيجة التشغيل الفعلية.
+    const stopped = await runNginxCommand(['-s','quit']);
+    await new Promise(r => setTimeout(r, 1500));
+    const started = await runNginxCommand([]);
+    return { ok: started.ok, binary: started.binary, output: [stopped.output, started.output].filter(Boolean).join('\n'),
+      message: started.ok ? 'تمت إعادة تشغيل Nginx.' : started.message };
+  }
+  return { ok:false, binary: nginxExecutable(), output:'', message:'أمر غير معروف؛ استخدم test أو start أو stop أو reload أو restart.' };
+}
+
 function validateNetworkStreamUrl(value) {
   const raw = String(value || '').trim();
   if (!raw || raw.length > 4096 || /[\r\n\0]/.test(raw)) throw new Error('أدخل رابط بث شبكي صالحًا');
@@ -807,10 +861,16 @@ function buildArgs(channel, forceTranscode = false) {
   if (!source || source.enabled === false) throw new Error('مصدر البث غير موجود أو معطل');
   const settings = data.settings;
   const [srcW, srcH] = String(source.videoSize || cfg.videoSize || '1280x720').split('x').map(Number);
-  const outputHeight = isCopyQuality(channel.quality) ? (srcH || 720) : Number(String(channel.quality || '').replace(/p$/i,'')) || 360;
+  // الجودة إما نسخ المصدر، أو مقاس مسمّى (240p..720p) يُحسب عرضه من نسبة المصدر،
+  // أو «تلقائي» (auto/فارغ) يتبع أبعاد الخرج المحفوظة في الإعدادات: هكذا يصبح
+  // تغيير outputHeight/outputWidth مؤثراً فعلياً بدل تجاهله لصالح 360p الثابتة.
+  const qualityValue = String(channel.quality || '').trim().toLowerCase();
+  const presetHeight = /^\d{3,4}p$/.test(qualityValue) ? Number(qualityValue.replace(/p$/,'')) : 0;
+  const settingsHeight = clampNumber(Number(settings.outputHeight), 120, 2160, 360);
+  const settingsWidth = clampNumber(Number(settings.outputWidth), 160, 3840, 640);
+  const outputHeight = isCopyQuality(qualityValue) ? (srcH || 720) : (presetHeight || settingsHeight);
   const derivedWidth=Math.max(160,Math.round((srcW||1280)*outputHeight/(srcH||720)/2)*2);
-  const configuredWidth=Number(settings.outputWidth)||640;
-  const outputWidth=isCopyQuality(channel.quality)?(srcW||1280):(outputHeight===(Number(settings.outputHeight)||360)?configuredWidth:derivedWidth);
+  const outputWidth=isCopyQuality(qualityValue)?(srcW||1280):(presetHeight?derivedWidth:settingsWidth);
   const outputFps = clampNumber(Number(channel.fps) || settings.outputFps, 1, 60, 20);
   const defaultBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
   const videoBitrate = normalizeVideoBitrate(channel.bitrate, defaultBitrate);
@@ -1308,7 +1368,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, message: 'تم تسجيل الخروج' });
   }
 
-  const adminApiPath = url.pathname === '/api/channels' || url.pathname.startsWith('/api/channels/') || url.pathname === '/api/sources' || url.pathname.startsWith('/api/sources/') || url.pathname === '/api/settings' || url.pathname === '/api/stats' || url.pathname.startsWith('/api/devices') || url.pathname === '/api/start' || url.pathname === '/api/stop' || url.pathname === '/api/logs' || url.pathname.startsWith('/api/logs/') || url.pathname.startsWith('/api/backup') || url.pathname === '/api/upload' || url.pathname === '/api/metrics' || url.pathname.startsWith('/api/settings/');
+  const adminApiPath = url.pathname === '/api/channels' || url.pathname.startsWith('/api/channels/') || url.pathname === '/api/sources' || url.pathname.startsWith('/api/sources/') || url.pathname === '/api/settings' || url.pathname === '/api/stats' || url.pathname.startsWith('/api/devices') || url.pathname === '/api/start' || url.pathname === '/api/stop' || url.pathname === '/api/logs' || url.pathname.startsWith('/api/logs/') || url.pathname.startsWith('/api/backup') || url.pathname === '/api/upload' || url.pathname === '/api/metrics' || url.pathname.startsWith('/api/settings/') || url.pathname.startsWith('/api/nginx/');
   if (url.pathname === '/api/status' && req.method === 'GET') {
     // Status is intentionally public for the viewer page; it contains no credentials or filesystem paths.
   } else if (adminApiPath && !requireAdmin(req, res)) {
@@ -1318,7 +1378,9 @@ const server = http.createServer(async (req, res) => {
   // Admin/local management API: channel/source CRUD and settings persistence.
   if (url.pathname === '/api/channels' && req.method === 'GET') return send(res, 200, { ok: true, channels: data.channels.map(publicChannel) });
   if (url.pathname === '/api/sources' && req.method === 'GET') return send(res, 200, { ok: true, sources: data.sources.map(s => ({ ...s, url: s.streamUrl || '' })) });
-  if (url.pathname === '/api/settings' && req.method === 'GET') return send(res, 200, { ok: true, settings: data.settings });
+  if (url.pathname === '/api/settings' && req.method === 'GET') {
+    return send(res, 200, { ok: true, settings: data.settings, nginx: { binary: nginxExecutable(), binaryExists: nginxBinaryExists() } });
+  }
   if (url.pathname === '/api/settings' && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
     const previousPort = Number(data.settings.port), previousNginxPort = Number(data.settings.nginxPort);
@@ -1402,7 +1464,7 @@ const server = http.createServer(async (req, res) => {
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
     const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
-    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || '360p'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, logoEnabled: !!body.logoEnabled, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
+    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, logoEnabled: !!body.logoEnabled, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
     data.channels.push(channel); writeData(data); return send(res, 201, { ok: true, channel: publicChannel(channel) });
   }
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
@@ -1411,7 +1473,7 @@ const server = http.createServer(async (req, res) => {
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
-    if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','240p','360p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
+    if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','auto','240p','360p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
     if (Object.prototype.hasOwnProperty.call(body,'chanId')) {
@@ -1624,6 +1686,15 @@ const server = http.createServer(async (req, res) => {
       notes.push('لم يُعثر على nginx/conf/nginx.conf داخل الحزمة؛ حدّث منافذ Nginx يدوياً.');
     }
     return send(res, 200, { ok: true, nginxPort: Number(data.settings.nginxPort) || 80, port: Number(data.settings.port) || 3001, written, notes });
+  }
+  // أوامر Nginx تُنفَّذ من المسار المحفوظ في settings.nginxPath، فيصبح هذا الحقل
+  // فعّالاً بدل بقائه نصاً محفوظاً بلا أثر.
+  if (req.method === 'POST' && url.pathname === '/api/nginx/action') {
+    let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const action = String(body.action || 'test');
+    const result = await nginxAction(action);
+    logLine(`أمر Nginx «${action}»: ${result.ok ? 'نجح' : 'فشل'} — ${result.message}`);
+    return send(res, result.ok ? 200 : 500, { ok: result.ok, action, binary: result.binary, output: result.output, message: result.message });
   }
   if (req.method === 'POST' && url.pathname === '/api/upload') {
     const raw = await readRawBody(req).catch(() => null);

@@ -18,6 +18,7 @@ function getAssetUrl(raw) {
 // جودة القناة الواحدة: نسخ المصدر (copy) ثم جودات الترميز.
 const CH_QUALITIES = [
   ['copy', 'نسخ المصدر (بلا ترميز — الأخف والأعلى جودة)'],
+  ['auto', 'تلقائي (أبعاد الخرج من الإعدادات)'],
   ['240p', '240p'], ['360p', '360p'], ['480p', '480p'], ['720p', '720p']
 ];
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
@@ -123,8 +124,16 @@ const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tick
   'sourceFailStopMinutes','blockedStopMinutes','logoImage','logoPosition','logoSizePct','logoOpacityPct'];
 
 async function loadSettings() {
-  const { settings } = await api('/settings');
+  const { settings, nginx } = await api('/settings');
   DATA.settings = settings;
+  // مسار Nginx المحلول فعلياً من الإعدادات، مع تنبيه إن كان الملف غير موجود.
+  const nginxNote = $('#nginxPathNote');
+  if (nginxNote) {
+    nginxNote.textContent = nginx && nginx.binary
+      ? (nginx.binaryExists ? 'مسار Nginx المستخدم: ' : 'لم يُعثر على ملف Nginx في: ') + nginx.binary
+      : '';
+    nginxNote.classList.toggle('warn', !!(nginx && !nginx.binaryExists));
+  }
   for (const k of S_KEYS) {
     const el = $('#s_' + k);
     if (!el) continue;
@@ -174,8 +183,17 @@ async function regenerateNginx() {
   } catch (e) { toast(e.message, true); }
 }
 
-
-
+// أوامر Nginx تُنفَّذ على المسار المحفوظ في «مسار Nginx» (settings.nginxPath).
+async function nginxAction(action) {
+  const labels = { test: 'اختبار', restart: 'إعادة تشغيل' };
+  if (action === 'restart' && !confirm('إعادة تشغيل Nginx بالمسار المحفوظ في الإعدادات؟')) return;
+  try {
+    const r = await api('/nginx/action', { method: 'POST', body: { action } });
+    alert((r.message || '') + (r.output ? '\n\n' + r.output : ''));
+    if (r.ok) toast('تم ' + (labels[action] || action) + ' Nginx');
+    else toast(r.message || 'فشل أمر Nginx', true);
+  } catch (e) { toast(e.message, true); }
+}
 
 // ---------------- النسخ الاحتياطي ----------------
 function downloadBackup() {
@@ -827,7 +845,7 @@ function errCell(c) {
 }
 
 // تسمية جودة القناة للعرض (copy = نسخ المصدر)
-function qualityLabel(q) { return (!q || q === 'copy') ? 'نسخ المصدر' : q; }
+function qualityLabel(q) { return (!q || q === 'copy') ? 'نسخ المصدر' : (q === 'auto' ? 'تلقائي' : q); }
 // تنسيق حجم البيانات بشكل مقروء
 function fmtBytes(n) {
   n = Number(n) || 0;
