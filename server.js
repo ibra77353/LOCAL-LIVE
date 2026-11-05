@@ -1536,7 +1536,7 @@ const server = http.createServer(async (req, res) => {
     const hlsBytesTotal = hlsFileSizes().total;
     return send(res, 200, {
       ok: true,
-      cpuCount: os.cpus().length, cpuLoad: os.loadavg()[0] || 0,
+      cpuCount: os.cpus().length, cpuPercent, cpuLoad: os.loadavg()[0] || 0,
       uptimeSec: Math.floor(process.uptime()), memoryMB: Math.round(process.memoryUsage().rss / 1048576),
       currentViewers: channels.reduce((sum, c) => sum + (c.viewers || 0), 0),
       watchedChannels: channels.filter(c => c.viewers > 0).length,

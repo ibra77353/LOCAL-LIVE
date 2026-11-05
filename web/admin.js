@@ -834,7 +834,9 @@ async function refreshDashboard() {
   if (!grid) return;
   let m;
   try { m = await api('/metrics'); } catch (e) { return; }
-  const cpuPct = m.cpuCount ? Math.min(100, Math.round((m.cpuLoad / m.cpuCount) * 100)) : 0;
+  // نسبة المعالج من عدّادات النظام الحقيقية (os.cpus)؛ معدل الحِمل loadavg ليس
+  // نسبة استهلاك، وهو صفر دائماً على ويندوز فلا يصلح لهذه البطاقة.
+  const cpuPct = Number.isFinite(m.cpuPercent) ? m.cpuPercent : 0;
   grid.innerHTML = [
     dashCard('green-accent', '⏱️', fmtDuration(m.uptimeSec), '', 'مدة التشغيل', 'منذ آخر إقلاع', false),
     dashCard('amber-accent', '🖥️', cpuPct, '%', 'استهلاك المعالج', `${m.cpuCount} نواة · ${m.memoryMB} MB ذاكرة`, false),

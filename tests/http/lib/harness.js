@@ -82,7 +82,10 @@ async function startTestServer(options = {}) {
   const logsDir = path.join(dir, 'logs');
   const hlsDir = path.join(dir, 'hls');
   const uploadsDir = path.join(dir, 'srv', 'uploads');
-  for (const folder of [logsDir, hlsDir, uploadsDir]) fs.mkdirSync(folder, { recursive: true });
+  // سجلات Nginx معزولة داخل مجلد الاختبار: بلا هذا العزل يقرأ الخادم سجلّ
+  // التشغيل الحقيقي (NGINX_LOG_DIR من البيئة) فتتلوّث أرقام الاختبار.
+  const nginxLogsDir = path.join(dir, 'nginx', 'logs');
+  for (const folder of [logsDir, hlsDir, uploadsDir, nginxLogsDir]) fs.mkdirSync(folder, { recursive: true });
 
   const env = Object.assign({}, process.env, {
     PORT: String(port),
@@ -91,6 +94,7 @@ async function startTestServer(options = {}) {
     HLS_ROOT: hlsDir,
     UPLOADS_ROOT: uploadsDir,
     DATA_FILE: path.join(dir, 'data.json'),
+    NGINX_LOG_DIR: nginxLogsDir,
   });
 
   const child = spawn(process.execPath, ['server.js'], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
