@@ -517,15 +517,10 @@ function send(res, code, data) {
 function getStatus(channelId) {
   const channel = channelId ? data.channels.find(c => c.id === channelId) : activeChannel();
   const nginxPort = Number(data.settings.nginxPort) || 80;
-  // Nginx جزء من التشغيل على Windows فقط (nginx.exe وملفات BAT). على Linux
-  // (Ubuntu/Debian وDocker) يخدم Node الواجهة والبث مباشرةً، فلا يكون غياب Nginx
-  // خطأً في النشر ولا يُطلق تحذيراً؛ وإن كان يعمل فعلاً يظهر «يعمل» كما هو.
-  const nginxRequired = process.platform === 'win32';
   const base = {
     siteName: data.settings.siteName || cfg.siteName || 'البرنس لايف',
     nginx: nginxListening,
-    nginxRequired,
-    nginxBinding: { listening: nginxListening, port: nginxPort, required: nginxRequired, reason: !nginxRequired || nginxListening ? '' : `لم يستجب أي خدمة على المنفذ ${nginxPort}` },
+    nginxBinding: { listening: nginxListening, port: nginxPort, reason: nginxListening ? '' : `لم يستجب أي خدمة على المنفذ ${nginxPort}` },
     uptime: Math.floor(process.uptime()),
     memoryMB: Math.round(process.memoryUsage().rss / 1048576),
     license: { valid: true, plan: 'محلي' },
