@@ -47,6 +47,70 @@
     "logoSizePct": 10,
     "logoOpacityPct": 50
   },
-  "sources": [],
-  "channels": []
+  "sources": [
+    {
+      "id": "src_e9aae9bfe3",
+      "name": "ٍHD",
+      "type": "screen",
+      "enabled": true,
+      "videoSize": "",
+      "fps": 15
+    },
+    {
+      "id": "src_b9e2e7df74",
+      "name": "ٍHD",
+      "type": "screen",
+      "enabled": true,
+      "videoSize": "",
+      "fps": 15
+    },
+    {
+      "id": "src_27555410f1",
+      "name": "ٍHD",
+      "type": "screen",
+      "enabled": true,
+      "videoSize": "",
+      "fps": 15
+    }
+  ],
+  "channels": [
+    {
+      "id": "ch_17f673f366",
+      "chanId": "ch_17f673f366",
+      "name": "ٍHD",
+      "category": "عام",
+      "sourceId": "src_e9aae9bfe3",
+      "cover": "",
+      "enabled": true,
+      "quality": "auto",
+      "fps": "20",
+      "bitrate": "500k",
+      "encodingMode": "bitrate",
+      "crfValue": "",
+      "autoStart": false,
+      "alwaysOn": false,
+      "logoEnabled": false,
+      "sortOrder": 0,
+      "url": "/hls/ch_17f673f366/index.m3u8"
+    },
+    {
+      "id": "ch_c3d256d9df",
+      "chanId": "ch_c3d256d9df",
+      "name": "ٍHD",
+      "category": "عام",
+      "sourceId": "src_b9e2e7df74",
+      "cover": "",
+      "enabled": true,
+      "quality": "auto",
+      "fps": "",
+      "bitrate": "",
+      "encodingMode": "",
+      "crfValue": "",
+      "autoStart": false,
+      "alwaysOn": false,
+      "logoEnabled": false,
+      "sortOrder": 1,
+      "url": "/hls/ch_c3d256d9df/index.m3u8"
+    }
+  ]
 }
