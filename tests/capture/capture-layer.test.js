@@ -15,23 +15,38 @@ const dshow = require('../../lib/capture/dshow');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 
+// هذا الملف يوثّق محرك Windows (DirectShow). الاختبارات تعمل على Linux، لذلك
+// نمرّر 'win32' صراحةً لكل استدعاء حتى لا يتأثر ناتجها بالمحرك الافتراضي للمنصة.
+const winCapture = {
+  deviceListArgs: () => capture.deviceListArgs('win32'),
+  parseDeviceList: (output) => capture.parseDeviceList(output, 'win32'),
+  describeDevices: (devices, err, output) => capture.describeDevices(devices, err, output, 'win32'),
+  capabilitiesArgs: (device) => capture.capabilitiesArgs(device, 'win32'),
+  parseCapabilities: (output) => capture.parseCapabilities(output, 'win32'),
+  usbInputArgs: (source) => capture.usbInputArgs(source, 'win32'),
+  testVideoArgs: (body) => capture.testVideoArgs(body, 'win32'),
+  testAudioArgs: (device) => capture.testAudioArgs(device, 'win32'),
+};
+
 // ---------------------------------------------------------------- تسجيل المحركات
-test('المحرك المسجّل لويندوز هو DirectShow', () => {
+test('المحرك المسجّل لويندوز هو DirectShow، ولينكس هو V4L2', () => {
   assert.equal(capture.engineFor('win32').name, 'dshow');
-  assert.deepEqual(capture.registeredEngines(), ['win32']);
+  assert.equal(capture.engineFor('linux').name, 'v4l2');
+  assert.deepEqual(capture.registeredEngines(), ['win32', 'linux']);
 });
 
-test('الأنظمة غير المسجّلة تعود إلى DirectShow (نفس سلوك ما قبل الاستخراج)', () => {
-  // المرحلة الأولى لا تضيف محرك Linux؛ العودة إلى dshow تُبقي السلوك مطابقاً
-  // للأصل على Linux: نفس الوسائط ونفس خطأ FFmpeg.
-  assert.equal(capture.engineFor('linux').name, 'dshow');
-  assert.equal(capture.engineFor('darwin').name, 'dshow');
-  assert.equal(capture.engineName('linux'), 'dshow');
+test('اختيار المحرك تلقائي حسب النظام وWindows يبقى DirectShow', () => {
+  assert.equal(capture.engineName('win32'), 'dshow');
+  assert.equal(capture.engineLabel('win32'), 'DirectShow (Windows)');
+  assert.equal(capture.engineName('linux'), 'v4l2');
+  // أي نظام POSIX غير مسجّل يُعامل بمحرك V4L2، ولا يمس ذلك مسار Windows.
+  assert.equal(capture.engineFor('darwin').name, 'v4l2');
+  assert.equal(capture.engineFor('freebsd').name, 'v4l2');
 });
 
 // ---------------------------------------------------------------- تعداد الأجهزة
 test('أمر تعداد الأجهزة مطابق للأصل حرفياً', () => {
-  assert.deepEqual(capture.deviceListArgs(), ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy']);
+  assert.deepEqual(winCapture.deviceListArgs(), ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy']);
 });
 
 test('تحليل مخرج تعداد الأجهزة يفصل الفيديو عن الصوت ويزيل التكرار', () => {
@@ -44,7 +59,7 @@ test('تحليل مخرج تعداد الأجهزة يفصل الفيديو عن
     '[dshow @ 000001] "Microphone (USB Audio)" (audio)',
     '[dshow @ 000001] Could not enumerate audio only (see option \'-list_options\').',
   ].join('\r\n');
-  const devices = capture.parseDeviceList(output);
+  const devices = winCapture.parseDeviceList(output);
   assert.deepEqual(devices.video, ['USB Video', 'Webcam HD']);
   assert.deepEqual(devices.audio, ['Digital Audio Interface (2- USB Digital Audio)', 'Microphone (USB Audio)']);
 });
@@ -52,12 +67,12 @@ test('تحليل مخرج تعداد الأجهزة يفصل الفيديو عن
 test('رسائل تعداد الأجهزة الثلاث تبقى كما هي في واجهة الـAPI', () => {
   const withDevices = { video: ['USB Video'], audio: [] };
   assert.equal(
-    capture.describeDevices(withDevices, null, 'x'),
+    winCapture.describeDevices(withDevices, null, 'x'),
     'قوائم الفيديو والصوت مستخرجة من أجهزة DirectShow التي يعرضها FFmpeg.'
   );
-  assert.equal(capture.describeDevices({ video: [], audio: [] }, null, 'x'), 'لم يعرض FFmpeg أي جهاز DirectShow متصل.');
+  assert.equal(winCapture.describeDevices({ video: [], audio: [] }, null, 'x'), 'لم يعرض FFmpeg أي جهاز DirectShow متصل.');
   assert.equal(
-    capture.describeDevices({ video: [], audio: [] }, new Error('boom'), ''),
+    winCapture.describeDevices({ video: [], audio: [] }, new Error('boom'), ''),
     'تعذر تشغيل فحص FFmpeg: boom'
   );
 });
@@ -65,7 +80,7 @@ test('رسائل تعداد الأجهزة الثلاث تبقى كما هي ف�
 // ---------------------------------------------------------------- قدرات الجهاز
 test('أمر استخراج القدرات مطابق للأصل', () => {
   assert.deepEqual(
-    capture.capabilitiesArgs('USB Video'),
+    winCapture.capabilitiesArgs('USB Video'),
     ['-hide_banner', '-f', 'dshow', '-list_options', 'true', '-i', 'video=USB Video']
   );
 });
@@ -76,7 +91,7 @@ test('تحليل قدرات الجهاز يستخرج الدقات ومعدلا�
     '[dshow @ 000001]   pixel_format=yuyv422  min s=640x480 fps=30 max s=1280x720 fps=30',
     '[dshow @ 000001]   pixel_format=nv12  min s=320x240 fps=15 max s=640x480 fps=30',
   ].join('\n');
-  const caps = capture.parseCapabilities(output);
+  const caps = winCapture.parseCapabilities(output);
 
   assert.deepEqual(caps.videoSizes, ['1920x1080', '1280x720', '640x480', '320x240']);
   assert.ok(caps.frameRates.includes('30'));
@@ -90,14 +105,14 @@ test('تحليل قدرات الجهاز يستخرج الدقات ومعدلا�
 });
 
 test('تحليل القدرات يعيد قائمة فارغة عند مخرج لا يحتوي أوضاعاً', () => {
-  const caps = capture.parseCapabilities('dummy: Immediate exit requested');
+  const caps = winCapture.parseCapabilities('dummy: Immediate exit requested');
   assert.deepEqual(caps.videoSizes, []);
   assert.equal(caps.recommended.videoSize, '1280x720');
 });
 
 // ---------------------------------------------------------------- وسائط الإدخال
 test('وسائط USB كاملة تطابق أمراً مرجعياً منسوخاً من الإصدار السابق', () => {
-  const args = capture.usbInputArgs({
+  const args = winCapture.usbInputArgs({
     videoDevice: 'USB Video Test Device',
     audioDevice: 'USB Audio Test Device',
     videoSize: '1280x720',
@@ -113,26 +128,26 @@ test('وسائط USB كاملة تطابق أمراً مرجعياً منسوخ�
 });
 
 test('وضع الالتقاط الآمن لا يفرض الدقة ولا معدل الإطارات', () => {
-  const args = capture.usbInputArgs({ videoDevice: 'USB Video', videoSize: '1920x1080', fps: 60, captureSafeMode: true });
+  const args = winCapture.usbInputArgs({ videoDevice: 'USB Video', videoSize: '1920x1080', fps: 60, captureSafeMode: true });
   assert.deepEqual(args, ['-f', 'dshow', '-rtbufsize', '256M', '-i', 'video=USB Video']);
 });
 
 test('pixelFormat الحقيقي يمرَّر بـ -pixel_format، وmjpeg يمرَّر بـ -vcodec', () => {
-  const pixel = capture.usbInputArgs({ videoDevice: 'USB Video', videoSize: '640x480', fps: 15, pixelFormat: 'yuyv422' });
+  const pixel = winCapture.usbInputArgs({ videoDevice: 'USB Video', videoSize: '640x480', fps: 15, pixelFormat: 'yuyv422' });
   assert.deepEqual(pixel.slice(0, 10), [
     '-f', 'dshow', '-rtbufsize', '256M',
     '-framerate', '15', '-video_size', '640x480',
     '-pixel_format', 'yuyv422',
   ]);
 
-  const codec = capture.usbInputArgs({ videoDevice: 'USB Video', pixelFormat: 'mjpeg' });
+  const codec = winCapture.usbInputArgs({ videoDevice: 'USB Video', pixelFormat: 'mjpeg' });
   assert.ok(codec.includes('-vcodec'));
   assert.equal(codec[codec.indexOf('-vcodec') + 1], 'mjpeg');
   assert.equal(codec.includes('-pixel_format'), false);
 });
 
 test('القيم التالفة في data.json لا تصل إلى FFmpeg', () => {
-  const args = capture.usbInputArgs({
+  const args = winCapture.usbInputArgs({
     videoDevice: 'USB Video',
     videoSize: 'not-a-size',
     pixelFormat: 'bad format!',
@@ -144,16 +159,16 @@ test('القيم التالفة في data.json لا تصل إلى FFmpeg', () =>
   assert.equal(args.includes('-vcodec'), false);
   // fps الغائب يستخدم القيمة الاحتياطية 30، والنص الفارغ يُقيَّد إلى 1 — كما في clampNumber الأصلية.
   assert.equal(args[args.indexOf('-framerate') + 1], '30');
-  const emptyFps = capture.usbInputArgs({ videoDevice: 'USB Video', fps: '' });
+  const emptyFps = winCapture.usbInputArgs({ videoDevice: 'USB Video', fps: '' });
   assert.equal(emptyFps[emptyFps.indexOf('-framerate') + 1], '1');
 });
 
 // ---------------------------------------------------------------- اختبار الالتقاط
 test('وسائط اختبار التقاط الصوت والفيديو مطابقة للأصل', () => {
-  assert.deepEqual(capture.testAudioArgs('USB Audio'), [
+  assert.deepEqual(winCapture.testAudioArgs('USB Audio'), [
     '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-i', 'audio=USB Audio', '-t', '3', '-f', 'null', '-',
   ]);
-  assert.deepEqual(capture.testVideoArgs({ videoDevice: 'USB Video', audioDevice: 'USB Audio', videoSize: '1280x720', fps: 30, pixelFormat: 'mjpeg' }), [
+  assert.deepEqual(winCapture.testVideoArgs({ videoDevice: 'USB Video', audioDevice: 'USB Audio', videoSize: '1280x720', fps: 30, pixelFormat: 'mjpeg' }), [
     '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M',
     '-framerate', '30', '-video_size', '1280x720',
     '-vcodec', 'mjpeg',
@@ -162,11 +177,11 @@ test('وسائط اختبار التقاط الصوت والفيديو مطاب�
 });
 
 test('اختبار الالتقاط يرفض المدخلات غير الصالحة بنفس رسائل الأصل', () => {
-  assert.throws(() => capture.testAudioArgs(''), /اختر جهاز صوت صالحاً/);
-  assert.throws(() => capture.testAudioArgs('a\nb'), /اختر جهاز صوت صالحاً/);
-  assert.throws(() => capture.testVideoArgs({}), /جهاز الفيديو غير صالح/);
-  assert.throws(() => capture.testVideoArgs({ videoDevice: 'USB Video', videoSize: 'big' }), /إعدادات الالتقاط غير صالحة/);
-  assert.throws(() => capture.testVideoArgs({ videoDevice: 'USB Video', fps: 120 }), /إعدادات الالتقاط غير صالحة/);
+  assert.throws(() => winCapture.testAudioArgs(''), /اختر جهاز صوت صالحاً/);
+  assert.throws(() => winCapture.testAudioArgs('a\nb'), /اختر جهاز صوت صالحاً/);
+  assert.throws(() => winCapture.testVideoArgs({}), /جهاز الفيديو غير صالح/);
+  assert.throws(() => winCapture.testVideoArgs({ videoDevice: 'USB Video', videoSize: 'big' }), /إعدادات الالتقاط غير صالحة/);
+  assert.throws(() => winCapture.testVideoArgs({ videoDevice: 'USB Video', fps: 120 }), /إعدادات الالتقاط غير صالحة/);
 });
 
 // ---------------------------------------------------------------- التقاط الشاشة

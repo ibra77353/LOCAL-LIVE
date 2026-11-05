@@ -661,6 +661,9 @@ function buildArgs(channel, forceTranscode = false) {
   const sourceType = String(source.type || 'usb').toLowerCase();
   const isNetwork = ['http-hls','http','hls','network','rtsp'].includes(sourceType);
   const audioDevice = source.audioDevice || '';
+  // فهرس إدخال الصوت حين يأتي من إدخال ثانٍ (ALSA على Linux)؛ null يعني أن الصوت
+  // داخل الإدخال الأول كما في DirectShow.
+  let captureAudioInput = null;
   const args = ['-hide_banner','-loglevel','warning','-thread_queue_size','512'];
   if (isNetwork) {
     const streamUrl = validateNetworkStreamUrl(source.streamUrl || source.url || '');
@@ -676,13 +679,17 @@ function buildArgs(channel, forceTranscode = false) {
     // التقاط الشاشة (gdigrab/x11grab) يأتي من طبقة الالتقاط.
     args.push(...capture.screenInputArgs(source));
   } else {
-    // وسائط جهاز الالتقاط (DirectShow) تأتي من طبقة الالتقاط.
-    args.push(...capture.usbInputArgs(source));
+    // وسائط جهاز الالتقاط تأتي من طبقة الالتقاط: DirectShow على Windows،
+    // وV4L2 + ALSA على Linux (إدخال صوت منفصل).
+    const plan = capture.captureInputArgs(source);
+    args.push(...plan.args);
+    captureAudioInput = plan.audioInputIndex;
   }
+  const audioMap = captureAudioInput === null ? '0:a:0?' : `${captureAudioInput}:a:0?`;
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
   if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 360p أو 480p أو 720p.');
   if (isCopyQuality(channel.quality) && isNetwork && !forceTranscode) {
-    args.push('-map','0:v:0','-map','0:a:0?','-c:v','copy','-c:a','aac','-b:a',cfg.audioBitrate||'96k');
+    args.push('-map','0:v:0','-map',audioMap,'-c:v','copy','-c:a','aac','-b:a',cfg.audioBitrate||'96k');
   } else {
     const encoder = resolveEncoderSettings(settings);
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
@@ -690,7 +697,7 @@ function buildArgs(channel, forceTranscode = false) {
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
     if(settings.x264QualityMode===true) args.push('-crf','23');
     else args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize','1000k');
-    if (isNetwork || audioDevice || sourceType === 'file') args.push('-map','0:a:0?','-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
+    if (isNetwork || audioDevice || sourceType === 'file') args.push('-map',audioMap,'-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
   }
   const dir = channelHlsDir(channel); fs.mkdirSync(dir,{recursive:true});
@@ -825,41 +832,51 @@ function stopStream(origin = '') {
   return {ok:true,message:'تم إرسال أوامر إيقاف جميع القنوات',results};
 }
 
+// تنفيذ أمر FFmpeg يمرّره محرك الالتقاط (DirectShow يحتاجه لتعداد الأجهزة).
+function runFfmpegArgs(args) {
+  return new Promise(resolve => {
+    execFile(ffmpegBin(), args, { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => resolve({ err, output: `${stderr || ''}\n${stdout || ''}`.trim() }));
+  });
+}
+
 function listDevices(res) {
-  execFile(
-    ffmpegBin(),
-    capture.deviceListArgs(),
-    { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
-    (err, stdout, stderr) => {
-      const output = `${stderr || ''}\n${stdout || ''}`.trim();
-      // تعداد الأجهزة وتحليل مخرجاته في طبقة الالتقاط؛ هنا تُبنى استجابة الـAPI فقط.
-      const devices = capture.parseDeviceList(output);
-      const video = devices.video;
-      const audio = devices.audio;
-      if (res) {
-        send(res, 200, {
-          ok: true,
-          video: video.map(name => ({ value: name, label: name })),
-          audio: audio.map(name => ({ value: name, label: name })),
-          devices: { video, audio },
-          output: output || (err ? err.message : 'لم تظهر أجهزة'),
-          note: capture.describeDevices(devices, err, output)
-        });
-      } else {
-        console.log(output || (err ? err.message : 'لم تظهر أجهزة'));
-      }
-    }
-  );
+  // التعداد وتحليل مخرجاته في طبقة الالتقاط؛ هنا تُبنى استجابة الـAPI فقط.
+  // DirectShow يعدّد عبر FFmpeg، وV4L2 يقرأ /dev و/sys و/proc مباشرة.
+  capture.discoverDevices(process.platform, runFfmpegArgs).then(result => {
+    if (!res) return console.log(result.output || 'لم تظهر أجهزة');
+    return send(res, 200, {
+      ok: true,
+      video: result.video,
+      audio: result.audio,
+      devices: { video: result.video.map(v => v.value), audio: result.audio.map(a => a.value) },
+      output: result.output || 'لم تظهر أجهزة',
+      note: result.note,
+      engine: capture.engineName()
+    });
+  }).catch(err => {
+    if (!res) return console.log(err.message);
+    return send(res, 200, {
+      ok: true, video: [], audio: [], devices: { video: [], audio: [] },
+      output: err.message, note: `تعذر فحص أجهزة الالتقاط: ${err.message}`, engine: capture.engineName()
+    });
+  });
 }
 
 function queryCaptureCapabilities(videoDevice, callback) {
   if (!videoDevice || String(videoDevice).length > 300 || /[\r\n\0]/.test(videoDevice)) {
     return callback(new Error('اسم جهاز الفيديو غير صالح'));
   }
-  execFile(ffmpegBin(), capture.capabilitiesArgs(videoDevice),
+  let capabilityArgs;
+  try {
+    capabilityArgs = capture.capabilitiesArgs(videoDevice);
+  } catch (err) {
+    return callback(err);
+  }
+  execFile(ffmpegBin(), capabilityArgs,
     { windowsHide: true, timeout: 20000, maxBuffer: 2*1024*1024 }, (err, stdout, stderr) => {
       const output = `${stderr || ''}\n${stdout || ''}`.trim();
-      // تحليل قدرات الجهاز انتقل إلى lib/capture/dshow.js.
+      // تحليل قدرات الجهاز في محرك الالتقاط المناسب للنظام (dshow/v4l2).
       const capabilities = capture.parseCapabilities(output);
       if (!capabilities.videoSizes.length) {
         const error = new Error(err && !output ? `تعذر تشغيل FFmpeg: ${err.message}` : 'لم يعرض FFmpeg أو تعريف الجهاز أوضاع فيديو قابلة للاستخراج');
@@ -1304,7 +1321,7 @@ const server = http.createServer(async (req, res) => {
     const viewers = channels.reduce((sum,c)=>sum+(c.viewers||0),0);
     let hlsBytes = 0;
     try { for (const dir of fs.readdirSync(HLS_DIR,{withFileTypes:true})) if(dir.isDirectory()) for(const name of fs.readdirSync(path.join(HLS_DIR,dir.name))) if(/\.(ts|m3u8|m4s|mp4)$/i.test(name)){try{hlsBytes+=fs.statSync(path.join(HLS_DIR,dir.name,name)).size;}catch{}} } catch {}
-    return send(res, 200, { ok: true, stats: { channels: { total: channels.length, running: channels.filter(c => c.live).length, error: channels.filter(c => c.status === 'error').length }, viewers, totalViewers: viewers, cpuPercent, memoryMb: Math.round(process.memoryUsage().rss/1048576), platform: process.platform, node: process.version, uptimeSeconds: Math.floor(process.uptime()), genBps: 0, outBps: 0, hlsBytes, servedBytes, devices: { total: data.sources.length, present: data.sources.filter(x => x.enabled !== false).length, video: data.sources.filter(x => x.enabled !== false).length, audio: data.sources.filter(x => x.enabled !== false && x.audioDevice).length }, nginx: null }, channels });
+    return send(res, 200, { ok: true, stats: { channels: { total: channels.length, running: channels.filter(c => c.live).length, error: channels.filter(c => c.status === 'error').length }, viewers, totalViewers: viewers, cpuPercent, memoryMb: Math.round(process.memoryUsage().rss/1048576), platform: process.platform, captureEngine: capture.engineName(), node: process.version, uptimeSeconds: Math.floor(process.uptime()), genBps: 0, outBps: 0, hlsBytes, servedBytes, devices: { total: data.sources.length, present: data.sources.filter(x => x.enabled !== false).length, video: data.sources.filter(x => x.enabled !== false).length, audio: data.sources.filter(x => x.enabled !== false && x.audioDevice).length }, nginx: null }, channels });
   }
   if (url.pathname.startsWith('/api/')) {
     // Continue to legacy routes below; unknown routes get a consistent JSON response.
@@ -1326,7 +1343,7 @@ const server = http.createServer(async (req, res) => {
     const videoDevice = url.searchParams.get('videoDevice') || '';
     return queryCaptureCapabilities(videoDevice, (err, result) => {
       if (err) return send(res, 422, { ok: false, error: err.message, output: err.output || '' });
-      return send(res, 200, { ok: true, capabilities: result.capabilities, note: 'القدرات مستخرجة من مخرجات FFmpeg DirectShow. قد تختلف الخيارات الفعلية حسب تعريف القطعة.' });
+      return send(res, 200, { ok: true, capabilities: result.capabilities, note: capture.capabilitiesNote(), engine: capture.engineName() });
     });
   }
 

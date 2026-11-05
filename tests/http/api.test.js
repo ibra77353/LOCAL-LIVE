@@ -15,6 +15,13 @@ let srv;
 let api;
 const state = { sourceId: '', channelId: '', networkSourceId: '' };
 
+// أسماء أجهزة الاختبار تتبع محرك الالتقاط الخاص بنظام التشغيل:
+// DirectShow يستخدم أسماء أجهزة، وV4L2 يستخدم مسارات /dev/video* مع ALSA للصوت.
+const IS_WIN = process.platform === 'win32';
+const VIDEO_DEVICE = IS_WIN ? 'USB Video Test Device' : '/dev/video0';
+const VIDEO_DEVICE_RENAMED = IS_WIN ? 'USB Video Renamed' : '/dev/video1';
+const AUDIO_DEVICE = IS_WIN ? 'USB Audio Test Device' : 'plughw:0';
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function waitFor(predicate, timeoutMs = 5000, stepMs = 100) {
@@ -129,8 +136,8 @@ test('POST /api/sources يرفض المدخلات غير الصالحة', async 
 
 test('POST /api/sources ينشئ مصدر USB ومصدر شبكي', async () => {
   const usb = await api.post('/api/sources', {
-    name: 'USB Test', type: 'usb', videoDevice: 'USB Video Test Device',
-    audioDevice: 'USB Audio Test Device', videoSize: '1280x720', fps: 30, vcodec: 'mjpeg',
+    name: 'USB Test', type: 'usb', videoDevice: VIDEO_DEVICE,
+    audioDevice: AUDIO_DEVICE, videoSize: '1280x720', fps: 30, vcodec: 'mjpeg',
   });
   assert.equal(usb.status, 201);
   assert.equal(usb.json.ok, true);
@@ -149,10 +156,10 @@ test('POST /api/sources ينشئ مصدر USB ومصدر شبكي', async () => 
 });
 
 test('PUT /api/sources/:id يحدّث المصدر ويرفض المجهول', async () => {
-  const ok = await api.put(`/api/sources/${state.sourceId}`, { videoDevice: 'USB Video Renamed' });
+  const ok = await api.put(`/api/sources/${state.sourceId}`, { videoDevice: VIDEO_DEVICE_RENAMED });
   assert.equal(ok.status, 200);
-  assert.equal(ok.json.source.videoDevice, 'USB Video Renamed');
-  await api.put(`/api/sources/${state.sourceId}`, { videoDevice: 'USB Video Test Device' });
+  assert.equal(ok.json.source.videoDevice, VIDEO_DEVICE_RENAMED);
+  await api.put(`/api/sources/${state.sourceId}`, { videoDevice: VIDEO_DEVICE });
 
   const missing = await api.put('/api/sources/src_doesnotexist', { name: 'x' });
   assert.equal(missing.status, 404);
@@ -220,8 +227,8 @@ test('POST /api/channels/:id/start يبني وسائط FFmpeg ويسجّل ال�
     return res.json.logs.includes('FFmpeg args:') ? res.json.logs : null;
   }, 5000);
   assert.ok(logs, 'يجب أن يظهر سطر وسائط FFmpeg في السجل');
-  assert.match(logs, /-f dshow/);
-  assert.match(logs, /video=USB Video Test Device/);
+  assert.match(logs, IS_WIN ? /-f dshow/ : /-f v4l2/);
+  assert.match(logs, IS_WIN ? /video=USB Video Test Device/ : /-i \/dev\/video0/);
 
   const status = await waitFor(async () => {
     const res = await api.get(`/api/status?channelId=${state.channelId}`);

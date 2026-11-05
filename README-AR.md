@@ -6,23 +6,51 @@
 
 ## ما تتضمنه هذه النسخة
 
-- إدارة عدة مصادر USB/DirectShow وHTTP/HLS وRTSP.
+- إدارة عدة مصادر التقاط (DirectShow على Windows، V4L2 على Linux) وHTTP/HLS وRTSP.
 - إنشاء قناة تلقائياً عند إضافة مصدر جديد.
 - إدارة قنوات متعددة، لكل قناة عملية FFmpeg ومجلد HLS مستقل.
 - إعدادات مستقلة لكل قناة: الجودة وFPS وBitrate وautoStart وalwaysOn.
 - لوحة إعدادات للنظام تشمل الترميز وHLS والمشغل وإعادة التشغيل والخمول والمسارات والمنافذ.
-- اكتشاف أجهزة DirectShow واستخراج قدراتها واختبار الفيديو والصوت قبل اعتماد الإعداد.
+- اكتشاف أجهزة الالتقاط واستخراج قدراتها واختبار الفيديو والصوت قبل اعتماد الإعداد (DirectShow أو V4L2/ALSA).
 - واجهة مشاهد تعرض القنوات المفعلة وتبدّل بينها.
 - واجهات API إدارية محمية بالمصادقة.
 
+## طبقة الالتقاط (Capture Abstraction Layer)
+
+كل تفاصيل الالتقاط معزولة في `lib/capture/`، ولا يبني `server.js` أي وسيط FFmpeg خاص بجهاز التقاط بنفسه:
+
+| الملف | الدور |
+| --- | --- |
+| `lib/capture/index.js` | الواجهة الموحّدة واختيار المحرك حسب نظام التشغيل |
+| `lib/capture/dshow.js` | محرك Windows (DirectShow) — نفس منطق الإصدار السابق بلا تغيير |
+| `lib/capture/v4l2.js` | محرك Linux: Video4Linux2 للفيديو + ALSA للصوت |
+| `lib/capture/capabilities.js` | تجميع قدرات الجهاز والتوصية (مشترك بين المحركين) |
+| `lib/capture/screen.js` | التقاط الشاشة: gdigrab على Windows وx11grab على Linux |
+
+- **اختيار المحرك:** `win32 → DirectShow`، و`linux → V4L2`، وأي نظام POSIX آخر يُعامل كمحرك V4L2. سلوك Windows لم يتغيّر إطلاقاً.
+- **تعداد الأجهزة:** على Windows عبر `-list_devices` في FFmpeg؛ وعلى Linux بقراءة `/dev/video*` و`/sys/class/video4linux/*/name` وبطاقات الصوت من `/proc/asound/cards` دون تشغيل FFmpeg.
+- **الصوت:** DirectShow يحمل الصوت مع الفيديو في إدخال واحد (`video=...:audio=...`)، أما V4L2 فلا يحمل صوتاً، فتُضاف طبقة ALSA كإدخال ثانٍ (`-f alsa -i plughw:N`) مع `-map 1:a:0?`. الطبقة تُبلّغ الخادم بفهرس إدخال الصوت (`audioInputIndex`) بدل أن يعرف التفاصيل.
+- **إضافة نظام جديد:** ملف محرك يوفّر الدوال نفسها (`discover`, `capabilitiesArgs`, `inputPlan`, `testVideoArgs`, `testAudioArgs`) + سطر تسجيل في `ENGINES` داخل `lib/capture/index.js`.
+
+### التشغيل على Linux
+
+```bash
+sudo apt install ffmpeg        # يجب أن يحوي دعم v4l2 وalsa
+PORT=3000 HOST=0.0.0.0 node server.js
+```
+
+- اختر جهاز الفيديو من القائمة كـ `/dev/video0`، وجهاز الصوت كـ `plughw:1` أو `default`.
+- تأكد من صلاحية قراءة الجهاز للمستخدم المشغّل (عضوية مجموعة `video` أو `audio` عند الحاجة).
+- الكشف يعمل بلا جهاز: `GET /api/devices` يعيد `engine` ورسالة توضّح ما وُجد.
+
 ## متطلبات التشغيل
 
-- Windows 10/11 64-bit.
+- Windows 10/11 64-bit، أو Linux مع `v4l2` و`alsa` (انظر «التشغيل على Linux»).
 - Node.js 18 أو أحدث.
-- FFmpeg build يدعم DirectShow وlibx264 وHLS.
+- FFmpeg build يدعم DirectShow (Windows) أو v4l2/alsa (Linux)، مع libx264 وHLS.
 - FFprobe (موصى به للتحقق من توافق codecs).
 - Nginx for Windows إذا أردت تقديم الواجهة والبث عبر منفذ Nginx.
-- كرت التقاط USB أو مصدر HTTP/HLS أو RTSP متاح للخادم.
+- كرت التقاط USB (أو `/dev/video*` على Linux) أو مصدر HTTP/HLS أو RTSP متاح للخادم.
 
 ## الإعداد الأولي
 
@@ -93,7 +121,7 @@
 - وضع «نسخ المصدر» دون إعادة ترميز متاح فقط للمصادر الشبكية في هذه النسخة، وقد يفشل إذا كانت codecs غير متوافقة مع HLS MPEG-TS. اختر 240p/360p/480p/720p عند الحاجة إلى إعادة الترميز.
 - عدد القنوات المتزامنة تحدده قدرة CPU وRAM وأجهزة الالتقاط وعرض الشبكة.
 - الدخول إلى اللوحة يتم داخل الصفحة عبر `POST /api/login` ويُصدر كوكي جلسة HttpOnly موقّعاً صالحاً 12 ساعة ويُبطَل فوراً عند `POST /api/logout` (بحد أقصى 8 محاولات فاشلة لكل عنوان كل 10 دقائق)؛ ولا يوجد Basic Auth: الجلسة هي المصادقة الوحيدة، وسكربتات الجهاز (مثل `scripts/stop.bat`) تستخدم رمز التحكّم المحلي `run/control.token`. اللوحة مناسبة لشبكة محلية موثوقة فقط؛ لا تعرّضها مباشرة للإنترنت.
-- هذه مرشح إصدار 8.0.1. ما زال يلزم اختبار الالتقاط الفعلي من أجهزة DirectShow وقواعد جدار الحماية على جهاز Windows حقيقي.
+- هذه مرشح إصدار 8.0.1. ما زال يلزم اختبار الالتقاط الفعلي من أجهزة DirectShow على Windows 10، ومن أجهزة V4L2/ALSA على Linux، وقواعد جدار الحماية على جهاز Windows حقيقي.
 
 
 ## فحص الحزمة

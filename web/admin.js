@@ -22,7 +22,7 @@ const CH_QUALITIES = [
 ];
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const TYPE_LABELS = {
-  usb: 'كرت التقاط USB / DirectShow', http: 'HTTP مباشر', hls: 'HLS / M3U8',
+  usb: 'كرت التقاط (DirectShow / V4L2)', http: 'HTTP مباشر', hls: 'HLS / M3U8',
 file: 'ملف فيديو محلي', screen: 'التقاط الشاشة'
 };
 const STATUS_LABELS = { running: 'تعمل ON AIR', stopped: 'متوقفة', starting: 'جارٍ التشغيل', stopping: 'جارٍ الإيقاف', restarting: 'إعادة تشغيل', error: 'خطأ', blocked: 'محظورة من المزوّد' };
