@@ -97,6 +97,20 @@ let lastServedSample = { bytes: 0, at: Date.now() };
 // (one physical DirectShow input) and exposes it as a configurable channel.
 // data.json هو المصدر الوحيد للحالة: settings + sources + channels.
 const DATA_PATH = path.resolve(process.env.DATA_FILE || path.join(ROOT, 'data.json'));
+// قيم CRF المعروضة في لوحة الإدارة (18 الأعلى جودة، 28 الأصغر حجماً).
+const CRF_VALUES = [18, 20, 23, 26, 28];
+const ENCODING_MODES = ['bitrate', 'crf'];
+// وضع الترميز النشط: «bitrate» يستهدف معدّل بت، و«crf» يثبّت الجودة بقيمة CRF.
+// x264QualityMode القديم يبقى مدعوماً ويُقرأ احتياطياً للملفات المحفوظة سابقاً.
+function encodingModeOf(settings) {
+  const mode = String((settings && settings.encodingMode) || '').toLowerCase();
+  if (ENCODING_MODES.includes(mode)) return mode;
+  return settings && settings.x264QualityMode === true ? 'crf' : 'bitrate';
+}
+function crfValueOf(settings) {
+  const value = Number(settings && settings.crfValue);
+  return CRF_VALUES.includes(value) ? value : 23;
+}
 // الإعدادات فقط هي الافتراضية؛ لا تُنشأ مصادر أو قنوات تلقائياً عند أول تشغيل.
 function defaultData() {
   return {
@@ -115,7 +129,12 @@ function defaultData() {
       capLevelToPlayerSize: cfg.capLevelToPlayerSize !== false,
       cpuSaverDefault: !!cfg.cpuSaverDefault,
       ffmpegPath: cfg.ffmpegPath || 'ffmpeg', ffprobePath: cfg.ffprobePath || 'ffprobe', nginxPath: cfg.nginxPath || 'nginx/nginx.exe',
-      x264QualityMode: !!cfg.x264QualityMode,
+      // وضع الترميز صار اختياراً صريحاً (Bitrate أو CRF) مع قيمة CRF محفوظة
+      // كانت مثبّتة على 23، وبِتريت افتراضي اختياري يسبق قيمة الجودة الثابتة.
+      encodingMode: encodingModeOf(cfg),
+      crfValue: crfValueOf(cfg),
+      defaultBitrate: /^\d{2,5}k$/.test(String(cfg.defaultBitrate || '').trim().toLowerCase()) ? String(cfg.defaultBitrate).trim().toLowerCase() : '',
+      x264QualityMode: encodingModeOf(cfg) === 'crf',
       outputWidth: Number(cfg.outputWidth) || 640,
       outputHeight: Number(cfg.outputHeight) || 360,
       outputFps: Number(cfg.outputFps) || 20,
@@ -876,7 +895,9 @@ function buildArgs(channel, forceTranscode = false) {
   const derivedWidth=Math.max(160,Math.round((srcW||1280)*outputHeight/(srcH||720)/2)*2);
   const outputWidth=isCopyQuality(qualityValue)?(srcW||1280):(presetHeight?derivedWidth:settingsWidth);
   const outputFps = clampNumber(Number(channel.fps) || settings.outputFps, 1, 60, 20);
-  const defaultBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
+  const tierBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
+  // أولوية البِتريت: بِتريت القناة ← البِتريت الافتراضي في الإعدادات ← قيمة الجودة.
+  const defaultBitrate = normalizeVideoBitrate(settings.defaultBitrate, tierBitrate);
   const videoBitrate = normalizeVideoBitrate(channel.bitrate, defaultBitrate);
   if (String(channel.bitrate || '').trim() && videoBitrate !== String(channel.bitrate).trim()) {
     logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
@@ -920,8 +941,9 @@ function buildArgs(channel, forceTranscode = false) {
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
       '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
-    if(settings.x264QualityMode===true){
-      args.push('-crf','23');
+    if (encodingModeOf(settings) === 'crf') {
+      // قيمة CRF المختارة في الإعدادات هي التي تُطبَّق فعلياً (كانت 23 ثابتة).
+      args.push('-crf', String(crfValueOf(settings)));
       // وضع CRF لا يستهدف معدّل بت ثابتاً؛ لذلك بتريت القناة كان يُتجاهل تماماً.
       // الآن يُطبَّق كسقف أعلى (VBV) حتى يبقى الإعداد مؤثراً دون فرض معدّل ثابت.
       if (String(channel.bitrate || '').trim()) {
@@ -1406,6 +1428,24 @@ const server = http.createServer(async (req, res) => {
     }
     const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','x264QualityMode','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs'];
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
+    // الوضع الصريح (encodingMode) هو المصدر؛ x264QualityMode يبقى متزامناً معه.
+    if (Object.prototype.hasOwnProperty.call(body,'x264QualityMode')) data.settings.encodingMode = data.settings.x264QualityMode ? 'crf' : 'bitrate';
+    if (Object.prototype.hasOwnProperty.call(body,'encodingMode')) {
+      const mode = String(body.encodingMode || '').toLowerCase();
+      if (!ENCODING_MODES.includes(mode)) return apiError(res,400,'وضع الترميز يجب أن يكون bitrate أو crf');
+      data.settings.encodingMode = mode;
+      data.settings.x264QualityMode = mode === 'crf';
+    }
+    if (Object.prototype.hasOwnProperty.call(body,'crfValue')) {
+      const crf = Number(body.crfValue);
+      if (!CRF_VALUES.includes(crf)) return apiError(res,400,`قيمة CRF يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);
+      data.settings.crfValue = crf;
+    }
+    if (Object.prototype.hasOwnProperty.call(body,'defaultBitrate')) {
+      const raw = String(body.defaultBitrate || '').trim().toLowerCase();
+      if (raw && !/^\d{2,5}k$/.test(raw)) return apiError(res,400,'معدّل البت الافتراضي يجب أن يكون مثل 500k أو 800k أو 1200k أو 2000k');
+      data.settings.defaultBitrate = raw;
+    }
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
       outputWidth:[160,3840], outputHeight:[120,2160], outputFps:[1,60], gopSeconds:[1,10],

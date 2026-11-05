@@ -119,9 +119,33 @@ async function boot() {
 const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
   'x264Threads','x264QualityMode','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','outputWidth','outputHeight','outputFps','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
+  'encodingMode','crfValue','defaultBitrate',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','autoStartOnDemand','idleStopEnabled','idleStopMinutes',
   'sourceFailStopMinutes','blockedStopMinutes','logoImage','logoPosition','logoSizePct','logoOpacityPct'];
+
+// وضع الترميز: يُظهر حقول الوضع المختار فقط (Bitrate أو CRF) ويعرض القيمة المطبّقة.
+function syncEncodingModeUI() {
+  const modeEl = $('#s_encodingMode');
+  const mode = modeEl ? modeEl.value : 'bitrate';
+  const bitrateBox = $('#bitrateBox'), crfBox = $('#crfBox');
+  if (bitrateBox) bitrateBox.style.display = mode === 'bitrate' ? '' : 'none';
+  if (crfBox) crfBox.style.display = mode === 'crf' ? '' : 'none';
+  const summary = $('#encModeSummary');
+  if (!summary) return;
+  // القيمة داخل اتجاه LTR حتى لا يعكس سياق RTL ترتيب «CRF 23» إلى «23 CRF».
+  if (mode === 'crf') {
+    const sel = $('#s_crfValue');
+    const desc = sel && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent.split('—').slice(1).join('—').trim() : '';
+    summary.innerHTML = 'الوضع المطبّق الآن: <span dir="ltr">CRF ' + (sel ? sel.value : '23') + '</span>' + (desc ? ' — ' + desc : '');
+  } else {
+    const bitrate = $('#s_defaultBitrate');
+    summary.innerHTML = 'الوضع المطبّق الآن: <span dir="ltr">Bitrate ' + (bitrate && bitrate.value ? bitrate.value : 'حسب الجودة') + '</span> — معدّل بت ثابت';
+  }
+}
+$('#s_encodingMode').addEventListener('change', syncEncodingModeUI);
+$('#s_crfValue').addEventListener('change', syncEncodingModeUI);
+$('#s_defaultBitrate').addEventListener('change', syncEncodingModeUI);
 
 async function loadSettings() {
   const { settings, nginx } = await api('/settings');
@@ -139,6 +163,7 @@ async function loadSettings() {
     if (!el) continue;
     if (el.type === 'checkbox') el.checked = !!settings[k]; else el.value = settings[k] ?? '';
   }
+  syncEncodingModeUI();
   // حدّث تسميات نسب الشعار بجانب الأشرطة
   if ($('#logoSizeVal')) $('#logoSizeVal').textContent = (settings.logoSizePct ?? 10) + '٪';
   if ($('#logoOpacityVal')) $('#logoOpacityVal').textContent = (settings.logoOpacityPct ?? 50) + '٪';
@@ -583,7 +608,7 @@ function openChannelModal(id) {
     <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
     <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
     <label>معدّل البت Bitrate (اختياري — مثل 1500k أو 2000k، فارغ = افتراضي الجودة)<input class="input" id="m_cbitrate" dir="ltr" value="${esc(ch?.bitrate)}" placeholder="مثال: 1500k"></label>
-    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام الافتراضي المناسب لكل جودة. عند تفعيل «وضع الجودة (CRF)» من الإعدادات يُطبَّق هذا الرقم كسقف أعلى للمعدّل بدل قيمة مستهدفة.</p>
+    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام معدّل البت الافتراضي من الإعدادات. عند اختيار وضع «CRF» من الإعدادات يُطبَّق هذا الرقم كسقف أعلى للمعدّل بدل قيمة مستهدفة.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,

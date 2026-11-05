@@ -182,8 +182,31 @@
                   </select></label>
                 <label>Threads لكل قناة<input class="input" id="s_x264Threads" type="number" min="1" max="16"></label>
               </div>
-              <label class="switch-row"><input type="checkbox" id="s_x264QualityMode"> وضع الجودة (CRF 23 — جودة ثابتة بدل معدّل بت ثابت)</label>
-              <p class="field-note">يبقي الجودة ثابتة ويتغيّر حجم البيانات حسب المشهد. معدّل بت القناة (إن حُدّد) يعمل هنا كسقف أعلى. يُطبَّق عند التشغيل التالي.</p>
+              <div class="fields-grid">
+                <label>وضع الترميز
+                  <select class="input" id="s_encodingMode">
+                    <option value="bitrate">Bitrate — معدّل بت محدّد</option>
+                    <option value="crf">CRF — جودة ثابتة</option>
+                  </select></label>
+                <label id="bitrateBox">معدّل البت الافتراضي
+                  <select class="input" id="s_defaultBitrate">
+                    <option value="">حسب الجودة (افتراضي)</option>
+                    <option value="500k">500k — استهلاك منخفض</option>
+                    <option value="800k">800k — متوازن</option>
+                    <option value="1200k">1200k — جودة أعلى</option>
+                    <option value="2000k">2000k — جودة عالية</option>
+                  </select></label>
+                <label id="crfBox">مستوى CRF
+                  <select class="input" id="s_crfValue">
+                    <option value="18">18 — جودة عالية جداً</option>
+                    <option value="20">20 — جودة عالية</option>
+                    <option value="23">23 — توازن جيد</option>
+                    <option value="26">26 — جودة أقل</option>
+                    <option value="28">28 — ضغط أكبر وجودة أقل</option>
+                  </select></label>
+              </div>
+              <p class="field-note" id="encModeSummary"></p>
+              <p class="field-note">وضع Bitrate يستهدف المعدّل المحدّد لكل قناة (وفارغ القناة يتبع الافتراضي أعلاه). وضع CRF يثبّت الجودة بقيمة CRF المختارة ويتغيّر الحجم حسب المشهد، ومعدّل بت القناة (إن حُدّد) يعمل كسقف أعلى. يُطبَّق عند التشغيل التالي للقناة.</p>
             </div>
 
             <div class="field-group">

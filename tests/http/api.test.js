@@ -451,3 +451,50 @@ test('إعدادات الدقة ترفض الأبعاد الفردية وتقب�
   assert.equal(even.json.settings.outputWidth, 642);
   assert.equal(even.json.settings.outputHeight, 362);
 });
+
+// وضع الترميز اختيار صريح: CRF يستخدم القيمة المختارة (كانت 23 ثابتة)، وBitrate
+// يستخدم المعدّل الافتراضي المحفوظ في الإعدادات، دون تعارض مع الدقة أو FPS أو preset.
+test('وضع الترميز Bitrate/CRF يغيّر وسائط FFmpeg ويطبّق قيمة CRF المختارة', async () => {
+  const src = await api.post('/api/sources', { name: 'مصدر وضع الترميز', type: 'file', path: 'srv/uploads/quality-test.mp4' });
+  assert.equal(src.status, 201);
+  const ch = await api.post('/api/channels', { name: 'قناة وضع الترميز', sourceId: src.json.source.id, quality: '360p', fps: 25 });
+  assert.equal(ch.status, 201);
+  const id = ch.json.channel.id;
+
+  const argsFor = async () => {
+    await api.post(`/api/channels/${id}/start`);
+    const logs = await waitFor(async () => {
+      const res = await api.get('/api/logs');
+      const hit = res.json.logs.split(/\r?\n/).filter((l) => l.includes('FFmpeg args:')).pop();
+      return hit || null;
+    }, 5000);
+    await api.post(`/api/channels/${id}/stop`);
+    return logs || '';
+  };
+
+  await api.put('/api/settings', { encodingMode: 'crf', crfValue: 18, defaultBitrate: '' });
+  const crfArgs = await argsFor();
+  assert.match(crfArgs, /-crf 18/);
+  assert.doesNotMatch(crfArgs, /-b:v/);
+  assert.match(crfArgs, /scale=640:360/);
+  assert.match(crfArgs, /fps=25/);
+  assert.match(crfArgs, /-preset (superfast|veryfast)/);
+
+  await api.put('/api/settings', { encodingMode: 'bitrate', defaultBitrate: '800k' });
+  const abrArgs = await argsFor();
+  assert.match(abrArgs, /-b:v 800k/);
+  assert.doesNotMatch(abrArgs, /-crf/);
+
+  // بِتريت القناة يتقدّم على الافتراضي من الإعدادات
+  await api.put(`/api/channels/${id}`, { bitrate: '1200k' });
+  assert.match(await argsFor(), /-b:v 1200k/);
+
+  // قيم غير مسموحة تُرفض بوضوح
+  assert.equal((await api.put('/api/settings', { encodingMode: 'abr' })).status, 400);
+  assert.equal((await api.put('/api/settings', { crfValue: 25 })).status, 400);
+  assert.equal((await api.put('/api/settings', { defaultBitrate: 'fast' })).status, 400);
+
+  await api.put('/api/settings', { encodingMode: 'bitrate', crfValue: 23, defaultBitrate: '', x264QualityMode: false });
+  await api.del(`/api/channels/${id}`);
+  await api.del(`/api/sources/${src.json.source.id}`);
+});
