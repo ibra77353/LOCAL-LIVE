@@ -44,6 +44,32 @@
     "logoSizePct": 10,
     "logoOpacityPct": 50
   },
-  "sources": [],
-  "channels": []
+  "sources": [
+    {
+      "id": "src_dcdba74513",
+      "name": "ٍHD",
+      "type": "file",
+      "enabled": true,
+      "path": "/tmp/pl-test-src.mp4"
+    }
+  ],
+  "channels": [
+    {
+      "id": "ch_ca67bc63ef",
+      "chanId": "ch_ca67bc63ef",
+      "name": "ٍHD",
+      "category": "عام",
+      "sourceId": "src_dcdba74513",
+      "cover": "",
+      "enabled": true,
+      "quality": "240p",
+      "fps": "20",
+      "bitrate": "400k",
+      "autoStart": false,
+      "alwaysOn": false,
+      "logoEnabled": false,
+      "sortOrder": 0,
+      "url": "/hls/ch_ca67bc63ef/index.m3u8"
+    }
+  ]
 }
