@@ -18,6 +18,14 @@ if not exist "%ROOT%server.js" (
 )
 cd /d "%ROOT%"
 
+where node >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Node.js not found in PATH.
+  echo        Prince Live processes are identified through scripts\procs.js, which needs Node.js.
+  pause
+  exit /b 1
+)
+
 rem ---- المنافذ: مصدر واحد هو scripts\ports.js (نفس قواعد server.js) ----
 set "PORTS="
 for /f "delims=" %%P in ('node scripts\ports.js 2^>nul') do set "PORTS=%%P"
