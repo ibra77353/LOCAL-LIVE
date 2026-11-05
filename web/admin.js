@@ -628,6 +628,12 @@ function syncChannelEncodingUI() {
   const crfBox = $('#m_ccrfBox');
   if (bitrateBox) bitrateBox.style.display = mode === 'bitrate' ? '' : 'none';
   if (crfBox) crfBox.style.display = mode === 'crf' ? '' : 'none';
+  // مربّعا الشرح يظهران فقط عند اختيار وضع CRF أو CBR لهذه القناة.
+  const infoCrf = $('#m_cencInfoCrf');
+  const infoWarn = $('#m_cencInfoWarn');
+  const showInfo = mode === 'crf' || mode === 'bitrate' ? '' : 'none';
+  if (infoCrf) infoCrf.style.display = showInfo;
+  if (infoWarn) infoWarn.style.display = showInfo;
 }
 
 function openChannelModal(id) {
@@ -661,10 +667,10 @@ function openChannelModal(id) {
     <label>وضع الترميز لهذه القناة
       <select class="input" id="m_cencmode" onchange="syncChannelEncodingUI()">
         <option value="">افتراضي — يتبع وضع الإعدادات</option>
-        <option value="bitrate" ${ch?.encodingMode === 'bitrate' ? 'selected' : ''}>Bitrate — معدّل بت محدّد</option>
+        <option value="bitrate" ${ch?.encodingMode === 'bitrate' ? 'selected' : ''}>CBR — معدّل بت ثابت</option>
         <option value="crf" ${ch?.encodingMode === 'crf' ? 'selected' : ''}>CRF — جودة ثابتة</option>
       </select></label>
-    <label id="m_cbitrateBox">معدّل البت لهذه القناة Bitrate
+    <label id="m_cbitrateBox">معدّل البت (Bitrate) لهذه القناة
       <select class="input" id="m_cbitrate" dir="ltr">
         ${bitrateOptions.map(([v, l]) => `<option value="${v}" ${curBitrate === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
@@ -672,7 +678,13 @@ function openChannelModal(id) {
       <select class="input" id="m_ccrf">
         ${CH_CRF_LEVELS.map(([v, l]) => `<option value="${v}" ${Number(ch?.crfValue) === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
-    <p class="hint">«افتراضي» يتبع وضع الترميز ومستوى CRF من الإعدادات العامة، واختيار وضع هنا يتجاوزها لهذه القناة وحدها. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ. اختيار «Bitrate» يُظهر خيارات معدّل البت (أعلى = جودة أوضح واستهلاك شبكة أكبر)، واختيار «CRF» يُظهر مستوى الجودة الثابتة.</p>
+    <div id="m_cencInfoCrf" style="display:none; background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.2); border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; color: rgb(56,189,248); line-height: 1.6; margin-bottom: 8px;">
+      ℹ️ <b>وضع CRF :</b> يقلل استهلاك البيانات في المشاهد الهادئة (الاستديو) ويرفعه في المشاهد السريعة. سقف البتريت المحدد يمثل «أقصى حد مسموح» لمنع الضغط الزائد على الشبكة.
+    </div>
+    <div id="m_cencInfoWarn" style="display:none; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; color: rgb(239,68,68); line-height: 1.6;">
+      ⚠️ <b>العيوب :</b> تقطيع البث — أجهزة الأكسس بوينت الضعيفة أو المزدحمة بالتشويش لا تستطيع معالجة هذا الارتفاع المفاجئ، مما يؤدي إلى امتلاء الـ Buffer وتوقف الفيديو عند العميل.
+    </div>
+    <p class="hint">«افتراضي» يتبع وضع الترميز ومستوى CRF من الإعدادات العامة، واختيار وضع هنا يتجاوزها لهذه القناة وحدها. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ. «CBR» يُظهر خيارات معدّل البت (أعلى = جودة أوضح واستهلاك شبكة أكبر)، و«CRF» يُظهر مستوى الجودة الثابتة.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
