@@ -46,7 +46,6 @@ function ffmpegBin() { return resolveTool(cfg.ffmpegPath); }
 
 const streams = new Map(); // channelId -> independent FFmpeg runtime
 let ffmpegLog = '';
-let lastExit = null;
 let servedBytes = 0;
 const viewerSessions = new Map();
 let previousCpu = os.cpus().map(c => ({ idle: c.times.idle, total: Object.values(c.times).reduce((a,b) => a+b, 0) }));
@@ -170,11 +169,14 @@ function publicChannel(channel) {
   try { const st = fs.statSync(playlistPath(channel)); playlistExists = st.isFile(); playlistAgeMs = Date.now() - st.mtimeMs; } catch {}
   const live = !!(channel.enabled && runtime?.proc && playlistExists && playlistAgeMs < 15000);
   const viewers = [...viewerSessions.values()].filter(v => v.channelId === channel.id && Date.now()-v.lastSeen <= 45000).length;
-  const lastErrorText = runtime?.lastExit || '';
+  // الإيقاف اليدوي والخروج الناجح ليسا خطأ: سبب الإنهاء الحقيقي هو ما يحدد الحالة.
+  const exit = runtime?.lastExit || null;
+  const exitBenign = !!exit && typeof exit === 'object' && (exit.reason === 'إيقاف يدوي' || exit.code === 0);
+  const lastErrorText = exit && !exitBenign ? formatLastExit(exit) : '';
   return { ...channel, chanId: channel.chanId || channel.id, sort: Number(channel.sortOrder) || 0,
     url: `/hls/${channel.id}/index.m3u8`, cover: publicAsset(channel.cover),
     device: source?.videoDevice || '', sourceName: source?.name || '', live,
-    status: live ? 'running' : (!channel.enabled ? 'stopped' : (runtime?.proc ? 'starting' : (runtime?.lastExit ? 'error' : 'stopped'))),
+    status: live ? 'running' : (!channel.enabled ? 'stopped' : (runtime?.proc ? 'starting' : (exit && !exitBenign ? 'error' : 'stopped'))),
     state: live ? 'running' : 'stopped', pid: runtime?.proc?.pid || null, viewers, restarts: runtime?.restartCount || 0,
     lastErrorText,
     lastError: lastErrorText ? { text: lastErrorText, severity: /exit|error|فشل|تعذر/i.test(lastErrorText) ? 'high' : 'low' } : null,
@@ -313,19 +315,36 @@ const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 // scripts/stop.bat إيقاف البث بأمان دون كلمة مرور مكتوبة داخل السكربت.
 const RUN_DIR = path.join(ROOT, 'run');
 const CONTROL_TOKEN_FILE = path.join(RUN_DIR, 'control.token');
+// ملف معرّف العملية: يكتبه الخادم عند الإقلاع ليستطيع scripts\stop.bat التأكد من
+// أن العملية التي يوقفها هي خادم PrinceLive نفسه، لا عملية Node.js لبرنامج آخر.
+const PID_FILE = path.join(RUN_DIR, 'server.pid');
 const CONTROL_TOKEN = crypto.randomBytes(24).toString('hex');
+// عدّاد جلسات محفوظ في run/session.epoch: يزداد عند تسجيل الخروج فتُبطل كل الرموز
+// الصادرة قبل ذلك فوراً بدل أن تبقى صالحة حتى انتهاء مدة الـ12 ساعة.
+const SESSION_EPOCH_FILE = path.join(RUN_DIR, 'session.epoch');
+function readSessionEpoch() {
+  try { return Math.max(0, Number(fs.readFileSync(SESSION_EPOCH_FILE, 'utf8').trim()) || 0); } catch { return 0; }
+}
+let sessionEpoch = readSessionEpoch();
+function bumpSessionEpoch() {
+  sessionEpoch++;
+  try { fs.mkdirSync(RUN_DIR, { recursive: true }); fs.writeFileSync(SESSION_EPOCH_FILE, String(sessionEpoch)); }
+  catch (err) { logLine(`تعذر حفظ عدّاد الجلسات: ${err.message}`); }
+}
 function sessionKey() {
   const account = adminAccount();
   return crypto.createHash('sha256').update(`prince-live-session:${account.user}:${account.hash}:${account.salt}`).digest();
 }
 function issueSessionToken() {
   const exp = String(Date.now() + ADMIN_SESSION_TTL_MS);
-  return `${exp}.${crypto.createHmac('sha256', sessionKey()).update(exp).digest('hex')}`;
+  const payload = `${exp}.${sessionEpoch}`;
+  return `${payload}.${crypto.createHmac('sha256', sessionKey()).update(payload).digest('hex')}`;
 }
 function isValidSessionToken(token) {
-  const [exp, mac] = String(token || '').split('.');
-  if (!exp || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
-  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(exp).digest('hex'));
+  const [exp, epoch, mac] = String(token || '').split('.');
+  if (!exp || !epoch || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
+  if (Number(epoch) !== sessionEpoch) return false;
+  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(`${exp}.${epoch}`).digest('hex'));
 }
 function parseCookies(req) {
   const out = {};
@@ -413,6 +432,18 @@ try {
 } catch (err) {
   console.error(`تعذر كتابة ${CONTROL_TOKEN_FILE}: ${err.message}`);
 }
+try {
+  fs.mkdirSync(RUN_DIR, { recursive: true });
+  fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
+} catch (err) {
+  console.error(`تعذر كتابة ${PID_FILE}: ${err.message}`);
+}
+// يُحذف ملف العملية عند الخروج الطبيعي فقط، وحين يكون ما فيه معرّفنا الحالي.
+function removePidFile() {
+  try {
+    if (fs.readFileSync(PID_FILE, 'utf8').trim() === String(process.pid)) fs.unlinkSync(PID_FILE);
+  } catch {}
+}
 
 function safeText(value) {
   return String(value ?? '').replace(/[\r\n]/g, ' ').slice(0, 1000);
@@ -498,7 +529,7 @@ function getStatus(channelId) {
   try { const st = fs.statSync(playlistPath(channel)); playlistExists = st.isFile(); playlistAgeMs = Date.now() - st.mtimeMs; } catch {}
   return { ...base, ticker: data.settings.ticker || cfg.ticker || '',
     running: !!runtime?.proc, pid: runtime?.proc?.pid || null, startedAt: runtime?.startedAt || null,
-    restartCount: runtime?.restartCount || 0, lastExit: runtime?.lastExit || null, playlistExists, playlistAgeMs,
+    restartCount: runtime?.restartCount || 0, lastExit: runtime?.lastExit || null, exitHistory: runtime?.exits || [], playlistExists, playlistAgeMs,
     streamUrl: `/hls/${channel.id}/index.m3u8`, sourceType: source?.type || '', videoDevice: source?.videoDevice || '', audioDevice: source?.audioDevice || '',
     audioEnabled: !!source?.audioDevice, outputWidth: Number(data.settings.outputWidth) || 640,
     outputHeight: Number(String(channel.quality || '').replace(/p$/i,'')) || Number(data.settings.outputHeight) || 360,
@@ -683,6 +714,26 @@ function buildArgs(channel, forceTranscode = false) {
     '-hls_flags','delete_segments+append_list+omit_endlist+independent_segments+program_date_time','-hls_segment_filename',path.join(dir,'seg_%05d.ts'),path.join(dir,'index.m3u8'));
   return args;
 }
+// سجل خروج FFmpeg: يحفظ رمز الخروج والإشارة والسبب الحقيقي، مع آخر 5 محاولات
+// حتى لا تضيع معلومات المحاولة السابقة عند إعادة التشغيل التلقائي.
+function recordExit(runtime, info) {
+  runtime.lastExit = {
+    at: new Date().toISOString(),
+    code: Number.isInteger(info.code) ? info.code : null,
+    signal: info.signal || null,
+    reason: info.reason,
+    cause: info.cause || null
+  };
+  runtime.exits = [...(runtime.exits || []), runtime.lastExit].slice(-5);
+  return runtime.lastExit;
+}
+function formatLastExit(exit) {
+  if (!exit) return '';
+  if (typeof exit === 'string') return exit;
+  const parts = [`code=${exit.code === null ? 'n/a' : exit.code}`, `signal=${exit.signal || 'none'}`, `reason=${exit.reason}`];
+  if (exit.cause) parts.push(`cause=${exit.cause}`);
+  return parts.join('; ');
+}
 function startChannel(channelId) {
   const channel = data.channels.find(c=>c.id===channelId);
   if (!channel) return {ok:false,message:'القناة غير موجودة'};
@@ -695,13 +746,13 @@ function startChannel(channelId) {
   if (old?.proc && !old.stopping) return {ok:true,message:'القناة تعمل بالفعل',channelId};
   if (old?.proc && old.stopping) return {ok:false,message:'القناة ما زالت تغلق؛ انتظر اكتمال الإيقاف ثم أعد التشغيل',channelId};
   if(old?.restartTimer)clearTimeout(old.restartTimer);
-  const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:null,sourceId:source.id,forceTranscode:!!old?.forceTranscode,lastStderr:'',paramError:false};
+  const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:old?.lastExit||null,exits:Array.isArray(old?.exits)?old.exits:[],sourceId:source.id,forceTranscode:!!old?.forceTranscode,lastStderr:'',paramError:false};
   streams.set(channelId,runtime); clearTimeout(runtime.restartTimer); clearChannelHls(channel);
-  let args; try { args=buildArgs(channel,runtime.forceTranscode); } catch(e) { runtime.lastExit=e.message; return {ok:false,message:e.message}; }
+  let args; try { args=buildArgs(channel,runtime.forceTranscode); } catch(e) { recordExit(runtime,{reason:'فشل بناء أمر FFmpeg',cause:e.message}); return {ok:false,message:e.message}; }
   const safeArgs=args.map((a,i)=> i>0 && args[i-1]==='-i' && /^(https?|rtsp):/i.test(a) ? '[network-url-hidden]' : a);
   logLine(`بدء القناة ${channel.name} (${channel.id}) من المصدر ${source.name}. FFmpeg args: ${safeArgs.join(' ')}`);
   try { runtime.proc=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']}); }
-  catch(e) { runtime.lastExit=e.message; return {ok:false,message:e.message}; }
+  catch(e) { recordExit(runtime,{reason:'تعذر تشغيل FFmpeg',cause:e.message}); return {ok:false,message:e.message}; }
   const proc=runtime.proc; runtime.startedAt=new Date().toISOString();
   proc.stderr.on('data',b=>{
     runtime.lastStderr=(runtime.lastStderr+b.toString()).slice(-4000);
@@ -709,17 +760,21 @@ function startChannel(channelId) {
     if(data.settings.hideCosmeticLogs===true){ m=filterCosmeticFfmpegLines(m); if(!m) return; }
     logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);
   });
-  proc.on('error',e=>{runtime.lastExit=e.message;runtime.proc=null;logLine(`[${channel.name}] تعذر تشغيل FFmpeg: ${e.message}`);scheduleChannelRestart(channelId);});
+  proc.on('error',e=>{recordExit(runtime,{reason:'تعذر تشغيل FFmpeg',cause:e.message});runtime.proc=null;logLine(`[${channel.name}] تعذر تشغيل FFmpeg: ${e.message}`);scheduleChannelRestart(channelId);});
   proc.on('exit',(code,signal)=>{
-    runtime.lastExit=`code=${code}; signal=${signal||''}`;
+    const exitReason = runtime.stopping ? 'إيقاف يدوي' : (code === 0 ? 'انتهى بنجاح' : 'خروج غير متوقع');
+    recordExit(runtime,{code,signal,reason:exitReason});
     runtime.proc=null;
-    logLine(`[${channel.name}] انتهى FFmpeg: ${runtime.lastExit} — ${runtime.stopping ? 'إيقاف مطلوب يدوياً' : 'خروج غير متوقع'}${runtime.forceTranscode ? ' | نسخ قسري بعد فشل' : ''}`);
+    logLine(`[${channel.name}] انتهى FFmpeg: ${formatLastExit(runtime.lastExit)} — ${runtime.stopping ? 'إيقاف مطلوب يدوياً' : 'خروج غير متوقع'}${runtime.forceTranscode ? ' | نسخ قسري بعد فشل' : ''}`);
+    // بعد الإيقاف لا تُترك مقاطع/قوائم HLS قديمة على القرص، وإلا بقي المشاهدون
+    // يستطيعون تشغيل بث متوقف أو محتوى قديم من الملفات المتبقية.
+    if (runtime.stopping) clearChannelHls(channel);
     // خطأ إعداد (preset/دقة/صيغة/مُرمِّز) يتكرر مع كل محاولة، فلا فائدة من حلقة إعادة التشغيل.
     if (code !== 0 && !runtime.stopping && !runtime.paramError && isEncoderParamError(runtime.lastStderr)) {
       runtime.paramError = true;
-      runtime.lastExit = describeEncoderParamError(runtime.lastStderr);
-      logLine(`[${channel.name}] خطأ في معايير الترميز/الالتقاط — أُوقفت إعادة المحاولة التلقائية: ${runtime.lastExit}`);
-      appendChannelLog(channelId, `خطأ معايير الترميز: ${runtime.lastExit}`);
+      runtime.lastExit.cause = describeEncoderParamError(runtime.lastStderr);
+      logLine(`[${channel.name}] خطأ في معايير الترميز/الالتقاط — أُوقفت إعادة المحاولة التلقائية: ${runtime.lastExit.cause}`);
+      appendChannelLog(channelId, `خطأ معايير الترميز: ${runtime.lastExit.cause}`);
     }
     const currentSource=sourceForChannel(channel);
     const networkSource=currentSource && ['http-hls','http','hls','network','rtsp'].includes(String(currentSource.type||'').toLowerCase());
@@ -744,14 +799,22 @@ function stopChannel(channelId, origin = '') {
   const label = channel ? channel.name : 'قناة غير معروفة';
   const context = origin ? ` — الطالب: ${origin}` : '';
   const rt = streams.get(channelId);
-  if (!rt) { logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية تشغيل مسجّلة، القناة متوقفة أصلاً`); return {ok:true,message:'القناة متوقفة بالفعل',channelId}; }
+  if (!rt) {
+    logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية تشغيل مسجّلة، القناة متوقفة أصلاً`);
+    if (channel) clearChannelHls(channel);
+    return {ok:true,message:'القناة متوقفة بالفعل',channelId};
+  }
   rt.stopping=true;clearTimeout(rt.restartTimer);rt.restartTimer=null;
-  if (!rt.proc) { logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية FFmpeg نشطة | آخر خروج: ${rt.lastExit || 'لا يوجد'}`); return {ok:true,message:'القناة متوقفة بالفعل',channelId}; }
+  if (!rt.proc) {
+    logLine(`إيقاف «${label}» (${channelId})${context}: لا توجد عملية FFmpeg نشطة | آخر خروج: ${formatLastExit(rt.lastExit) || 'لا يوجد'}`);
+    if (channel) clearChannelHls(channel);
+    return {ok:true,message:'القناة متوقفة بالفعل',channelId};
+  }
   const proc=rt.proc;
   const uptimeSec = rt.startedAt ? Math.round((Date.now() - new Date(rt.startedAt).getTime()) / 1000) : null;
   try {
     proc.kill();
-    logLine(`إيقاف «${label}» (${channelId})${context}: أُرسلت إشارة الإيقاف إلى FFmpeg pid=${proc.pid}${uptimeSec !== null ? ` بعد تشغيل ${uptimeSec} ثانية` : ''}${rt.lastExit ? ` | آخر خروج: ${rt.lastExit}` : ''} | إعادات سابقة: ${rt.restartCount || 0}`);
+    logLine(`إيقاف «${label}» (${channelId})${context}: أُرسلت إشارة الإيقاف إلى FFmpeg pid=${proc.pid}${uptimeSec !== null ? ` بعد تشغيل ${uptimeSec} ثانية` : ''}${rt.lastExit ? ` | آخر خروج: ${formatLastExit(rt.lastExit)}` : ''} | إعادات سابقة: ${rt.restartCount || 0}`);
     return {ok:true,message:'جارٍ إيقاف القناة؛ لن يعاد فتح المصدر قبل خروج FFmpeg',channelId};
   } catch(e) {
     logLine(`فشل إيقاف «${label}» (${channelId})${context}: ${e.message}`);
@@ -998,6 +1061,14 @@ function serveHls(req, res, pathname) {
     res.writeHead(400); res.end('Bad Request'); return;
   }
   const relative = decoded.replace(/^\/hls\/?/, '');
+  // لا تُخدم ملفات قناة متوقفة أو محذوفة: تمنع بقاء بث قديم متاحاً بعد الإيقاف.
+  const ownerId = relative.split(/[\\/]/)[0];
+  const owner = data.channels.find(c => c.id === ownerId);
+  if (!owner || !streams.get(owner.id)?.proc) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end('HLS stream is not available');
+    return;
+  }
   const fullPath = path.resolve(HLS_DIR, relative);
   if (!fullPath.startsWith(HLS_DIR + path.sep) && fullPath !== HLS_DIR) {
     res.writeHead(403); res.end('Forbidden'); return;
@@ -1105,6 +1176,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, user: adminAccount().user });
   }
   if (url.pathname === '/api/logout' && req.method === 'POST') {
+    bumpSessionEpoch();
     clearAdminSession(res);
     return send(res, 200, { ok: true, message: 'تم تسجيل الخروج' });
   }
@@ -1304,7 +1376,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/status') {
-    return send(res, 200, getStatus(url.searchParams.get('channelId') || undefined));
+    return send(res, 200, { ok: true, ...getStatus(url.searchParams.get('channelId') || undefined) });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/devices') {
@@ -1466,7 +1538,13 @@ const server = http.createServer(async (req, res) => {
 
 // المنفذ يأتي من settings.port في data.json (مصدر وحيد يتغيّر من اللوحة)،
 // ويبقى متغير البيئة PORT أعلى أولوية للتشغيل في حاوية أو خلف وكيل.
-const LISTEN_PORT = Number(process.env.PORT || data.settings.port) || 3001;
+// نفس القاعدة موجودة في scripts/ports.js الذي تقرأه ملفات BAT، فأي قيمة غير
+// صالحة في data.json أو PORT تُحوَّل إلى 3001 في الطرفين بدل اختلاف المنفذ.
+function resolvePort(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : fallback;
+}
+const LISTEN_PORT = resolvePort(process.env.PORT || data.settings.port, 3001);
 const LISTEN_HOST = process.env.HOST || cfg.host || '127.0.0.1';
 
 server.on('error', err => {
@@ -1521,6 +1599,7 @@ server.listen(LISTEN_PORT, LISTEN_HOST, () => {
 
 function shutdown() {
   stopStream();
+  removePidFile();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }

@@ -1,7 +1,10 @@
 @echo off
-setlocal EnableExtensions
-rem إيقاف كامل: قنوات البث ثم Nginx ثم خادم Node.js.
-rem المنفذ من data.json ورمز التحكّم المحلي من run/control.token بدل تثبيت 3001 أو تجاهل المصادقة.
+setlocal EnableExtensions EnableDelayedExpansion
+rem إيقاف كامل: أولاً إغلاق البث عبر API، ثم إيقاف Nginx، ثم خادم Node.js.
+rem لا تُوقف هذه الملفات إلا عمليات PrinceLive نفسها:
+rem   - Nginx: يُحدَّد من مسار nginx\nginx.exe داخل المشروع (scripts\procs.js)
+rem   - Node.js: يُحدَّد من سطر الأوامر %ROOT%\server.js أو run\server.pid
+rem سجلات التشغيل (logs وnginx\logs) لا تُحذف عند الإيقاف العادي.
 set "ROOT=%~dp0"
 if not exist "%ROOT%server.js" (
   if exist "%ROOT%..\server.js" (
@@ -15,52 +18,48 @@ if not exist "%ROOT%server.js" (
 )
 cd /d "%ROOT%"
 
-set "API_PORT="
-for /f "tokens=2" %%P in ('node scripts\ports.js 2^>nul') do set "API_PORT=%%P"
-if not defined API_PORT set "API_PORT=3001"
+rem ---- المنافذ: مصدر واحد هو scripts\ports.js (نفس قواعد server.js) ----
+set "PORTS="
+for /f "delims=" %%P in ('node scripts\ports.js 2^>nul') do set "PORTS=%%P"
+if not defined PORTS (
+  echo ERROR: could not read ports from data.json / config.json [scripts\ports.js].
+  pause
+  exit /b 1
+)
+for /f "tokens=2" %%P in ("!PORTS!") do set "API_PORT=%%P"
 
-echo Requesting stream stop through the local API (port %API_PORT%)...
-node -e "const http=require('http'),fs=require('fs');let token='';try{token=fs.readFileSync('run/control.token','utf8').trim()}catch{};if(!token){console.log('run/control.token missing: Node may not be running');process.exit(0)}const r=http.request({host:'127.0.0.1',port:(()=>{let p=3001;try{p=Number(require('./data.json').settings.port)||p}catch{}return p})(),path:'/api/stop',method:'POST',timeout:8000,headers:{'X-Control-Token':token,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.on('timeout',()=>{console.log('API timeout after 8s: stopping Node anyway');r.destroy()});r.end();"
+set "STOP_FAILED="
+echo Requesting stream stop through the local API on port !API_PORT!...
+node -e "const http=require('http'),fs=require('fs');let token='';try{token=fs.readFileSync('run/control.token','utf8').trim()}catch{};if(token.length===0){console.log('run/control.token missing: Node may not be running');process.exit(0)}const r=http.request({host:'127.0.0.1',port:%API_PORT%,path:'/api/stop',method:'POST',timeout:15000,headers:{'X-Control-Token':token,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.on('timeout',()=>{console.log('API timeout after 15s: stopping Node anyway');r.destroy()});r.end();"
 echo.
 
-rem Nginx: قد يفشل -s quit إذا كان ملف nginx\logs\nginx.pid قديماً (بعد إغلاق قسري سابق)،
-rem فيبقى nginx.exe ماسكاً للمنفذ 80 رغم رسالة "تم الإيقاف". لذلك نتحقق من العملية بعد الأمر.
+rem ---- إيقاف Nginx الخاص بالمشروع فقط ----
 if not exist "nginx\nginx.exe" goto :node
-tasklist /FI "IMAGENAME eq nginx.exe" 2>nul | find /I "nginx.exe" >nul
+call "%ROOT%scripts\nginx-stop.bat"
 if errorlevel 1 (
-  echo Nginx is not running.
-  goto :node
+  echo ERROR: Prince Live nginx.exe is still running. Run this file as Administrator.
+  set "STOP_FAILED=1"
 )
-echo Stopping Nginx...
-"nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -s quit
-timeout /t 2 /nobreak >nul
-tasklist /FI "IMAGENAME eq nginx.exe" 2>nul | find /I "nginx.exe" >nul
-if errorlevel 1 goto :nginx_ok
-echo Nginx did not exit cleanly; forcing it to close...
-taskkill /IM nginx.exe /F >nul 2>&1
-timeout /t 1 /nobreak >nul
-tasklist /FI "IMAGENAME eq nginx.exe" 2>nul | find /I "nginx.exe" >nul
-if errorlevel 1 goto :nginx_ok
-echo ERROR: nginx.exe is still running. Close it from Task Manager and run this file again.
-set "STOP_FAILED=1"
-goto :node
-:nginx_ok
-echo Nginx stopped.
 
+rem ---- إيقاف خادم Node.js الخاص بالمشروع فقط ----
 :node
 set "NODE_PID="
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr /R /C:":%API_PORT% .*LISTENING"') do set "NODE_PID=%%p"
-if not defined NODE_PID (
-  echo Node.js is not running on port %API_PORT%.
-  goto :clean
-)
-echo Stopping Node.js (PID %NODE_PID%)...
-taskkill /PID %NODE_PID% /T /F >nul 2>&1
+for /f "delims=" %%P in ('node scripts\procs.js node-pid !API_PORT! 2^>nul') do set "NODE_PID=%%P"
+if defined NODE_PID goto :kill_node
+echo Prince Live Node.js is not running.
+set "OWNER="
+for /f "delims=" %%O in ('node scripts\procs.js port-owner !API_PORT! 2^>nul') do set "OWNER=%%O"
+if defined OWNER echo NOTE: port !API_PORT! is used by another program: !OWNER! - it was left untouched.
+goto :clean
+
+:kill_node
+echo Stopping Prince Live Node.js [PID !NODE_PID!]...
+taskkill /PID !NODE_PID! /T /F >nul 2>&1
 timeout /t 1 /nobreak >nul
-set "NODE_LEFT="
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr /R /C:":%API_PORT% .*LISTENING"') do set "NODE_LEFT=%%p"
-if not defined NODE_LEFT goto :node_ok
-echo ERROR: Node.js is still listening on port %API_PORT% (PID %NODE_LEFT%). Run this file as Administrator.
+set "NODE_PID="
+for /f "delims=" %%P in ('node scripts\procs.js node-pid !API_PORT! 2^>nul') do set "NODE_PID=%%P"
+if not defined NODE_PID goto :node_ok
+echo ERROR: Prince Live Node.js is still running [PID !NODE_PID!]. Run this file as Administrator.
 set "STOP_FAILED=1"
 goto :clean
 :node_ok
@@ -68,23 +67,15 @@ echo Node.js stopped.
 
 :clean
 echo.
-echo Cleaning srv\hls (all files and subfolders)...
+rem ملفات HLS لم تعد تُعرض بعد الإيقاف: تُحذف حتى لا يظهر بث قديم كمباشر.
 if exist "srv\hls" (
-    for /d %%D in ("srv\hls\*") do rd /s /q "%%D" >nul 2>&1
-    del /q "srv\hls\*" >nul 2>&1
-    echo srv\hls cleaned.
+  echo Cleaning srv\hls [stale HLS segments of stopped channels]...
+  for /d %%D in ("srv\hls\*") do rd /s /q "%%D" >nul 2>&1
+  del /q "srv\hls\*" >nul 2>&1
+  echo srv\hls cleaned.
 )
-
+echo Run logs are kept: logs\server.log and nginx\logs\*.log
 echo.
-echo Cleaning all logs...
-if exist "logs" (
-    del /q "logs\*" >nul 2>&1
-    echo logs cleaned.
-)
-if exist "nginx\logs" (
-    del /q "nginx\logs\*" >nul 2>&1
-    echo nginx\logs cleaned.
-)
 
 :done
 echo.

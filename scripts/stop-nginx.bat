@@ -1,6 +1,6 @@
 @echo off
-setlocal EnableExtensions
-rem Find project root whether this BAT is in the root or a subfolder.
+setlocal EnableExtensions EnableDelayedExpansion
+rem إيقاف Nginx الخاص بـ PrinceLive فقط (يُفوَّض إلى scripts\nginx-stop.bat).
 set "ROOT=%~dp0"
 if not exist "%ROOT%server.js" (
   if exist "%ROOT%..\server.js" (
@@ -19,27 +19,11 @@ if not exist "nginx\nginx.exe" (
   pause
   exit /b 1
 )
-tasklist /FI "IMAGENAME eq nginx.exe" 2>nul | find /I "nginx.exe" >nul
+call "%ROOT%scripts\nginx-stop.bat"
 if errorlevel 1 (
-  echo Nginx is not running.
+  echo ERROR: Nginx did not stop.
   pause
-  exit /b 0
+  exit /b 1
 )
-echo Stopping Nginx...
-"nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -s quit
-rem التحقق بعد الأمر: -s quit لا يُنهي nginx إن كان ملف الـ pid قديماً.
-timeout /t 2 /nobreak >nul
-tasklist /FI "IMAGENAME eq nginx.exe" 2>nul | find /I "nginx.exe" >nul
-if errorlevel 1 goto :ok
-echo Nginx did not exit cleanly; forcing it to close...
-taskkill /IM nginx.exe /F >nul 2>&1
-timeout /t 1 /nobreak >nul
-tasklist /FI "IMAGENAME eq nginx.exe" 2>nul | find /I "nginx.exe" >nul
-if errorlevel 1 goto :ok
-echo ERROR: nginx.exe is still running. Close it from Task Manager.
-pause
-exit /b 1
-:ok
-echo Nginx stopped.
 pause
 exit /b 0

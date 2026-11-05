@@ -22,8 +22,9 @@ function readJson(file) {
 }
 
 const settings = readJson('data.json').settings || {};
-const cfg = readJson('config.json');
-const PORT = Number(process.argv[2]) || Number(settings.port) || Number(cfg.port) || 3001;
+// نفس ترتيب أولوية server.js (PORT ثم data.settings.port) حتى يختبر السكربت المنفذ
+// الذي يستمع عليه الخادم فعلياً، لا منفذاً افتراضياً مختلفاً.
+const PORT = Number(process.argv[2]) || Number(process.env.PORT || settings.port) || 3001;
 
 function stopRequest(token) {
   return new Promise(resolve => {
