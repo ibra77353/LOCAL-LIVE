@@ -44,39 +44,6 @@
     "logoSizePct": 10,
     "logoOpacityPct": 50
   },
-  "sources": [
-    {
-      "id": "src_7a367af826",
-      "name": "ٍHD",
-      "type": "usb",
-      "enabled": true,
-      "videoDevice": "USB Video",
-      "videoDeviceLabel": "USB Video",
-      "audioDevice": "Digital Audio Interface (2- USB Digital Audio)",
-      "videoSize": "1280x720",
-      "fps": 30,
-      "pixelFormat": "",
-      "vcodec": "mjpeg",
-      "captureSafeMode": false
-    }
-  ],
-  "channels": [
-    {
-      "id": "ch_d465a23d1a",
-      "chanId": "ch_d465a23d1a",
-      "name": "ٍHD",
-      "category": "عام",
-      "sourceId": "src_7a367af826",
-      "cover": "srv/uploads/prince.webp",
-      "enabled": true,
-      "quality": "360p",
-      "fps": "25",
-      "bitrate": "500k",
-      "autoStart": false,
-      "alwaysOn": false,
-      "logoEnabled": false,
-      "sortOrder": 0,
-      "url": "/hls/ch_d465a23d1a/index.m3u8"
-    }
-  ]
+  "sources": [],
+  "channels": []
 }
