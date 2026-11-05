@@ -1,5 +1,5 @@
 'use strict';
-// فحص استقرار المشروع بعد اعتماد لوحة AmaanLive وصفحة المشاهدة الجديدة.
+// فحص استقرار المشروع بعد اعتماد لوحة PrinceLive وصفحة المشاهدة الجديدة.
 // يتحقق من: سلامة الملفات والصيغة، تطابق حقول الإعدادات بين اللوحة والبيانات،
 // عناصر اللوحة الأساسية، عقد نقاط النهاية بين صفحة المشاهدة والخادم، وسلامة البيانات.
 const fs = require('fs');
@@ -67,7 +67,7 @@ if (!/async function loadSettings[\s\S]{0,500}?api\('\/settings'\)/.test(adminJs
 if (!/async function saveSettings[\s\S]{0,900}?api\('\/settings', \{ method: 'PUT'/.test(adminJs)) failures.push('web/admin.js لا يحفظ الإعدادات في /api/settings');
 if (/amaan_settings|settings\.json/.test(adminJs)) failures.push('web/admin.js ما زال يستخدم مصدر إعدادات قديماً');
 
-// 5) عناصر لوحة AmaanLive الأساسية
+// 5) عناصر لوحة PrinceLive الأساسية
 const adminIds = ['view-dashboard', 'view-sources', 'view-channels', 'view-settings',
   'dashGrid', 'onairStrip', 'sourcesTable', 'channelsTable', 'statusTable', 'sysStats', 'sysMsgBar',
   'logBody', 'modalOverlay', 'modalBody', 'modalSave', 'modalError', 'toast', 'brandName', 'logoutBtn', 'restoreFileInput'];
@@ -183,10 +183,10 @@ if (fs.existsSync(filePath('scripts/start.bat'))) {
 if (serverJs && !/server\.pid/.test(serverJs)) failures.push('server.js لا يكتب run\\server.pid اللازم لتمييز عملية PrinceLive');
 
 if (failures.length) {
-  console.error('AmaanLive verification FAILED');
+  console.error('PrinceLive verification FAILED');
   console.error(failures.join('\n'));
   process.exit(1);
 }
-console.log('AmaanLive verification PASSED');
+console.log('PrinceLive verification PASSED');
 console.log(`Sources: ${data.sources.length}; channels: ${data.channels.length}; settings fields: ${S_KEYS.length}`);
-console.log('JavaScript syntax, JSON schema, AmaanLive settings fields, admin sections, viewer API contract, and data integrity are valid.');
+console.log('JavaScript syntax, JSON schema, PrinceLive settings fields, admin sections, viewer API contract, and data integrity are valid.');

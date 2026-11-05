@@ -2,7 +2,9 @@
 
 منصة بث محلي متعددة القنوات تعتمد Node.js وFFmpeg وHLS، مع لوحة أدمن وواجهة مشاهد منفصلتين.
 
-**رابط الحزمة النظيفة (ZIP):** [PrinceLive-API-Server.zip](PrinceLive-API-Server.zip) — نسخة جاهزة للتشغيل على Windows 10 بلا ملفات تشغيل (سجلات، مقاطع HLS، رموز، `node_modules`، و`ffmpeg.exe`/`ffprobe.exe`).
+**رابط الحزمة النظيفة (ZIP):** [PrinceLive-API-Server.zip](PrinceLive-API-Server.zip) — نسخة جاهزة للتشغيل على Windows 10 بلا ملفات تشغيل (سجلات، مقاطع HLS، رموز، `node_modules`، و`ffmpeg.exe`/`ffprobe.exe`)، وتضم الكود الحالي كاملاً بما فيه `lib/capture/`، وتبدأ بـ`data.json` نظيف: الإعدادات فقط دون مصادر أو قنوات تجريبية.
+
+> تُبنى الحزمة من ملفات المشروع نفسها: `server.js` و`lib/**` و`web/**` و`scripts/**` و`nginx/**` مع `README-AR.md` و`config.json` و`data.json` و`package.json`. إن عدّلت `data.json` أو أي ملف من هذه الملفات فعلياً، أعد بناء الحزمة حتى لا تتخلّف عنها.
 
 ## ما تتضمنه هذه النسخة
 
@@ -27,8 +29,8 @@
 | `lib/capture/capabilities.js` | تجميع قدرات الجهاز والتوصية (مشترك بين المحركين) |
 | `lib/capture/screen.js` | التقاط الشاشة: gdigrab على Windows وx11grab على Linux |
 
-- **نطاق الدعم (ثلاثة أنظمة فقط):** Windows 10/11 ← DirectShow، Ubuntu/Debian ← V4L2 + ALSA، Docker Linux ← V4L2 + ALSA (مع تمرير `--device /dev/video0 --device /dev/snd` إلى الحاوية). الأنظمة الثلاثة مسجّلة في `capture.supportedTargets()`، و`/api/status` يعرض المحرك النشط.
-- **اختيار المحرك:** `win32 → DirectShow`، و`linux → V4L2` فقط. أي نظام آخر (macOS/BSD وغيرها) غير مدعوم ولا يُعامل كمحرك V4L2: طلب الالتقاط يرفع خطأً واضحاً، ولوحة `/api/status` تُبلّغ `captureEngine: "unsupported"`. سلوك Windows لم يتغيّر إطلاقاً.
+- **نطاق الدعم (ثلاثة أنظمة فقط):** Windows 10/11 ← DirectShow، Ubuntu/Debian ← V4L2 + ALSA، Docker Linux ← V4L2 + ALSA (مع تمرير `--device /dev/video0 --device /dev/snd` إلى الحاوية). الأنظمة الثلاثة مسجّلة في `capture.supportedTargets()`، و`/api/stats` يعرض المحرك النشط (`captureEngine`).
+- **اختيار المحرك:** `win32 → DirectShow`، و`linux → V4L2` فقط. أي نظام آخر (macOS/BSD وغيرها) غير مدعوم ولا يُعامل كمحرك V4L2: طلب الالتقاط يرفع خطأً واضحاً، و`/api/stats` تُبلّغ `captureEngine: "unsupported"`. سلوك Windows لم يتغيّر إطلاقاً.
 - **تعداد الأجهزة:** على Windows عبر `-list_devices` في FFmpeg؛ وعلى Linux بقراءة `/dev/video*` و`/sys/class/video4linux/*/name` وبطاقات الصوت من `/proc/asound/cards` دون تشغيل FFmpeg.
 - **الصوت:** DirectShow يحمل الصوت مع الفيديو في إدخال واحد (`video=...:audio=...`)، أما V4L2 فلا يحمل صوتاً، فتُضاف طبقة ALSA كإدخال ثانٍ (`-f alsa -i plughw:N`) مع `-map 1:a:0?`. الطبقة تُبلّغ الخادم بفهرس إدخال الصوت (`audioInputIndex`) بدل أن يعرف التفاصيل.
 - **إضافة نظام جديد:** ملف محرك يوفّر الدوال نفسها (`discover`, `capabilitiesArgs`, `inputPlan`, `testVideoArgs`, `testAudioArgs`) + سطر تسجيل في `ENGINES` داخل `lib/capture/index.js`.
