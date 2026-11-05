@@ -50,6 +50,9 @@ function ffmpegBin() { return resolveTool(cfg.ffmpegPath); }
 const streams = new Map(); // channelId -> independent FFmpeg runtime
 let ffmpegLog = '';
 let servedBytes = 0;
+const channelServedBytes = new Map(); // channelId -> بايتات /hls المخدومة لتلك القناة
+let ingestBps = 0;
+let lastHlsFiles = new Map(); // مسار مقطع -> آخر حجم معروف (لحساب معدل التوليد)
 const viewerSessions = new Map();
 let previousCpu = os.cpus().map(c => ({ idle: c.times.idle, total: Object.values(c.times).reduce((a,b) => a+b, 0) }));
 let cpuPercent = null;
@@ -156,6 +159,23 @@ function activeChannel() { return data.channels.find(c => c.enabled !== false) |
 function sourceForChannel(channel = activeChannel()) { return channel ? (data.sources.find(x => x.id === channel.sourceId) || null) : null; }
 function channelRuntime(channelId) { return streams.get(channelId) || null; }
 function channelHlsDir(channel) { return path.join(HLS_DIR, channel.id); }
+// أحجام مقاطع HLS الحالية. تُستخدم لعرض حجم المولَّد في اللوحة وحساب معدل
+// التوليد (باندويث الإدخال) من نمو كل مقطع بين عينتين.
+function hlsFileSizes() {
+  const sizes = new Map();
+  let total = 0;
+  try {
+    for (const dir of fs.readdirSync(HLS_DIR, { withFileTypes: true })) {
+      if (!dir.isDirectory()) continue;
+      for (const name of fs.readdirSync(path.join(HLS_DIR, dir.name))) {
+        if (!/\.(ts|m3u8|m4s|mp4)$/i.test(name)) continue;
+        const file = path.join(HLS_DIR, dir.name, name);
+        try { const size = fs.statSync(file).size; sizes.set(file, size); total += size; } catch {}
+      }
+    }
+  } catch {}
+  return { total, sizes };
+}
 function playlistPath(channel) { return path.join(channelHlsDir(channel), 'index.m3u8'); }
 // مسارات الملفات المرفوعة تُخزَّن كما في الحزمة (srv/uploads/x) وتُعرض عبر /uploads/x.
 function publicAsset(value) {
@@ -183,7 +203,7 @@ function publicChannel(channel) {
     state: live ? 'running' : 'stopped', pid: runtime?.proc?.pid || null, viewers, restarts: runtime?.restartCount || 0,
     lastErrorText,
     lastError: lastErrorText ? { text: lastErrorText, severity: /exit|error|فشل|تعذر/i.test(lastErrorText) ? 'high' : 'low' } : null,
-    lastErrors: lastErrorText ? [lastErrorText] : [], bytesOut: 0 };
+    lastErrors: lastErrorText ? [lastErrorText] : [], bytesOut: channelServedBytes.get(channel.id) || 0 };
 }
 
 function readBody(req, maxBytes=1024*1024) {
@@ -1039,6 +1059,7 @@ function serveHls(req, res, pathname) {
       'Access-Control-Allow-Origin': '*'
     });
     servedBytes += data.length;
+    channelServedBytes.set(ownerId, (channelServedBytes.get(ownerId) || 0) + data.length);
     res.end(data);
   });
 }
@@ -1319,8 +1340,7 @@ const server = http.createServer(async (req, res) => {
     for (const [id, session] of viewerSessions) if (now - session.lastSeen > 45000) viewerSessions.delete(id);
     const channels = data.channels.map(publicChannel);
     const viewers = channels.reduce((sum,c)=>sum+(c.viewers||0),0);
-    let hlsBytes = 0;
-    try { for (const dir of fs.readdirSync(HLS_DIR,{withFileTypes:true})) if(dir.isDirectory()) for(const name of fs.readdirSync(path.join(HLS_DIR,dir.name))) if(/\.(ts|m3u8|m4s|mp4)$/i.test(name)){try{hlsBytes+=fs.statSync(path.join(HLS_DIR,dir.name,name)).size;}catch{}} } catch {}
+    const hlsBytes = hlsFileSizes().total;
     return send(res, 200, { ok: true, stats: { channels: { total: channels.length, running: channels.filter(c => c.live).length, error: channels.filter(c => c.status === 'error').length }, viewers, totalViewers: viewers, cpuPercent, memoryMb: Math.round(process.memoryUsage().rss/1048576), platform: process.platform, captureEngine: capture.engineName(), node: process.version, uptimeSeconds: Math.floor(process.uptime()), genBps: 0, outBps: 0, hlsBytes, servedBytes, devices: { total: data.sources.length, present: data.sources.filter(x => x.enabled !== false).length, video: data.sources.filter(x => x.enabled !== false).length, audio: data.sources.filter(x => x.enabled !== false && x.audioDevice).length }, nginx: null }, channels });
   }
   if (url.pathname.startsWith('/api/')) {
@@ -1409,16 +1429,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/metrics') {
     const channels = data.channels.map(publicChannel);
-    let hlsBytesTotal = 0;
-    try {
-      for (const dir of fs.readdirSync(HLS_DIR, { withFileTypes: true })) {
-        if (!dir.isDirectory()) continue;
-        for (const name of fs.readdirSync(path.join(HLS_DIR, dir.name))) {
-          if (!/\.(ts|m3u8|m4s|mp4)$/i.test(name)) continue;
-          try { hlsBytesTotal += fs.statSync(path.join(HLS_DIR, dir.name, name)).size; } catch {}
-        }
-      }
-    } catch {}
+    const hlsBytesTotal = hlsFileSizes().total;
     return send(res, 200, {
       ok: true,
       cpuCount: os.cpus().length, cpuLoad: os.loadavg()[0] || 0,
@@ -1429,7 +1440,7 @@ const server = http.createServer(async (req, res) => {
       runningChannels: channels.filter(c => c.status === 'running').length,
       totalChannels: channels.length,
       hlsBytesTotal, egressBytesTotal: servedBytes,
-      ingestBandwidthBps: 0, egressBandwidthBps: egressBps, internetBandwidthBps: 0
+      ingestBandwidthBps: ingestBps, egressBandwidthBps: egressBps, internetBandwidthBps: 0
     });
   }
   if (req.method === 'POST' && url.pathname === '/api/settings/regenerate-nginx') {
@@ -1535,6 +1546,16 @@ setInterval(() => {
   const elapsed = Math.max(1, (now - lastServedSample.at) / 1000);
   egressBps = Math.max(0, Math.round((servedBytes - lastServedSample.bytes) / elapsed));
   lastServedSample = { bytes: servedBytes, at: now };
+  // باندويث الإدخال: نمو مقاطع HLS بين عينتين. يُحسب لكل ملف على حدة حتى لا
+  // يُلغي حذف المقاطع القديمة (hlsDeleteThreshold) البايتات المولَّدة حديثاً.
+  const hls = hlsFileSizes();
+  let generated = 0;
+  if (lastHlsFiles.size) for (const [file, size] of hls.sizes) {
+    const prev = lastHlsFiles.get(file) || 0;
+    if (size > prev) generated += size - prev;
+  }
+  lastHlsFiles = hls.sizes;
+  ingestBps = lastHlsFiles.size && generated ? Math.max(0, Math.round(generated / elapsed)) : 0;
   probeNginxPort();
 }, 3000).unref();
 probeNginxPort();

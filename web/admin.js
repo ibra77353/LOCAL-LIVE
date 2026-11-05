@@ -96,7 +96,10 @@ function switchView(name) {
 
 // ---------------- Boot ----------------
 async function boot() {
-  await Promise.all([loadSettings(), loadSources(), loadChannels()]);
+  // المصادر أولاً: جدول القنوات يطابق sourceId بأسماء المصادر، والتحميل المتوازي
+  // كان يعرض «—» في عمود المصدر حتى إعادة تحميل القنوات.
+  await Promise.all([loadSettings(), loadSources()]);
+  await loadChannels();
   refreshStatus();
   clearInterval(statusTimer);
   statusTimer = setInterval(refreshStatus, 5000);
