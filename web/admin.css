@@ -554,8 +554,7 @@ label .input {
 
 .table {
   width: 100%;
-  border-collapse: collapse;
-  min-width: 680px
+  border-collapse: collapse
 }
 
 .table th {
@@ -611,59 +610,42 @@ label .input {
   white-space: nowrap
 }
 
-/* ---- جداول القنوات والمصادر المتجاوبة ----
+/* ---- جداول لوحة الإدارة المتجاوبة ----
    بلا عرض أدنى ثابت، فلا يتجاوز الجدول حاوية .table-wrap على الشاشات الصغيرة،
    وعندما يضيق عرض الحاوية يتحول كل صف إلى بطاقة بعناوين حقول واضحة. */
-#channelsTable,
-#sourcesTable {
-  min-width: 0
-}
-
-#channelsTable th,
-#channelsTable td,
-#sourcesTable th,
-#sourcesTable td {
+.table th,
+.table td {
   white-space: normal;
   overflow-wrap: anywhere
 }
 
-#channelsTable th:last-child,
-#channelsTable td:last-child,
-#sourcesTable th:last-child,
-#sourcesTable td:last-child {
+.table th:last-child,
+.table td:last-child {
   width: auto
 }
 
-#channelsTable .row-actions,
-#sourcesTable .row-actions {
+.table .row-actions {
   flex-wrap: wrap
 }
 
-#view-channels .table-wrap,
-#view-sources .table-wrap {
+.table-wrap {
   container-type: inline-size
 }
 
 @container (max-width: 760px) {
-  #channelsTable thead,
-  #sourcesTable thead {
+  .table thead {
     display: none
   }
 
-  #channelsTable,
-  #channelsTable tbody,
-  #channelsTable tr,
-  #channelsTable td,
-  #sourcesTable,
-  #sourcesTable tbody,
-  #sourcesTable tr,
-  #sourcesTable td {
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
     display: block;
     width: auto
   }
 
-  #channelsTable tr,
-  #sourcesTable tr {
+  .table tr {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px 16px;
@@ -671,18 +653,15 @@ label .input {
     border-bottom: 1px solid rgba(35, 57, 74, .55)
   }
 
-  #channelsTable tbody tr:last-child,
-  #sourcesTable tbody tr:last-child {
+  .table tbody tr:last-child {
     border-bottom: 0
   }
 
-  #channelsTable tr:hover td,
-  #sourcesTable tr:hover td {
+  .table tr:hover td {
     background: none
   }
 
-  #channelsTable td,
-  #sourcesTable td {
+  .table td {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
@@ -693,13 +672,41 @@ label .input {
     font-size: 13.5px
   }
 
-  #channelsTable td::before,
-  #sourcesTable td::before {
+  .table td::before {
     content: "";
     flex: 0 0 auto;
     color: var(--muted);
     font-size: 11.5px;
     font-weight: 600
+  }
+
+  /* عناوين حقول جدول المراقبة */
+  #statusTable td:nth-child(1)::before {
+    content: "القناة"
+  }
+
+  #statusTable td:nth-child(2)::before {
+    content: "الحالة"
+  }
+
+  #statusTable td:nth-child(3)::before {
+    content: "المشاهدون"
+  }
+
+  #statusTable td:nth-child(4)::before {
+    content: "البيانات"
+  }
+
+  #statusTable td:nth-child(5)::before {
+    content: "إعادة التشغيل"
+  }
+
+  #statusTable td:nth-child(6)::before {
+    content: "آخر الأخطاء"
+  }
+
+  #statusTable td:nth-child(7)::before {
+    content: "إجراءات"
   }
 
   /* عناوين حقول جدول القنوات */
@@ -756,7 +763,10 @@ label .input {
     content: "إجراءات"
   }
 
-  /* اسم القناة والمعرّف والإجراءات تمتد على كامل عرض البطاقة */
+  /* اسم القناة/المصدر والتفاصيل والإجراءات تمتد على كامل عرض البطاقة */
+  #statusTable td:nth-child(1),
+  #statusTable td:nth-child(6),
+  #statusTable td:nth-child(7),
   #channelsTable td:nth-child(2),
   #channelsTable td:nth-child(3),
   #channelsTable td:nth-child(9),
@@ -766,30 +776,29 @@ label .input {
     grid-column: 1 / -1
   }
 
+  #statusTable td:nth-child(1),
   #channelsTable td:nth-child(2),
   #sourcesTable td:nth-child(1) {
     font-size: 15px
   }
 
+  #statusTable td:nth-child(2) .chip,
   #channelsTable td:nth-child(8) .chip {
     font-size: 11.5px
   }
 
   /* حقول ذات اتجاه لاتيني: نعيد اتجاه الخلية ليظهر العنوان في مكانه */
-  #channelsTable td.cell-muted,
-  #sourcesTable td.cell-muted {
+  .table td.cell-muted {
     direction: rtl;
     text-align: right
   }
 
   /* صف "لا توجد…" لا يحتاج عنوان حقل */
-  #channelsTable td[colspan],
-  #sourcesTable td[colspan] {
+  .table td[colspan] {
     grid-column: 1 / -1
   }
 
-  #channelsTable td[colspan]::before,
-  #sourcesTable td[colspan]::before {
+  .table td[colspan]::before {
     content: none
   }
 }
