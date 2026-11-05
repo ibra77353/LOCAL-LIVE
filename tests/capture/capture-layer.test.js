@@ -1,7 +1,7 @@
 'use strict';
 // اختبارات وحدة لطبقة الالتقاط (lib/capture).
 // تغطي ما لا يمكن ممارسته عبر HTTP على Linux: أوامر DirectShow وتحليل مخرجاته،
-// ووسائط التقاط الشاشة على Windows (gdigrab) مقابل الأنظمة الأخرى (x11grab).
+// ووسائط التقاط الشاشة على Windows (gdigrab) مقابل Linux (x11grab)،
 //
 // التشغيل: node --test tests/capture/
 
@@ -39,9 +39,21 @@ test('اختيار المحرك تلقائي حسب النظام وWindows يب�
   assert.equal(capture.engineName('win32'), 'dshow');
   assert.equal(capture.engineLabel('win32'), 'DirectShow (Windows)');
   assert.equal(capture.engineName('linux'), 'v4l2');
-  // أي نظام POSIX غير مسجّل يُعامل بمحرك V4L2، ولا يمس ذلك مسار Windows.
-  assert.equal(capture.engineFor('darwin').name, 'v4l2');
-  assert.equal(capture.engineFor('freebsd').name, 'v4l2');
+  assert.equal(capture.engineLabel('linux'), 'V4L2 + ALSA (Linux)');
+});
+
+test('الأنظمة غير المدعومة لا تُعامل كمحرك V4L2', () => {
+  for (const platform of ['darwin', 'freebsd', 'openbsd', 'aix', 'sunos']) {
+    assert.equal(capture.isSupported(platform), false);
+    assert.throws(() => capture.engineFor(platform), /غير مدعوم/);
+    // لوحة الحالة تبقى قابلة للقراءة بدل رفع خطأ.
+    assert.equal(capture.engineName(platform), 'unsupported');
+    assert.equal(capture.engineLabel(platform), 'نظام غير مدعوم');
+    assert.throws(() => capture.usbInputArgs({ videoDevice: 'x' }, platform), /غير مدعوم/);
+    assert.throws(() => capture.screenInputArgs({ fps: 15 }, platform), /غير مدعوم/);
+  }
+  assert.equal(capture.isSupported('win32'), true);
+  assert.equal(capture.isSupported('linux'), true);
 });
 
 // ---------------------------------------------------------------- تعداد الأجهزة

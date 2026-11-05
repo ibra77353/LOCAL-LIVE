@@ -27,7 +27,7 @@
 | `lib/capture/capabilities.js` | تجميع قدرات الجهاز والتوصية (مشترك بين المحركين) |
 | `lib/capture/screen.js` | التقاط الشاشة: gdigrab على Windows وx11grab على Linux |
 
-- **اختيار المحرك:** `win32 → DirectShow`، و`linux → V4L2`، وأي نظام POSIX آخر يُعامل كمحرك V4L2. سلوك Windows لم يتغيّر إطلاقاً.
+- **اختيار المحرك:** `win32 → DirectShow`، و`linux → V4L2` فقط. أي نظام آخر (macOS/BSD وغيرها) غير مدعوم ولا يُعامل كمحرك V4L2: طلب الالتقاط يرفع خطأً واضحاً، ولوحة `/api/status` تُبلّغ `captureEngine: "unsupported"`. سلوك Windows لم يتغيّر إطلاقاً.
 - **تعداد الأجهزة:** على Windows عبر `-list_devices` في FFmpeg؛ وعلى Linux بقراءة `/dev/video*` و`/sys/class/video4linux/*/name` وبطاقات الصوت من `/proc/asound/cards` دون تشغيل FFmpeg.
 - **الصوت:** DirectShow يحمل الصوت مع الفيديو في إدخال واحد (`video=...:audio=...`)، أما V4L2 فلا يحمل صوتاً، فتُضاف طبقة ALSA كإدخال ثانٍ (`-f alsa -i plughw:N`) مع `-map 1:a:0?`. الطبقة تُبلّغ الخادم بفهرس إدخال الصوت (`audioInputIndex`) بدل أن يعرف التفاصيل.
 - **إضافة نظام جديد:** ملف محرك يوفّر الدوال نفسها (`discover`, `capabilitiesArgs`, `inputPlan`, `testVideoArgs`, `testAudioArgs`) + سطر تسجيل في `ENGINES` داخل `lib/capture/index.js`.
