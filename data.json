@@ -68,7 +68,7 @@
       "enabled": true,
       "quality": "288p",
       "fps": "20",
-      "bitrate": "500k",
+      "bitrate": "300k",
       "autoStart": false,
       "alwaysOn": false,
       "sortOrder": 0,

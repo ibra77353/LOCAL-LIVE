@@ -18,7 +18,7 @@ function getAssetUrl(raw) {
 // جودة القناة الواحدة: نسخ المصدر (copy) ثم جودات الترميز.
 const CH_QUALITIES = [
   ['copy', 'نسخ المصدر (بلا ترميز — الأخف والأعلى جودة)'],
-  ['auto', 'تلقائي (أبعاد الخرج من الإعدادات)'],
+  ['auto', 'تلقائي (الأبعاد الافتراضية)'],
   ['240p', '240p'], ['288p', '288p'], ['320p', '320p'], ['360p', '360p'],
   ['432p', '432p'], ['480p', '480p'], ['720p', '720p']
 ];
@@ -128,7 +128,7 @@ async function boot() {
 // ---------------- Settings ----------------
 const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
-  'x264Threads','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','outputWidth','outputHeight','outputFps','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
+  'x264Threads','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','autoStartOnDemand','idleStopEnabled','idleStopMinutes',
   'sourceFailStopMinutes','blockedStopMinutes'];
