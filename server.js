@@ -100,28 +100,15 @@ const DATA_PATH = path.resolve(process.env.DATA_FILE || path.join(ROOT, 'data.js
 // قيم CRF المعروضة في لوحة الإدارة (18 الأعلى جودة، 28 الأصغر حجماً).
 const CRF_VALUES = [18, 20, 23, 26, 28];
 const ENCODING_MODES = ['bitrate', 'crf'];
-// وضع الترميز النشط: «bitrate» يستهدف معدّل بت، و«crf» يثبّت الجودة بقيمة CRF.
-// x264QualityMode القديم يبقى مدعوماً ويُقرأ احتياطياً للملفات المحفوظة سابقاً.
-function encodingModeOf(settings) {
-  const mode = String((settings && settings.encodingMode) || '').toLowerCase();
-  if (ENCODING_MODES.includes(mode)) return mode;
-  return settings && settings.x264QualityMode === true ? 'crf' : 'bitrate';
-}
-function crfValueOf(settings) {
-  const value = Number(settings && settings.crfValue);
-  return CRF_VALUES.includes(value) ? value : 23;
-}
-// وضع الترميز لكل قناة: قيمة القناة (bitrate أو crf) تتقدّم على وضع الإعدادات،
-// والقيمة الفارغة تعني «وراثة وضع الإعدادات العامة».
-function channelEncodingModeOf(channel, settings) {
+// وضع الترميز يُضبط لكل قناة على حدة: «bitrate» يستهدف معدّل بت، و«crf» يثبّت الجودة.
+// القيمة الفارغة (قنوات محفوظة قبل هذا التغيير) تُعامل كوضع bitrate، وقيمة CRF غير الصالحة كـ23.
+function channelEncodingModeOf(channel) {
   const mode = String((channel && channel.encodingMode) || '').toLowerCase();
-  if (ENCODING_MODES.includes(mode)) return mode;
-  return encodingModeOf(settings);
+  return ENCODING_MODES.includes(mode) ? mode : 'bitrate';
 }
-// قيمة CRF للقناة إن حُدّدت، وإلا قيمة الإعدادات العامة.
-function channelCrfValueOf(channel, settings) {
+function channelCrfValueOf(channel) {
   const value = Number(channel && channel.crfValue);
-  return CRF_VALUES.includes(value) ? value : crfValueOf(settings);
+  return CRF_VALUES.includes(value) ? value : 23;
 }
 // الإعدادات فقط هي الافتراضية؛ لا تُنشأ مصادر أو قنوات تلقائياً عند أول تشغيل.
 function defaultData() {
@@ -141,12 +128,6 @@ function defaultData() {
       capLevelToPlayerSize: cfg.capLevelToPlayerSize !== false,
       cpuSaverDefault: !!cfg.cpuSaverDefault,
       ffmpegPath: cfg.ffmpegPath || 'ffmpeg', ffprobePath: cfg.ffprobePath || 'ffprobe', nginxPath: cfg.nginxPath || 'nginx/nginx.exe',
-      // وضع الترميز صار اختياراً صريحاً (Bitrate أو CRF) مع قيمة CRF محفوظة
-      // كانت مثبّتة على 23، وبِتريت افتراضي اختياري يسبق قيمة الجودة الثابتة.
-      encodingMode: encodingModeOf(cfg),
-      crfValue: crfValueOf(cfg),
-      defaultBitrate: /^\d{2,5}k$/.test(String(cfg.defaultBitrate || '').trim().toLowerCase()) ? String(cfg.defaultBitrate).trim().toLowerCase() : '',
-      x264QualityMode: encodingModeOf(cfg) === 'crf',
       outputWidth: Number(cfg.outputWidth) || 640,
       outputHeight: Number(cfg.outputHeight) || 360,
       outputFps: Number(cfg.outputFps) || 20,
@@ -913,9 +894,8 @@ function buildArgs(channel, forceTranscode = false) {
   const outputWidth=isCopyQuality(qualityValue)?(srcW||1280):(presetHeight?derivedWidth:settingsWidth);
   const outputFps = clampNumber(Number(channel.fps) || settings.outputFps, 1, 60, 20);
   const tierBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
-  // أولوية البِتريت: بِتريت القناة ← البِتريت الافتراضي في الإعدادات ← قيمة الجودة.
-  const defaultBitrate = normalizeVideoBitrate(settings.defaultBitrate, tierBitrate);
-  const videoBitrate = normalizeVideoBitrate(channel.bitrate, defaultBitrate);
+  // البِتريت يُضبط لكل قناة؛ وفارغه يعني قيمة تلقائية حسب دقة الخرج.
+  const videoBitrate = normalizeVideoBitrate(channel.bitrate, tierBitrate);
   if (String(channel.bitrate || '').trim() && videoBitrate !== String(channel.bitrate).trim()) {
     logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
   }
@@ -958,9 +938,8 @@ function buildArgs(channel, forceTranscode = false) {
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
       '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
-    if (channelEncodingModeOf(channel, settings) === 'crf') {
-      // قيمة CRF للقناة إن حُدّدت، وإلا قيمة الإعدادات العامة (كانت 23 ثابتة).
-      args.push('-crf', String(channelCrfValueOf(channel, settings)));
+    if (channelEncodingModeOf(channel) === 'crf') {
+      args.push('-crf', String(channelCrfValueOf(channel)));
       // وضع CRF لا يستهدف معدّل بت ثابتاً؛ لذلك بتريت القناة كان يُتجاهل تماماً.
       // الآن يُطبَّق كسقف أعلى (VBV) حتى يبقى الإعداد مؤثراً دون فرض معدّل ثابت.
       if (String(channel.bitrate || '').trim()) {
@@ -1450,26 +1429,8 @@ const server = http.createServer(async (req, res) => {
       if (value.length > (key === 'ticker' ? 500 : (['ffmpegPath','ffprobePath','nginxPath'].includes(key) ? 1000 : 300))) return apiError(res,400,`قيمة ${key} أطول من المسموح`);
       data.settings[key] = value;
     }
-    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','x264QualityMode','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs'];
+    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs'];
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
-    // الوضع الصريح (encodingMode) هو المصدر؛ x264QualityMode يبقى متزامناً معه.
-    if (Object.prototype.hasOwnProperty.call(body,'x264QualityMode')) data.settings.encodingMode = data.settings.x264QualityMode ? 'crf' : 'bitrate';
-    if (Object.prototype.hasOwnProperty.call(body,'encodingMode')) {
-      const mode = String(body.encodingMode || '').toLowerCase();
-      if (!ENCODING_MODES.includes(mode)) return apiError(res,400,'وضع الترميز يجب أن يكون bitrate أو crf');
-      data.settings.encodingMode = mode;
-      data.settings.x264QualityMode = mode === 'crf';
-    }
-    if (Object.prototype.hasOwnProperty.call(body,'crfValue')) {
-      const crf = Number(body.crfValue);
-      if (!CRF_VALUES.includes(crf)) return apiError(res,400,`قيمة CRF يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);
-      data.settings.crfValue = crf;
-    }
-    if (Object.prototype.hasOwnProperty.call(body,'defaultBitrate')) {
-      const raw = String(body.defaultBitrate || '').trim().toLowerCase();
-      if (raw && !/^\d{2,5}k$/.test(raw)) return apiError(res,400,'معدّل البت الافتراضي يجب أن يكون مثل 500k أو 800k أو 1200k أو 2000k');
-      data.settings.defaultBitrate = raw;
-    }
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
       outputWidth:[160,3840], outputHeight:[120,2160], outputFps:[1,60], gopSeconds:[1,10],
@@ -1540,9 +1501,9 @@ const server = http.createServer(async (req, res) => {
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
     const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
-    // وضع الترميز لكل قناة: فارغ = وراثة وضع الإعدادات العامة.
-    const encMode = String(body.encodingMode || '').toLowerCase();
-    if (encMode && !ENCODING_MODES.includes(encMode)) return apiError(res, 400, 'وضع ترميز القناة يجب أن يكون bitrate أو crf أو فارغاً لوراثة الإعدادات');
+    // وضع الترميز يُضبط لكل قناة؛ الافتراضي bitrate حين لا يُرسل.
+    const encMode = String(body.encodingMode || '').toLowerCase() || 'bitrate';
+    if (!ENCODING_MODES.includes(encMode)) return apiError(res, 400, 'وضع ترميز القناة يجب أن يكون bitrate أو crf');
     const crfValue = body.crfValue === '' || body.crfValue === null || body.crfValue === undefined ? '' : Number(body.crfValue);
     if (crfValue !== '' && !CRF_VALUES.includes(crfValue)) return apiError(res, 400, `قيمة CRF للقناة يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);
     const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), encodingMode: encMode, crfValue, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
@@ -1559,11 +1520,11 @@ const server = http.createServer(async (req, res) => {
     // وكان يُرفض سابقاً فيتعذر حفظ القناة دون قيمة FPS.
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
-    // وضع الترميز الخاص بالقناة: '' = وراثة وضع الإعدادات العامة.
+    // وضع الترميز الخاص بالقناة: '' (قناة قديمة) يُحفظ كـbitrate.
     if (Object.prototype.hasOwnProperty.call(body,'encodingMode')) {
       const mode = String(body.encodingMode || '').toLowerCase();
-      if (mode && !ENCODING_MODES.includes(mode)) return apiError(res,400,'وضع ترميز القناة يجب أن يكون bitrate أو crf أو فارغاً لوراثة الإعدادات');
-      body.encodingMode = mode;
+      if (mode && !ENCODING_MODES.includes(mode)) return apiError(res,400,'وضع ترميز القناة يجب أن يكون bitrate أو crf');
+      body.encodingMode = mode || 'bitrate';
     }
     if (Object.prototype.hasOwnProperty.call(body,'crfValue') && body.crfValue !== '' && body.crfValue !== null && body.crfValue !== undefined) {
       if (!CRF_VALUES.includes(Number(body.crfValue))) return apiError(res,400,`قيمة CRF للقناة يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);

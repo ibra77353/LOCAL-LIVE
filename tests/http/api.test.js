@@ -422,14 +422,14 @@ test('bitrate القناة يعمل كسقف أعلى في وضع CRF ويبقى
     return logs || '';
   };
 
-  await api.put('/api/settings', { x264QualityMode: true });
+  await api.put(`/api/channels/${id}`, { encodingMode: 'crf' });
   const crf = await argsFor();
   assert.match(crf, /-crf 23/);
   assert.match(crf, /-maxrate 400k/);
   assert.match(crf, /-bufsize 800k/);
   assert.doesNotMatch(crf, /-b:v/);
 
-  await api.put('/api/settings', { x264QualityMode: false });
+  await api.put(`/api/channels/${id}`, { encodingMode: 'bitrate' });
   const abr = await argsFor();
   assert.match(abr, /-b:v 400k/);
   assert.match(abr, /-maxrate 400k/);
@@ -477,9 +477,9 @@ test('إعدادات الدقة ترفض الأبعاد الفردية وتقب�
   assert.equal(even.json.settings.outputHeight, 362);
 });
 
-// وضع الترميز اختيار صريح: CRF يستخدم القيمة المختارة (كانت 23 ثابتة)، وBitrate
-// يستخدم المعدّل الافتراضي المحفوظ في الإعدادات، دون تعارض مع الدقة أو FPS أو preset.
-test('وضع الترميز Bitrate/CRF يغيّر وسائط FFmpeg ويطبّق قيمة CRF المختارة', async () => {
+// وضع الترميز يُضبط لكل قناة وحدها: CRF يستخدم القيمة المختارة، وBitrate يستهدف
+// المعدّل المحدّد، دون تعارض مع الدقة أو FPS أو preset. لا يوجد إعداد عام بعد الآن.
+test('وضع ترميز القناة Bitrate/CRF يغيّر وسائط FFmpeg ويطبّق قيمة CRF المختارة', async () => {
   const src = await api.post('/api/sources', { name: 'مصدر وضع الترميز', type: 'file', path: 'srv/uploads/quality-test.mp4' });
   assert.equal(src.status, 201);
   const ch = await api.post('/api/channels', { name: 'قناة وضع الترميز', sourceId: src.json.source.id, quality: '360p', fps: 25 });
@@ -497,7 +497,8 @@ test('وضع الترميز Bitrate/CRF يغيّر وسائط FFmpeg ويطبّ�
     return logs || '';
   };
 
-  await api.put('/api/settings', { encodingMode: 'crf', crfValue: 18, defaultBitrate: '' });
+  const setCrf = await api.put(`/api/channels/${id}`, { encodingMode: 'crf', crfValue: 18 });
+  assert.equal(setCrf.status, 200);
   const crfArgs = await argsFor();
   assert.match(crfArgs, /-crf 18/);
   assert.doesNotMatch(crfArgs, /-b:v/);
@@ -505,33 +506,39 @@ test('وضع الترميز Bitrate/CRF يغيّر وسائط FFmpeg ويطبّ�
   assert.match(crfArgs, /fps=25/);
   assert.match(crfArgs, /-preset (superfast|veryfast)/);
 
-  await api.put('/api/settings', { encodingMode: 'bitrate', defaultBitrate: '800k' });
+  const setBitrate = await api.put(`/api/channels/${id}`, { encodingMode: 'bitrate', bitrate: '800k', crfValue: null });
+  assert.equal(setBitrate.status, 200);
   const abrArgs = await argsFor();
   assert.match(abrArgs, /-b:v 800k/);
   assert.doesNotMatch(abrArgs, /-crf/);
 
-  // بِتريت القناة يتقدّم على الافتراضي من الإعدادات
   await api.put(`/api/channels/${id}`, { bitrate: '1200k' });
   assert.match(await argsFor(), /-b:v 1200k/);
 
-  // قيم غير مسموحة تُرفض بوضوح
-  assert.equal((await api.put('/api/settings', { encodingMode: 'abr' })).status, 400);
-  assert.equal((await api.put('/api/settings', { crfValue: 25 })).status, 400);
-  assert.equal((await api.put('/api/settings', { defaultBitrate: 'fast' })).status, 400);
+  // الإعدادات العامة لم تعد تحمل وضع ترميز أو بِتريت افتراضياً
+  const settings = (await api.get('/api/settings')).json.settings;
+  assert.equal(settings.encodingMode, undefined);
+  assert.equal(settings.crfValue, undefined);
+  assert.equal(settings.defaultBitrate, undefined);
 
-  await api.put('/api/settings', { encodingMode: 'bitrate', crfValue: 23, defaultBitrate: '', x264QualityMode: false });
+  // قيم غير مسموحة تُرفض بوضوح
+  assert.equal((await api.put(`/api/channels/${id}`, { encodingMode: 'abr' })).status, 400);
+  assert.equal((await api.put(`/api/channels/${id}`, { crfValue: 25 })).status, 400);
+
   await api.del(`/api/channels/${id}`);
   await api.del(`/api/sources/${src.json.source.id}`);
 });
 
-// كل قناة تستطيع تجاوز وضع الترميز العام (bitrate/CRF) ومستوى CRF، وترك الحقل
-// فارغاً يعيدها إلى وراثة الإعدادات العامة دون كسر تشغيلها.
-test('وضع الترميز لكل قناة يتقدّم على الإعدادات العامة ويُورّثها عند تركه فارغاً', async () => {
+// وضع الترميز خاص بكل قناة: القناة التي لا ترسل وضعاً تعمل بـBitrate، وبِتريت
+// القناة في وضع CRF يعمل كسقف أعلى (VBV)، وفارغ البِتريت يتبع دقة الخرج.
+test('وضع الترميز مستقل لكل قناة ولا يوجد إعداد عام', async () => {
   const src = await api.post('/api/sources', { name: 'مصدر وضع القناة', type: 'file', path: 'srv/uploads/quality-test.mp4' });
   assert.equal(src.status, 201);
   const ch = await api.post('/api/channels', { name: 'قناة وضع خاص', sourceId: src.json.source.id, quality: '360p', fps: 25 });
   assert.equal(ch.status, 201);
   const id = ch.json.channel.id;
+  // الافتراضي عند إنشاء قناة هو وضع Bitrate
+  assert.equal(ch.json.channel.encodingMode, 'bitrate');
 
   const argsFor = async () => {
     await api.post(`/api/channels/${id}/start`);
@@ -544,8 +551,7 @@ test('وضع الترميز لكل قناة يتقدّم على الإعدادا
     return logs || '';
   };
 
-  // الإعدادات CRF، والقناة تختار Bitrate صريحاً → يجب ألا يظهر -crf
-  await api.put('/api/settings', { encodingMode: 'crf', crfValue: 18, defaultBitrate: '' });
+  // Bitrate صريح بقيمة 600k → -b:v 600k بلا -crf
   const setBitrate = await api.put(`/api/channels/${id}`, { bitrate: '600k', encodingMode: 'bitrate' });
   assert.equal(setBitrate.status, 200);
   assert.equal(setBitrate.json.channel.encodingMode, 'bitrate');
@@ -553,28 +559,26 @@ test('وضع الترميز لكل قناة يتقدّم على الإعدادا
   assert.match(channelBitrateArgs, /-b:v 600k/);
   assert.doesNotMatch(channelBitrateArgs, /-crf/);
 
-  // الإعدادات Bitrate، والقناة تختار CRF بمستوى خاص → -crf 26 بلا -b:v
-  await api.put('/api/settings', { encodingMode: 'bitrate', defaultBitrate: '800k' });
-  const setCrf = await api.put(`/api/channels/${id}`, { encodingMode: 'crf', crfValue: 26 });
+  // CRF بمستوى خاص مع سقف 1200k → -crf 26 و-maxrate 1200k بلا -b:v
+  const setCrf = await api.put(`/api/channels/${id}`, { encodingMode: 'crf', crfValue: 26, bitrate: '1200k' });
   assert.equal(setCrf.status, 200);
   assert.equal(setCrf.json.channel.encodingMode, 'crf');
   assert.equal(setCrf.json.channel.crfValue, 26);
   const channelCrfArgs = await argsFor();
   assert.match(channelCrfArgs, /-crf 26/);
+  assert.match(channelCrfArgs, /-maxrate 1200k/);
   assert.doesNotMatch(channelCrfArgs, /-b:v/);
 
-  // الرجوع إلى «افتراضي» يعيد وراثة وضع الإعدادات (Bitrate 800k) بعد إفراغ بتريت القناة
-  const inherit = await api.put(`/api/channels/${id}`, { encodingMode: '', crfValue: null, bitrate: '' });
-  assert.equal(inherit.status, 200);
-  assert.equal(inherit.json.channel.encodingMode, '');
-  assert.match(await argsFor(), /-b:v 800k/);
+  // العودة إلى Bitrate ببِتريت فارغ يتبع دقة الخرج (360p → 500k)
+  const backToBitrate = await api.put(`/api/channels/${id}`, { encodingMode: 'bitrate', crfValue: null, bitrate: '' });
+  assert.equal(backToBitrate.status, 200);
+  assert.match(await argsFor(), /-b:v 500k/);
 
   // قيم غير مسموحة تُرفض بوضوح
   assert.equal((await api.put(`/api/channels/${id}`, { encodingMode: 'abr' })).status, 400);
   assert.equal((await api.put(`/api/channels/${id}`, { crfValue: 25 })).status, 400);
   assert.equal((await api.post('/api/channels', { name: 'قناة وضع خاطئ', encodingMode: 'abr' })).status, 400);
 
-  await api.put('/api/settings', { encodingMode: 'bitrate', crfValue: 23, defaultBitrate: '', x264QualityMode: false });
   await api.del(`/api/channels/${id}`);
   await api.del(`/api/sources/${src.json.source.id}`);
 });

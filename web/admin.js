@@ -29,7 +29,7 @@ const CH_CRF_LEVELS = [
 ];
 // معدّلات البت المتاحة لكل قناة (CBR) — تُعرض فقط عند اختيار وضع CBR.
 const CH_BITRATES = [
-  ['', 'حسب الافتراضي (من الإعدادات)'],
+  ['', 'تلقائي حسب جودة الخرج'],
   ['300k', '300k — استهلاك منخفض جداً'],
   ['400k', '400k — استهلاك منخفض'],
   ['500k', '500k — متوسط'],
@@ -134,33 +134,9 @@ async function boot() {
 const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
   'x264Threads','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','outputWidth','outputHeight','outputFps','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
-  'encodingMode','crfValue','defaultBitrate',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','autoStartOnDemand','idleStopEnabled','idleStopMinutes',
   'sourceFailStopMinutes','blockedStopMinutes'];
-
-// وضع الترميز: يُظهر حقول الوضع المختار فقط (Bitrate أو CRF) ويعرض القيمة المطبّقة.
-function syncEncodingModeUI() {
-  const modeEl = $('#s_encodingMode');
-  const mode = modeEl ? modeEl.value : 'bitrate';
-  const bitrateBox = $('#bitrateBox'), crfBox = $('#crfBox');
-  if (bitrateBox) bitrateBox.style.display = mode === 'bitrate' ? '' : 'none';
-  if (crfBox) crfBox.style.display = mode === 'crf' ? '' : 'none';
-  const summary = $('#encModeSummary');
-  if (!summary) return;
-  // القيمة داخل اتجاه LTR حتى لا يعكس سياق RTL ترتيب «CRF 23» إلى «23 CRF».
-  if (mode === 'crf') {
-    const sel = $('#s_crfValue');
-    const desc = sel && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent.split('—').slice(1).join('—').trim() : '';
-    summary.innerHTML = 'الوضع المطبّق الآن: <span dir="ltr">CRF ' + (sel ? sel.value : '23') + '</span>' + (desc ? ' — ' + desc : '');
-  } else {
-    const bitrate = $('#s_defaultBitrate');
-    summary.innerHTML = 'الوضع المطبّق الآن: <span dir="ltr">Bitrate ' + (bitrate && bitrate.value ? bitrate.value : 'حسب الجودة') + '</span> — معدّل بت ثابت';
-  }
-}
-$('#s_encodingMode').addEventListener('change', syncEncodingModeUI);
-$('#s_crfValue').addEventListener('change', syncEncodingModeUI);
-$('#s_defaultBitrate').addEventListener('change', syncEncodingModeUI);
 
 async function loadSettings() {
   const { settings, nginx } = await api('/settings');
@@ -178,7 +154,6 @@ async function loadSettings() {
     if (!el) continue;
     if (el.type === 'checkbox') el.checked = !!settings[k]; else el.value = settings[k] ?? '';
   }
-  syncEncodingModeUI();
   document.body.classList.toggle('worldcup', settings.theme === 'worldcup');
   $('#brandName').textContent = settings.siteName || 'البرنس لايف';
   $('#adminFooter').textContent = 'جميع الحقوق محفوظة © البرنس لايف';
@@ -622,7 +597,7 @@ function deleteChannel(id) {
 
 // وضع ترميز القناة: يظهر حقل الوضع المختار فقط (معدّل البت أو مستوى CRF)، ويبقى «افتراضي» بلا حقول.
 function syncChannelEncodingUI() {
-  const mode = $('#m_cencmode')?.value || '';
+  const mode = $('#m_cencmode')?.value || 'bitrate';
   const bitrateBox = $('#m_cbitrateBox');
   const crfBox = $('#m_ccrfBox');
   if (bitrateBox) bitrateBox.style.display = mode === 'bitrate' ? '' : 'none';
@@ -665,8 +640,7 @@ function openChannelModal(id) {
     <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
     <label>وضع الترميز لهذه القناة
       <select class="input" id="m_cencmode" onchange="syncChannelEncodingUI()">
-        <option value="">افتراضي — يتبع وضع الإعدادات</option>
-        <option value="bitrate" ${ch?.encodingMode === 'bitrate' ? 'selected' : ''}>CBR — معدّل بت ثابت</option>
+        <option value="bitrate" ${ch?.encodingMode === 'crf' ? '' : 'selected'}>Bitrate — معدّل بت محدّد</option>
         <option value="crf" ${ch?.encodingMode === 'crf' ? 'selected' : ''}>CRF — جودة ثابتة</option>
       </select></label>
     <label id="m_cbitrateBox">معدّل البت (Bitrate) لهذه القناة
@@ -683,7 +657,7 @@ function openChannelModal(id) {
     <div id="m_cencInfoWarn" style="display:none; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; color: rgb(239,68,68); line-height: 1.6;">
       ⚠️ <b>العيوب :</b> تقطيع البث — أجهزة الأكسس بوينت الضعيفة أو المزدحمة بالتشويش لا تستطيع معالجة هذا الارتفاع المفاجئ، مما يؤدي إلى امتلاء الـ Buffer وتوقف الفيديو عند العميل.
     </div>
-    <p class="hint">«افتراضي» يتبع وضع الترميز ومستوى CRF من الإعدادات العامة، واختيار وضع هنا يتجاوزها لهذه القناة وحدها. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ. «CBR» يُظهر خيارات معدّل البت (أعلى = جودة أوضح واستهلاك شبكة أكبر)، و«CRF» يُظهر مستوى الجودة الثابتة.</p>
+    <p class="hint">وضع الترميز يُضبط هنا لهذه القناة وحدها. «Bitrate» يستهدف المعدّل المحدّد (أعلى = جودة أوضح واستهلاك شبكة أكبر). «CRF» يثبّت الجودة ويتغيّر الحجم حسب المشهد، ومعدّل البت المحدّد يعمل كسقف أعلى. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
