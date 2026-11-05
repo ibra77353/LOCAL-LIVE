@@ -837,9 +837,16 @@ async function refreshDashboard() {
   // نسبة المعالج من عدّادات النظام الحقيقية (os.cpus)؛ معدل الحِمل loadavg ليس
   // نسبة استهلاك، وهو صفر دائماً على ويندوز فلا يصلح لهذه البطاقة.
   const cpuPct = Number.isFinite(m.cpuPercent) ? m.cpuPercent : 0;
+  // ذاكرة النظام الحقيقية (إجمالي/مستخدم) من عدّادات نظام التشغيل عبر /metrics.
+  const memTotal = Number(m.memTotalBytes) || 0;
+  const memUsed = Number(m.memUsedBytes) || 0;
+  const memPct = Number.isFinite(m.memPercent) ? m.memPercent : (memTotal ? Math.round((memUsed / memTotal) * 100) : 0);
+  const memSub = memTotal
+    ? `${m.cpuCount} نواة · الذاكرة ${fmtBytes(memUsed)} من ${fmtBytes(memTotal)} (${memPct}%)`
+    : `${m.cpuCount} نواة · ذاكرة ${m.memoryMB} MB`;
   grid.innerHTML = [
     dashCard('green-accent', '⏱️', fmtDuration(m.uptimeSec), '', 'مدة التشغيل', 'منذ آخر إقلاع', false),
-    dashCard('amber-accent', '🖥️', cpuPct, '%', 'استهلاك المعالج', `${m.cpuCount} نواة · ${m.memoryMB} MB ذاكرة`, false),
+    dashCard('amber-accent', '🖥️', cpuPct, '%', 'استهلاك المعالج', memSub, false),
     dashCard('live-accent', '👁️', m.currentViewers, '', 'المشاهدون الآن', `يشاهدون ${m.watchedChannels} قناة`, m.currentViewers > 0),
     dashCard('blue-accent', '📊', m.totalViewers, '', 'إجمالي المشاهدين', 'منذ بدء التشغيل', false),
     dashCard('purple-accent', '📺', m.runningChannels, ` / ${m.totalChannels}`, 'قنوات تبثّ الآن', `${m.watchedChannels} منها مُشاهَدة`, m.runningChannels > 0),

@@ -304,6 +304,10 @@ test('GET /api/stats و /api/metrics يعيدان بيانات صالحة', asyn
   const metrics = await api.get('/api/metrics');
   assert.equal(metrics.status, 200);
   assert.equal(metrics.json.ok, true);
+  // ذاكرة النظام الحقيقية: إجمالي > 0، والمستخدم بين صفر والإجمالي، والنسبة مطابقة.
+  assert.ok(metrics.json.memTotalBytes > 0, 'memTotalBytes يجب أن يكون موجباً');
+  assert.ok(metrics.json.memUsedBytes >= 0 && metrics.json.memUsedBytes <= metrics.json.memTotalBytes, 'memUsedBytes خارج النطاق');
+  assert.equal(metrics.json.memPercent, Math.round((metrics.json.memUsedBytes / metrics.json.memTotalBytes) * 100));
 });
 
 // إجمالي البيانات يُقرأ من سجلات Nginx: كل استجابة 200/206 تدخل الإجمالي،

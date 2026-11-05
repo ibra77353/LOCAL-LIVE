@@ -1534,10 +1534,16 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/metrics') {
     const channels = data.channels.map(publicChannel);
     const hlsBytesTotal = hlsFileSizes().total;
+    // ذاكرة النظام الحقيقية من عدّادات نظام التشغيل (وليس ذاكرة عملية Node فقط).
+    const memTotalBytes = os.totalmem();
+    const memFreeBytes = os.freemem();
+    const memUsedBytes = Math.max(0, memTotalBytes - memFreeBytes);
     return send(res, 200, {
       ok: true,
       cpuCount: os.cpus().length, cpuPercent, cpuLoad: os.loadavg()[0] || 0,
       uptimeSec: Math.floor(process.uptime()), memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+      memTotalBytes, memUsedBytes, memFreeBytes,
+      memPercent: memTotalBytes > 0 ? Math.round((memUsedBytes / memTotalBytes) * 100) : 0,
       currentViewers: channels.reduce((sum, c) => sum + (c.viewers || 0), 0),
       watchedChannels: channels.filter(c => c.viewers > 0).length,
       totalViewers: totalViewerCount,
