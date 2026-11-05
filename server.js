@@ -654,6 +654,7 @@ function getStatus(channelId) {
     nginxBinding: { listening: nginxListening, port: nginxPort, reason: nginxListening ? '' : `لم يستجب أي خدمة على المنفذ ${nginxPort}` },
     uptime: Math.floor(process.uptime()),
     memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+    cpuCount: os.cpus().length, cpuPercent,
     ...systemMemory(),
     license: { valid: true, plan: 'محلي' },
     messages: []

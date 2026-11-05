@@ -720,6 +720,7 @@ async function refreshStatus() {
   $('#sysStats').innerHTML = `
     <span class="stat-chip ${st.nginx ? 'good' : 'bad'}">Nginx: <b>${st.nginx ? 'يعمل' : 'متوقف'}</b></span>
     <span class="stat-chip good">الخادم: <b>${Math.floor(st.uptime / 60)} دقيقة</b></span>
+    <span class="stat-chip">المعالج: <b>${Number.isFinite(st.cpuPercent) ? st.cpuPercent + '%' : '—'}</b></span>
     <span class="stat-chip">الذاكرة: <b>${Number.isFinite(st.memPercent) ? st.memPercent + '%' : st.memoryMB + ' MB'}</b></span>
     <span class="stat-chip ${st.license.valid ? 'good' : 'bad'}">الاشتراك: <b>${st.license.valid ? 'فعّال' : 'غير فعّال'}</b></span>`;
 
