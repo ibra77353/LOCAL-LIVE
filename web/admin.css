@@ -798,7 +798,9 @@ label .input {
     grid-column: 1 / -1
   }
 
-  .table td[colspan]::before {
+  #statusTable td[colspan]::before,
+  #channelsTable td[colspan]::before,
+  #sourcesTable td[colspan]::before {
     content: none
   }
 }
