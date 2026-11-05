@@ -62,6 +62,10 @@ test('GET /api/status يعيد ok:true مع قائمة القنوات', async ()
   assert.equal(res.json.ok, true);
   assert.equal(Array.isArray(res.json.channels), true);
   assert.equal(res.json.running, false);
+  // نسبة الذاكرة الحقيقية للشريط العلوي مطابقة لعدّادات النظام.
+  assert.ok(res.json.memTotalBytes > 0, 'memTotalBytes يجب أن يكون موجباً');
+  assert.ok(res.json.memUsedBytes >= 0 && res.json.memUsedBytes <= res.json.memTotalBytes, 'memUsedBytes خارج النطاق');
+  assert.equal(res.json.memPercent, Math.round((res.json.memUsedBytes / res.json.memTotalBytes) * 100));
 });
 
 // فحص Nginx: الحالة تُشتق من استماع فعلي على منفذ Nginx، والسبب يظهر فقط عند الغياب.

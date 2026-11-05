@@ -635,6 +635,16 @@ function send(res, code, data) {
   res.end(JSON.stringify(data));
 }
 
+// ذاكرة النظام الحقيقية من عدّادات نظام التشغيل (وليس ذاكرة عملية Node فقط).
+function systemMemory() {
+  const memTotalBytes = os.totalmem();
+  const memFreeBytes = os.freemem();
+  const memUsedBytes = Math.max(0, memTotalBytes - memFreeBytes);
+  return {
+    memTotalBytes, memUsedBytes, memFreeBytes,
+    memPercent: memTotalBytes > 0 ? Math.round((memUsedBytes / memTotalBytes) * 100) : 0
+  };
+}
 function getStatus(channelId) {
   const channel = channelId ? data.channels.find(c => c.id === channelId) : activeChannel();
   const nginxPort = Number(data.settings.nginxPort) || 80;
@@ -644,6 +654,7 @@ function getStatus(channelId) {
     nginxBinding: { listening: nginxListening, port: nginxPort, reason: nginxListening ? '' : `لم يستجب أي خدمة على المنفذ ${nginxPort}` },
     uptime: Math.floor(process.uptime()),
     memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+    ...systemMemory(),
     license: { valid: true, plan: 'محلي' },
     messages: []
   };
@@ -1534,16 +1545,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/metrics') {
     const channels = data.channels.map(publicChannel);
     const hlsBytesTotal = hlsFileSizes().total;
-    // ذاكرة النظام الحقيقية من عدّادات نظام التشغيل (وليس ذاكرة عملية Node فقط).
-    const memTotalBytes = os.totalmem();
-    const memFreeBytes = os.freemem();
-    const memUsedBytes = Math.max(0, memTotalBytes - memFreeBytes);
     return send(res, 200, {
       ok: true,
       cpuCount: os.cpus().length, cpuPercent, cpuLoad: os.loadavg()[0] || 0,
       uptimeSec: Math.floor(process.uptime()), memoryMB: Math.round(process.memoryUsage().rss / 1048576),
-      memTotalBytes, memUsedBytes, memFreeBytes,
-      memPercent: memTotalBytes > 0 ? Math.round((memUsedBytes / memTotalBytes) * 100) : 0,
+      ...systemMemory(),
       currentViewers: channels.reduce((sum, c) => sum + (c.viewers || 0), 0),
       watchedChannels: channels.filter(c => c.viewers > 0).length,
       totalViewers: totalViewerCount,
