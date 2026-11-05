@@ -229,6 +229,17 @@ a {
   font-weight: 700
 }
 
+/* زر أيقوني (ملء الشاشة) — SVG بدل الرموز النصية لضمان الظهور على الهواتف */
+.pbtn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 9px;
+  line-height: 0
+}
+
+.pbtn-icon svg { display: block }
+
 #closePlayer {
   background: #E2493B;
   border-color: #E2493B;
