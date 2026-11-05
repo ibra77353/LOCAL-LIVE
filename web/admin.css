@@ -611,46 +611,59 @@ label .input {
   white-space: nowrap
 }
 
-/* ---- جدول القنوات المتجاوب ----
+/* ---- جداول القنوات والمصادر المتجاوبة ----
    بلا عرض أدنى ثابت، فلا يتجاوز الجدول حاوية .table-wrap على الشاشات الصغيرة،
    وعندما يضيق عرض الحاوية يتحول كل صف إلى بطاقة بعناوين حقول واضحة. */
-#channelsTable {
+#channelsTable,
+#sourcesTable {
   min-width: 0
 }
 
 #channelsTable th,
-#channelsTable td {
+#channelsTable td,
+#sourcesTable th,
+#sourcesTable td {
   white-space: normal;
   overflow-wrap: anywhere
 }
 
 #channelsTable th:last-child,
-#channelsTable td:last-child {
+#channelsTable td:last-child,
+#sourcesTable th:last-child,
+#sourcesTable td:last-child {
   width: auto
 }
 
-#channelsTable .row-actions {
+#channelsTable .row-actions,
+#sourcesTable .row-actions {
   flex-wrap: wrap
 }
 
-#view-channels .table-wrap {
+#view-channels .table-wrap,
+#view-sources .table-wrap {
   container-type: inline-size
 }
 
 @container (max-width: 760px) {
-  #channelsTable thead {
+  #channelsTable thead,
+  #sourcesTable thead {
     display: none
   }
 
   #channelsTable,
   #channelsTable tbody,
   #channelsTable tr,
-  #channelsTable td {
+  #channelsTable td,
+  #sourcesTable,
+  #sourcesTable tbody,
+  #sourcesTable tr,
+  #sourcesTable td {
     display: block;
     width: auto
   }
 
-  #channelsTable tr {
+  #channelsTable tr,
+  #sourcesTable tr {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px 16px;
@@ -658,15 +671,18 @@ label .input {
     border-bottom: 1px solid rgba(35, 57, 74, .55)
   }
 
-  #channelsTable tbody tr:last-child {
+  #channelsTable tbody tr:last-child,
+  #sourcesTable tbody tr:last-child {
     border-bottom: 0
   }
 
-  #channelsTable tr:hover td {
+  #channelsTable tr:hover td,
+  #sourcesTable tr:hover td {
     background: none
   }
 
-  #channelsTable td {
+  #channelsTable td,
+  #sourcesTable td {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
@@ -677,7 +693,8 @@ label .input {
     font-size: 13.5px
   }
 
-  #channelsTable td::before {
+  #channelsTable td::before,
+  #sourcesTable td::before {
     content: "";
     flex: 0 0 auto;
     color: var(--muted);
@@ -685,6 +702,7 @@ label .input {
     font-weight: 600
   }
 
+  /* عناوين حقول جدول القنوات */
   #channelsTable td:nth-child(1)::before {
     content: "الترتيب"
   }
@@ -721,14 +739,35 @@ label .input {
     content: "إجراءات"
   }
 
+  /* عناوين حقول جدول المصادر */
+  #sourcesTable td:nth-child(1)::before {
+    content: "الاسم"
+  }
+
+  #sourcesTable td:nth-child(2)::before {
+    content: "النوع"
+  }
+
+  #sourcesTable td:nth-child(3)::before {
+    content: "التفاصيل"
+  }
+
+  #sourcesTable td:nth-child(4)::before {
+    content: "إجراءات"
+  }
+
   /* اسم القناة والمعرّف والإجراءات تمتد على كامل عرض البطاقة */
   #channelsTable td:nth-child(2),
   #channelsTable td:nth-child(3),
-  #channelsTable td:nth-child(9) {
+  #channelsTable td:nth-child(9),
+  #sourcesTable td:nth-child(1),
+  #sourcesTable td:nth-child(3),
+  #sourcesTable td:nth-child(4) {
     grid-column: 1 / -1
   }
 
-  #channelsTable td:nth-child(2) {
+  #channelsTable td:nth-child(2),
+  #sourcesTable td:nth-child(1) {
     font-size: 15px
   }
 
@@ -737,17 +776,20 @@ label .input {
   }
 
   /* حقول ذات اتجاه لاتيني: نعيد اتجاه الخلية ليظهر العنوان في مكانه */
-  #channelsTable td.cell-muted {
+  #channelsTable td.cell-muted,
+  #sourcesTable td.cell-muted {
     direction: rtl;
     text-align: right
   }
 
-  /* صف "لا توجد قنوات بعد." لا يحتاج عنوان حقل */
-  #channelsTable td[colspan] {
+  /* صف "لا توجد…" لا يحتاج عنوان حقل */
+  #channelsTable td[colspan],
+  #sourcesTable td[colspan] {
     grid-column: 1 / -1
   }
 
-  #channelsTable td[colspan]::before {
+  #channelsTable td[colspan]::before,
+  #sourcesTable td[colspan]::before {
     content: none
   }
 }
