@@ -136,7 +136,7 @@ const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tick
   'encodingMode','crfValue','defaultBitrate',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','autoStartOnDemand','idleStopEnabled','idleStopMinutes',
-  'sourceFailStopMinutes','blockedStopMinutes','logoImage','logoPosition','logoSizePct','logoOpacityPct'];
+  'sourceFailStopMinutes','blockedStopMinutes'];
 
 // وضع الترميز: يُظهر حقول الوضع المختار فقط (Bitrate أو CRF) ويعرض القيمة المطبّقة.
 function syncEncodingModeUI() {
@@ -178,9 +178,6 @@ async function loadSettings() {
     if (el.type === 'checkbox') el.checked = !!settings[k]; else el.value = settings[k] ?? '';
   }
   syncEncodingModeUI();
-  // حدّث تسميات نسب الشعار بجانب الأشرطة
-  if ($('#logoSizeVal')) $('#logoSizeVal').textContent = (settings.logoSizePct ?? 10) + '٪';
-  if ($('#logoOpacityVal')) $('#logoOpacityVal').textContent = (settings.logoOpacityPct ?? 50) + '٪';
   document.body.classList.toggle('worldcup', settings.theme === 'worldcup');
   $('#brandName').textContent = settings.siteName || 'البرنس لايف';
   $('#adminFooter').textContent = 'جميع الحقوق محفوظة © البرنس لايف';

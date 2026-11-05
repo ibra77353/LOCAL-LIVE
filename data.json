@@ -41,11 +41,7 @@
     "idleStopMinutes": 1,
     "sourceFailStopMinutes": 2,
     "blockedStopMinutes": 1000,
-    "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20",
-    "logoImage": "srv/uploads/logo.png",
-    "logoPosition": "top-right",
-    "logoSizePct": 10,
-    "logoOpacityPct": 50
+    "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20"
   },
   "sources": [
     {

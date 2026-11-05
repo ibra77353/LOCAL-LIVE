@@ -168,8 +168,6 @@ function defaultData() {
       sourceFailStopMinutes: Number(cfg.sourceFailStopMinutes) || 3,
       blockedStopMinutes: Number(cfg.blockedStopMinutes) || 1000,
       streamUserAgent: cfg.streamUserAgent || 'VLC/3.0.20 LibVLC/3.0.20',
-      logoImage: cfg.logoImage || '', logoPosition: cfg.logoPosition || 'top-right',
-      logoSizePct: Number(cfg.logoSizePct) || 10, logoOpacityPct: Number(cfg.logoOpacityPct) || 50,
     },
     sources: [],
     channels: []
@@ -1446,7 +1444,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/settings' && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
     const previousPort = Number(data.settings.port), previousNginxPort = Number(data.settings.nginxPort);
-    const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','logoImage','logoPosition'];
+    const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent'];
     for (const key of textKeys) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const value = String(body[key] ?? '');
       if (value.length > (key === 'ticker' ? 500 : (['ffmpegPath','ffprobePath','nginxPath'].includes(key) ? 1000 : 300))) return apiError(res,400,`قيمة ${key} أطول من المسموح`);
@@ -1477,7 +1475,7 @@ const server = http.createServer(async (req, res) => {
       outputWidth:[160,3840], outputHeight:[120,2160], outputFps:[1,60], gopSeconds:[1,10],
       startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
       maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
-      sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000], logoSizePct:[2,40], logoOpacityPct:[0,100]
+      sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000]
     };
     for (const [key,[min,max]] of Object.entries(numberRanges)) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const n = Number(body[key]);
@@ -1490,10 +1488,6 @@ const server = http.createServer(async (req, res) => {
       const allowedPresets = ['ultrafast','superfast','veryfast','faster','fast','medium','slow'];
       if (!allowedPresets.includes(String(body.x264Preset))) return apiError(res,400,'Preset غير صالح');
       data.settings.x264Preset = String(body.x264Preset);
-    }
-    if (Object.prototype.hasOwnProperty.call(body,'logoPosition')) {
-      if (!['top-right','top-left','bottom-right','bottom-left'].includes(String(body.logoPosition))) return apiError(res,400,'موضع الشعار غير صالح');
-      data.settings.logoPosition = String(body.logoPosition);
     }
     if (Object.prototype.hasOwnProperty.call(body,'theme')) {
       const allowedThemes = ['default','worldcup'];

@@ -162,7 +162,7 @@
           <div class="fields-grid">
             <label>حجم البفر الأقصى (ث)<input class="input" id="s_playerMaxBufferLength" type="number" min="5" max="120"></label>
             <label>البفر الخلفي (ث)<input class="input" id="s_playerBackBufferLength" type="number" min="0" max="120"></label>
-            <label>تأخير البث المباشر (ث)<input class="input" id="s_playerLiveSyncDuration" type="number" min="2" max="60"></label>
+            <label>تأخير البث المباشر (ث)<input class="input" id="s_playerLiveSyncDuration" type="number" min="2" max="30"></label>
           </div>
           <p class="field-note">الحد الأدنى للتأخير = طول مقطع HLS × 2 + 1.</p>
           <label class="switch-row"><input type="checkbox" id="s_capLevelToPlayerSize"> منع جودة أعلى من حجم المشغّل</label>
@@ -320,31 +320,6 @@
           <p class="field-note warn">الاسترجاع يستبدل كل الإعدادات ويعيد تشغيل النظام.</p>
         </div>
 
-        <!-- شعار القنوات: معطَّل مؤقتاً بالكامل (من packages/core/src/ffmpeg.js:
-             LOGO_FEATURE_ENABLED) لضمان أفضل أداء بث دون مشاكل، بعد بلاغات
-             تهنيج/تجمّد وتضارب محتوى بين الأجهزة عند تفعيله. أُخفيت عناصر
-             التحكّم هنا لتطابق الواجهة سلوك الخادم. لإعادة التفعيل مستقبلاً:
-             أعد هذا القسم واضبط LOGO_FEATURE_ENABLED=true. -->
-        <div class="card" style="display:none">
-          <h3>شعار القنوات</h3>
-          <p class="hint">شعار موحّد لكل القنوات، ويُفعّل من نافذة القناة.</p>
-          <label>صورة الشعار
-            <span class="with-browse">
-              <input class="input" id="s_logoImage" placeholder="srv/uploads/logo.png">
-              <button class="btn" type="button" onclick="browseUpload('s_logoImage','image/png')">استعراض / رفع</button>
-            </span></label>
-          <label>الموقع
-            <select class="input" id="s_logoPosition">
-              <option value="top-right">أعلى اليمين</option>
-              <option value="top-left">أعلى اليسار</option>
-              <option value="bottom-right">أسفل اليمين</option>
-              <option value="bottom-left">أسفل اليسار</option>
-            </select></label>
-          <label>الحجم (٪ من عرض الشاشة): <span id="logoSizeVal" dir="ltr"></span>
-            <input type="range" id="s_logoSizePct" min="2" max="40" step="1" oninput="document.getElementById('logoSizeVal').textContent=this.value+'٪'"></label>
-          <label>الشفافية (٪): <span id="logoOpacityVal" dir="ltr"></span>
-            <input type="range" id="s_logoOpacityPct" min="0" max="100" step="5" oninput="document.getElementById('logoOpacityVal').textContent=this.value+'٪'"></label>
-        </div>
       </div>
     </section>
 

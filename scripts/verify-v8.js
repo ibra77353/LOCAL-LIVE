@@ -50,7 +50,7 @@ const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'theme', 'ticker',
   'encodingMode', 'crfValue', 'defaultBitrate',
   'playerMaxBufferLength', 'playerBackBufferLength', 'playerLiveSyncDuration', 'capLevelToPlayerSize',
   'cpuSaverDefault', 'ffmpegPath', 'ffprobePath', 'nginxPath', 'streamUserAgent', 'autoStartOnDemand', 'idleStopEnabled', 'idleStopMinutes',
-  'sourceFailStopMinutes', 'blockedStopMinutes', 'logoImage', 'logoPosition', 'logoSizePct', 'logoOpacityPct'];
+  'sourceFailStopMinutes', 'blockedStopMinutes'];
 const adminHtml = fs.existsSync(filePath('web/admin.html')) ? readText('web/admin.html') : '';
 const adminJs = fs.existsSync(filePath('web/admin.js')) ? readText('web/admin.js') : '';
 const declaredMatch = /const S_KEYS = \[([\s\S]*?)\];/.exec(adminJs);
