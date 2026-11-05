@@ -42,6 +42,16 @@ test('اختيار المحرك تلقائي حسب النظام وWindows يب�
   assert.equal(capture.engineLabel('linux'), 'V4L2 + ALSA (Linux)');
 });
 
+test('نطاق الدعم ثلاثة أنظمة ولكل بيئة محركها الصحيح', () => {
+  const targets = capture.supportedTargets();
+  assert.deepEqual(targets.map(t => t.target), ['Windows 10/11', 'Ubuntu / Debian', 'Docker Linux']);
+  assert.deepEqual(targets.map(t => t.engine), ['dshow', 'v4l2', 'v4l2']);
+  // Ubuntu/Debian وDocker Linux يشتركان في منصة linux ومحرك v4l2 نفسه.
+  assert.equal(targets[1].platform, 'linux');
+  assert.equal(targets[2].platform, 'linux');
+  assert.equal(capture.engineFor(targets[2].platform).name, 'v4l2');
+});
+
 test('الأنظمة غير المدعومة لا تُعامل كمحرك V4L2', () => {
   for (const platform of ['darwin', 'freebsd', 'openbsd', 'aix', 'sunos']) {
     assert.equal(capture.isSupported(platform), false);
