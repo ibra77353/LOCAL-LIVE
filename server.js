@@ -345,7 +345,20 @@ function readBody(req, maxBytes=1024*1024) {
 const CHANNEL_WRITE_FIELDS = ['name','chanId','sourceId','category','sort','sortOrder','cover','enabled','quality','bitrate','fps','autoStart','alwaysOn'];
 // مسار PATCH مخصّص لتبديل التفعيل فقط، فلا يقبل أي حقل آخر.
 const CHANNEL_PATCH_FIELDS = ['enabled'];
-function unexpectedChannelField(body, fields = CHANNEL_WRITE_FIELDS) {
+// حقول المصدر المعتمدة (اتحاد الحقول المشتركة والحقول الخاصة بكل نوع).
+const SOURCE_WRITE_FIELDS = ['name','type','videoDevice','videoDeviceLabel','audioDevice','videoSize','fps','pixelFormat','vcodec','captureSafeMode','enabled','url','streamUrl','path'];
+// حقول الإعدادات المعتمدة = النصوص + المفاتيح المنطقية + النطاقات الرقمية + x264Preset والثيم.
+const SETTINGS_WRITE_FIELDS = [
+  'siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent',
+  'tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs',
+  'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration',
+  'outputWidth','outputHeight','outputFps','gopSeconds',
+  'startupQueueDelayMs','startupConcurrency','x264Threads','hlsTime','hlsListSize','hlsDeleteThreshold','port','nginxPort',
+  'maxRestarts','restartBackoffMs','idleStopMinutes','sourceFailStopMinutes','blockedStopMinutes',
+  'x264Preset','theme'
+];
+// يعيد أول خاصية في جسم الطلب غير موجودة في القائمة المسموحة، أو null.
+function unexpectedField(body, fields) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   return Object.keys(body).find(key => !fields.includes(key)) || null;
 }
@@ -1410,6 +1423,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/settings' && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedSetting = unexpectedField(body, SETTINGS_WRITE_FIELDS);
+    if (unexpectedSetting) return apiError(res, 400, `خاصية غير متوقعة في الإعدادات: ${unexpectedSetting}`);
     const previousPort = Number(data.settings.port), previousNginxPort = Number(data.settings.nginxPort);
     const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent'];
     for (const key of textKeys) if (Object.prototype.hasOwnProperty.call(body,key)) {
@@ -1484,7 +1500,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/channels' && req.method === 'POST') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
-    const unexpectedNew = unexpectedChannelField(body);
+    const unexpectedNew = unexpectedField(body, CHANNEL_WRITE_FIELDS);
     if (unexpectedNew) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedNew}`);
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم القناة مطلوب');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
@@ -1499,7 +1515,7 @@ const server = http.createServer(async (req, res) => {
   if (channelMatch && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
-    const unexpectedUpdate = unexpectedChannelField(body);
+    const unexpectedUpdate = unexpectedField(body, CHANNEL_WRITE_FIELDS);
     if (unexpectedUpdate) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedUpdate}`);
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
@@ -1536,7 +1552,7 @@ const server = http.createServer(async (req, res) => {
   if (channelMatch && req.method === 'PATCH') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
-    const unexpectedToggle = unexpectedChannelField(body, CHANNEL_PATCH_FIELDS);
+    const unexpectedToggle = unexpectedField(body, CHANNEL_PATCH_FIELDS);
     if (unexpectedToggle) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedToggle}`);
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
@@ -1554,6 +1570,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/sources' && req.method === 'POST') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedSource = unexpectedField(body, SOURCE_WRITE_FIELDS);
+    if (unexpectedSource) return apiError(res, 400, `خاصية غير متوقعة في إعدادات المصدر: ${unexpectedSource}`);
     const type = normalizeSourceType(body.type);
     if (!type) return apiError(res, 400, 'نوع المصدر غير مدعوم');
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم المصدر مطلوب');
@@ -1584,6 +1603,9 @@ const server = http.createServer(async (req, res) => {
   const sourceMatch = url.pathname.match(/^\/api\/sources\/([a-zA-Z0-9_-]+)$/);
   if (sourceMatch && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedSource = unexpectedField(body, SOURCE_WRITE_FIELDS);
+    if (unexpectedSource) return apiError(res, 400, `خاصية غير متوقعة في إعدادات المصدر: ${unexpectedSource}`);
     const source = data.sources.find(x => x.id === sourceMatch[1]);
     if (!source) return apiError(res, 404, 'مصدر البث غير موجود');
     const nextType = Object.prototype.hasOwnProperty.call(body, 'type') ? normalizeSourceType(body.type) : normalizeSourceType(source.type);

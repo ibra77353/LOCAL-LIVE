@@ -16,10 +16,6 @@
     "ffmpegPath": "ffmpeg",
     "ffprobePath": "ffprobe",
     "nginxPath": "nginx/nginx.exe",
-    "outputWidth": 640,
-    "outputHeight": 360,
-    "outputFps": 20,
-    "gopSeconds": 2,
     "startupQueueDelayMs": 8000,
     "startupConcurrency": 1,
     "x264Preset": "superfast",
@@ -37,58 +33,12 @@
     "idleStopMinutes": 1,
     "sourceFailStopMinutes": 2,
     "blockedStopMinutes": 1000,
-    "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20"
+    "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20",
+    "outputWidth": 640,
+    "outputHeight": 360,
+    "outputFps": 20,
+    "gopSeconds": 2
   },
-  "sources": [
-    {
-      "id": "src_e9aae9bfe3",
-      "name": "ٍHD",
-      "type": "screen",
-      "enabled": true,
-      "videoSize": "",
-      "fps": 15
-    },
-    {
-      "id": "src_b9e2e7df74",
-      "name": "ٍHD",
-      "type": "screen",
-      "enabled": true,
-      "videoSize": "",
-      "fps": 15
-    }
-  ],
-  "channels": [
-    {
-      "id": "ch_17f673f366",
-      "chanId": "ch_17f673f366",
-      "name": "ٍHD",
-      "category": "عام",
-      "sourceId": "src_e9aae9bfe3",
-      "cover": "",
-      "enabled": true,
-      "quality": "288p",
-      "fps": "20",
-      "bitrate": "300k",
-      "autoStart": false,
-      "alwaysOn": false,
-      "sortOrder": 0,
-      "url": "/hls/ch_17f673f366/index.m3u8"
-    },
-    {
-      "id": "ch_c3d256d9df",
-      "chanId": "ch_c3d256d9df",
-      "name": "ٍHD",
-      "category": "عام",
-      "sourceId": "src_b9e2e7df74",
-      "cover": "",
-      "enabled": true,
-      "quality": "auto",
-      "fps": "",
-      "bitrate": "",
-      "autoStart": false,
-      "alwaysOn": false,
-      "sortOrder": 1,
-      "url": "/hls/ch_c3d256d9df/index.m3u8"
-    }
-  ]
+  "sources": [],
+  "channels": []
 }

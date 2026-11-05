@@ -182,6 +182,20 @@ test('PUT /api/sources/:id يحدّث المصدر ويرفض المجهول', a
   assert.equal(missing.status, 404);
 });
 
+test('POST/PUT /api/sources يرفضان الخصائص غير المتوقعة', async () => {
+  const postCrf = await api.post('/api/sources', { name: 'مصدر مرفوض', type: 'usb', videoDevice: VIDEO_DEVICE, crf: 23 });
+  assert.equal(postCrf.status, 400);
+  assert.match(postCrf.json.error, /crf/);
+  const postDims = await api.post('/api/sources', { name: 'مصدر مرفوض', type: 'usb', videoDevice: VIDEO_DEVICE, outputWidth: 1280 });
+  assert.equal(postDims.status, 400);
+  const putCrf = await api.put(`/api/sources/${state.sourceId}`, { videoDevice: VIDEO_DEVICE, crfValue: 18 });
+  assert.equal(putCrf.status, 400);
+  // المصدر لم يتغيّر بعد الرفض.
+  const after = (await api.get('/api/sources')).json.sources.find((s) => s.id === state.sourceId);
+  assert.equal(after.videoDevice, VIDEO_DEVICE);
+  assert.equal(after.crfValue, undefined);
+});
+
 // ---------------------------------------------------------------- القنوات
 test('POST /api/channels يتحقق من الاسم والمصدر', async () => {
   const noName = await api.post('/api/channels', { sourceId: state.sourceId });
@@ -489,6 +503,18 @@ test('إعدادات الدقة ترفض الأبعاد الفردية وتقب�
   assert.equal(even.status, 200);
   assert.equal(even.json.settings.outputWidth, 642);
   assert.equal(even.json.settings.outputHeight, 362);
+});
+
+test('PUT /api/settings يرفض الخصائص غير المتوقعة', async () => {
+  const withCrf = await api.put('/api/settings', { siteName: 'اسم مرفوض', crf: 23 });
+  assert.equal(withCrf.status, 400);
+  assert.match(withCrf.json.error, /crf/);
+  const legacy = await api.put('/api/settings', { encodingMode: 'crf', defaultBitrate: '800k' });
+  assert.equal(legacy.status, 400);
+  const after = (await api.get('/api/settings')).json.settings;
+  assert.notEqual(after.siteName, 'اسم مرفوض');
+  assert.equal(after.encodingMode, undefined);
+  assert.equal(after.defaultBitrate, undefined);
 });
 
 // وضع الترميز الوحيد هو Bitrate: معدّل البت خاص بكل قناة، ولا يوجد إعداد عام،
