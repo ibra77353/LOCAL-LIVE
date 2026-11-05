@@ -119,7 +119,6 @@ async function boot() {
   refreshStatus();
   clearInterval(statusTimer);
   statusTimer = setInterval(refreshStatus, 5000);
-  setTimeout(updateBanner, 4000); // إشعار التحديث بعد الدخول
 }
 
 (async function init() {
@@ -1017,51 +1016,6 @@ async function refreshDashboard() {
   ].join('');
 }
 
-// =====================================================================
-// LICENSE
-// =====================================================================
-async function loadLicense() {
-  const res = await api('/license');
-  const license = res.license;
-  const contact = res.contact || {};
-  _lastMsgs = res.messages || []; showSysMsg(_lastMsgs);
-  const fmt = ts => ts ? new Date(ts).toLocaleString('ar-SA') : '—';
-  let statusText, statusColor;
-  if (license.valid && license.isTrial) {
-    statusText = `فترة تجريبية — متبقٍّ ${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'}`;
-    statusColor = '#E0A82E';
-  } else if (license.valid) {
-    statusText = 'الاشتراك فعّال'; statusColor = 'var(--ok)';
-  } else if (license.activated) {
-    statusText = license.isTrial ? 'انتهت الفترة التجريبية — يرجى شراء ترخيص' : 'الاشتراك منتهي';
-    statusColor = 'var(--live)';
-  } else {
-    statusText = 'غير مفعّل'; statusColor = 'var(--live)';
-  }
-  // أزرار التواصل للشراء
-  const contactBtns = () => {
-    let h = '';
-    if (contact.whatsapp) h += `<a class="buy-btn wa" href="https://wa.me/${esc(contact.whatsapp.replace(/[^0-9]/g, ''))}" target="_blank">📱 واتساب للاشتراك</a>`;
-    if (contact.phone) h += `<a class="buy-btn" href="tel:${esc(contact.phone)}">📞 ${esc(contact.phone)}</a>`;
-    return h;
-  };
-  // لافتة حسب الحالة
-  let banner = '';
-  if (license.isTrial && license.valid) {
-    banner = `<div class="trial-banner">أنت تستخدم النسخة التجريبية (${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'} متبقية). للاستمرار بعد انتهائها، احصل على اشتراك.${contact.note ? '<br>' + esc(contact.note) : ''}<div class="buy-row">${contactBtns()}</div></div>`;
-  } else if (!license.valid && license.activated) {
-    banner = `<div class="trial-banner ended"><b>${license.isTrial ? 'انتهت فترتك التجريبية' : 'انتهى اشتراكك'}.</b> للاستمرار في استخدام النظام، يرجى تجديد الاشتراك.${contact.note ? '<br>' + esc(contact.note) : ''}<div class="buy-row">${contactBtns()}</div></div>`;
-  } else if (license.valid && !license.isTrial && license.daysLeft != null && license.daysLeft <= 3) {
-    banner = `<div class="trial-banner">⏳ اشتراكك ينتهي بعد ${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'}. جدّد الآن لتجنّب انقطاع الخدمة.<div class="buy-row">${contactBtns()}</div></div>`;
-  }
-  $('#licenseStatus').innerHTML = banner + `
-    <div><span class="lbl">الحالة: </span><b style="color:${statusColor}">${statusText}</b></div>
-    <div><span class="lbl">معرّف هذا الجهاز (أرسله لمزوّد الخدمة): </span><div class="val">${esc(license.deviceId)}</div></div>
-    <div><span class="lbl">المفتاح: </span><span class="val">${esc(license.key || '—')}</span></div>
-    <div><span class="lbl">ينتهي في: </span>${fmt(license.expiresAt)}</div>
-    <div><span class="lbl">آخر تحقق: </span>${fmt(license.lastCheck)}</div>`;
-}
-
 let _dismissedMsgs = JSON.parse(localStorage.getItem('amaan_msg_dismiss') || '[]');
 function showSysMsg(list) {
   const bar = $('#sysMsgBar');
@@ -1096,59 +1050,3 @@ function dismissSysMsg(id) {
   showSysMsg(_lastMsgs);
 }
 let _lastMsgs = [];
-
-async function activateLicense() {
-  $('#licMsg').textContent = '';
-  try {
-    await api('/license/activate', { method: 'POST', body: { key: $('#lic_key').value.trim() } });
-    toast('تم تفعيل الاشتراك');
-    loadLicense();
-  } catch (e) { $('#licMsg').textContent = e.message; }
-}
-
-// =====================================================================
-// SYSTEM UPDATE
-// =====================================================================
-async function checkUpdate(force) {
-  try {
-    const u = await api('/update/status' + (force ? '?force=1' : ''));
-    const box = $('#updateStatus');
-    if (u.available) {
-      box.innerHTML = `
-        <div><span class="lbl">الإصدار الحالي: </span><span class="val">${esc(u.currentVersion)}</span></div>
-        <div><b style="color:var(--brass)">يتوفر تحديث جديد: الإصدار ${esc(u.latestVersion)}${u.mandatory ? ' (إجباري)' : ''}</b></div>
-        ${u.changelog ? `<div><span class="lbl">ما الجديد: </span>${esc(u.changelog)}</div>` : ''}`;
-      $('#applyUpdateBtn').classList.remove('hidden');
-    } else {
-      box.innerHTML = `
-        <div><span class="lbl">الإصدار الحالي: </span><span class="val">${esc(u.currentVersion)}</span></div>
-        <div><b style="color:var(--ok)">النظام محدَّث ✓</b></div>`;
-      $('#applyUpdateBtn').classList.add('hidden');
-    }
-    return u;
-  } catch (e) { return null; }
-}
-
-async function applyUpdate() {
-  if (!confirm('سيتم إيقاف البث مؤقتاً وتنزيل التحديث ثم إعادة تشغيل النظام تلقائياً. متابعة؟')) return;
-  $('#updMsg').textContent = '';
-  const btn = $('#applyUpdateBtn');
-  btn.disabled = true; btn.textContent = 'جارٍ التحديث...';
-  try {
-    const r = await api('/update/apply', { method: 'POST', body: {} });
-    toast(r.message || 'تم التحديث');
-    $('#updateStatus').innerHTML = '<div><b style="color:var(--ok)">تم التحديث إلى ' + esc(r.to) + ' — يُعاد تشغيل النظام، حدّث الصفحة بعد لحظات.</b></div>';
-    setTimeout(() => location.reload(), 12000);
-  } catch (e) {
-    $('#updMsg').textContent = e.message;
-    btn.disabled = false; btn.textContent = 'تحديث الآن';
-  }
-}
-
-/** إشعار عام عند توفر تحديث (يظهر بعد الدخول) */
-async function updateBanner() {
-  const u = await checkUpdate(false);
-  if (u && u.available) {
-    toast('🔔 يتوفر تحديث جديد للنظام (الإصدار ' + u.latestVersion + ') — من قائمة الاشتراك والترخيص');
-  }
-}

@@ -1211,23 +1211,6 @@ label .input {
   margin-inline-start: 8px
 }
 
-.license-status div {
-  margin-bottom: 10px
-}
-
-.license-status .lbl {
-  color: var(--muted);
-  font-size: 13px
-}
-
-.license-status .val {
-  font-weight: 700;
-  direction: ltr;
-  text-align: left;
-  font-family: Consolas, monospace;
-  font-size: 13px
-}
-
 .toast {
   position: fixed;
   bottom: 26px;
@@ -1294,52 +1277,6 @@ label .input {
   .main {
     padding: 18px 14px 70px
   }
-}
-
-/* شريط الفترة التجريبية */
-.trial-banner {
-  background: rgba(224, 168, 46, .12);
-  border: 1px solid #E0A82E;
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 14px;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text)
-}
-
-.trial-banner.ended {
-  background: rgba(226, 73, 59, .12);
-  border-color: #E2493B
-}
-
-/* أزرار الشراء/التواصل */
-.buy-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px
-}
-
-.buy-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--accent, #3FA66A);
-  color: #fff;
-  text-decoration: none;
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-weight: 700;
-  font-size: 13px
-}
-
-.buy-btn.wa {
-  background: #25D366
-}
-
-.buy-btn:hover {
-  opacity: .9
 }
 
 /* ===== لوحة مقاييس المراقبة (بطاقات) ===== */
