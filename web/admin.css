@@ -611,6 +611,147 @@ label .input {
   white-space: nowrap
 }
 
+/* ---- جدول القنوات المتجاوب ----
+   بلا عرض أدنى ثابت، فلا يتجاوز الجدول حاوية .table-wrap على الشاشات الصغيرة،
+   وعندما يضيق عرض الحاوية يتحول كل صف إلى بطاقة بعناوين حقول واضحة. */
+#channelsTable {
+  min-width: 0
+}
+
+#channelsTable th,
+#channelsTable td {
+  white-space: normal;
+  overflow-wrap: anywhere
+}
+
+#channelsTable th:last-child,
+#channelsTable td:last-child {
+  width: auto
+}
+
+#channelsTable .row-actions {
+  flex-wrap: wrap
+}
+
+#view-channels .table-wrap {
+  container-type: inline-size
+}
+
+@container (max-width: 760px) {
+  #channelsTable thead {
+    display: none
+  }
+
+  #channelsTable,
+  #channelsTable tbody,
+  #channelsTable tr,
+  #channelsTable td {
+    display: block;
+    width: auto
+  }
+
+  #channelsTable tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 16px;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(35, 57, 74, .55)
+  }
+
+  #channelsTable tbody tr:last-child {
+    border-bottom: 0
+  }
+
+  #channelsTable tr:hover td {
+    background: none
+  }
+
+  #channelsTable td {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    font-size: 13.5px
+  }
+
+  #channelsTable td::before {
+    content: "";
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 600
+  }
+
+  #channelsTable td:nth-child(1)::before {
+    content: "الترتيب"
+  }
+
+  #channelsTable td:nth-child(2)::before {
+    content: "القناة"
+  }
+
+  #channelsTable td:nth-child(3)::before {
+    content: "المعرّف"
+  }
+
+  #channelsTable td:nth-child(4)::before {
+    content: "التصنيف"
+  }
+
+  #channelsTable td:nth-child(5)::before {
+    content: "المصدر"
+  }
+
+  #channelsTable td:nth-child(6)::before {
+    content: "الجودات"
+  }
+
+  #channelsTable td:nth-child(7)::before {
+    content: "تشغيل تلقائي"
+  }
+
+  #channelsTable td:nth-child(8)::before {
+    content: "الحالة"
+  }
+
+  #channelsTable td:nth-child(9)::before {
+    content: "إجراءات"
+  }
+
+  /* اسم القناة والمعرّف والإجراءات تمتد على كامل عرض البطاقة */
+  #channelsTable td:nth-child(2),
+  #channelsTable td:nth-child(3),
+  #channelsTable td:nth-child(9) {
+    grid-column: 1 / -1
+  }
+
+  #channelsTable td:nth-child(2) {
+    font-size: 15px
+  }
+
+  #channelsTable td:nth-child(8) .chip {
+    font-size: 11.5px
+  }
+
+  /* حقول ذات اتجاه لاتيني: نعيد اتجاه الخلية ليظهر العنوان في مكانه */
+  #channelsTable td.cell-muted {
+    direction: rtl;
+    text-align: right
+  }
+
+  /* صف "لا توجد قنوات بعد." لا يحتاج عنوان حقل */
+  #channelsTable td[colspan] {
+    grid-column: 1 / -1
+  }
+
+  #channelsTable td[colspan]::before {
+    content: none
+  }
+}
+
 .iptv-logo {
   width: 34px;
   height: 34px;
