@@ -50,7 +50,7 @@ function ffprobeBin() { return resolveTool(data.settings.ffprobePath || cfg.ffpr
 
 // أبعاد ملف مصدر محلي عبر FFprobe (المسار المضبوط في الإعدادات)، حتى تُحسب أبعاد
 // الخرج من نسبة الملف الحقيقية بدل الافتراض 1280x720 الذي يشوّه الدقة عند اختيار
-// جودة تختلف عن outputHeight.
+// جودة مسمّاة تختلف عن أبعاد الملف.
 function probeFileDimensions(filePath) {
   return new Promise(resolve => {
     if (!filePath || !fs.existsSync(filePath)) return resolve('');
@@ -173,6 +173,12 @@ for (const channel of data.channels) {
 }
 if (prunedChannelFields) writeData(data);
 data.settings = { ...defaultData().settings, ...data.settings };
+// حقول دقة عامة ألغيت (الدقة تُضبط لكل قناة)؛ تُحذف بقاياها من data.json القديم.
+let prunedSettingsFields = false;
+for (const key of ['outputWidth','outputHeight','outputFps','gopSeconds']) {
+  if (Object.prototype.hasOwnProperty.call(data.settings, key)) { delete data.settings[key]; prunedSettingsFields = true; }
+}
+if (prunedSettingsFields) writeData(data);
 Object.assign(cfg, {
   ffmpegPath: data.settings.ffmpegPath ?? cfg.ffmpegPath,
   ffprobePath: data.settings.ffprobePath ?? cfg.ffprobePath,
@@ -352,7 +358,6 @@ const SETTINGS_WRITE_FIELDS = [
   'siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent',
   'tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration',
-  'outputWidth','outputHeight','outputFps','gopSeconds',
   'startupQueueDelayMs','startupConcurrency','x264Threads','hlsTime','hlsListSize','hlsDeleteThreshold','port','nginxPort',
   'maxRestarts','restartBackoffMs','idleStopMinutes','sourceFailStopMinutes','blockedStopMinutes',
   'x264Preset','theme'
@@ -717,9 +722,7 @@ function getStatus(channelId) {
     running: !!runtime?.proc, pid: runtime?.proc?.pid || null, startedAt: runtime?.startedAt || null,
     restartCount: runtime?.restartCount || 0, lastExit: runtime?.lastExit || null, exitHistory: runtime?.exits || [], playlistExists, playlistAgeMs,
     streamUrl: `/hls/${channel.id}/index.m3u8`, sourceType: source?.type || '', videoDevice: source?.videoDevice || '', audioDevice: source?.audioDevice || '',
-    audioEnabled: !!source?.audioDevice, outputWidth: Number(data.settings.outputWidth) || 640,
-    outputHeight: Number(String(channel.quality || '').replace(/p$/i,'')) || Number(data.settings.outputHeight) || 360,
-    outputFps: Number(channel.fps) || Number(data.settings.outputFps) || 20, videoBitrate: channel.bitrate || '',
+    audioEnabled: !!source?.audioDevice, videoBitrate: channel.bitrate || '',
     channel: { id: channel.id, name: channel.name, enabled: channel.enabled !== false }, channels: data.channels.map(publicChannel) };
 }
 function clearChannelHls(channel) {
@@ -889,20 +892,14 @@ function buildArgs(channel, forceTranscode = false) {
   const settings = data.settings;
   const [srcW, srcH] = String(source.videoSize || cfg.videoSize || '1280x720').split('x').map(Number);
   // الجودة إما نسخ المصدر، أو مقاس مسمّى (240p..720p) يُحسب عرضه من نسبة المصدر،
-  // أو «تلقائي» (auto/فارغ) يتبع أبعاد الخرج المحفوظة في الإعدادات: هكذا يصبح
-  // تغيير outputHeight/outputWidth مؤثراً فعلياً بدل تجاهله لصالح 360p الثابتة.
+  // أو «تلقائي» (auto/فارغ) = 360p. الدقة تُضبط لكل قناة فقط؛ لا إعداد عام للأبعاد.
   const qualityValue = String(channel.quality || '').trim().toLowerCase();
   const presetHeight = /^\d{3,4}p$/.test(qualityValue) ? Number(qualityValue.replace(/p$/,'')) : 0;
-  // yuv420p يتطلب أبعاداً زوجية: قيمة فردية محفوظة في الإعدادات كانت تُفشل بدء
-  // القناة كلياً (x264: Could not open encoder). تُقرَّب هنا كشبكة أمان لأي
-  // data.json محرَّر يدوياً، وتُرفض الأبعاد الفردية من واجهة الإعدادات نفسها.
-  const evenPx = value => Math.round(value / 2) * 2;
-  const settingsHeight = evenPx(clampNumber(Number(settings.outputHeight), 120, 2160, 360));
-  const settingsWidth = evenPx(clampNumber(Number(settings.outputWidth), 160, 3840, 640));
-  const outputHeight = isCopyQuality(qualityValue) ? (srcH || 720) : (presetHeight || settingsHeight);
-  const derivedWidth=Math.max(160,Math.round((srcW||1280)*outputHeight/(srcH||720)/2)*2);
-  const outputWidth=isCopyQuality(qualityValue)?(srcW||1280):(presetHeight?derivedWidth:settingsWidth);
-  const outputFps = clampNumber(Number(channel.fps) || settings.outputFps, 1, 60, 20);
+  const outputHeight = isCopyQuality(qualityValue) ? (srcH || 720) : (presetHeight || 360);
+  // yuv420p يرفض الأبعاد الفردية، فالعرض يُشتق من نسبة المصدر ويُجبَر على الزوجية.
+  const outputWidth = isCopyQuality(qualityValue) ? (srcW || 1280)
+    : Math.max(160, Math.round(((srcW || 1280) * outputHeight) / (srcH || 720) / 2) * 2);
+  const outputFps = clampNumber(Number(channel.fps), 1, 60, 20);
   const tierBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
   // البِتريت يُضبط لكل قناة؛ وفارغه يعني قيمة تلقائية حسب دقة الخرج.
   const videoBitrate = normalizeVideoBitrate(channel.bitrate, tierBitrate);
@@ -910,7 +907,8 @@ function buildArgs(channel, forceTranscode = false) {
     logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
   }
   const hlsTime = clampNumber(settings.hlsTime, 1, 10, 2);
-  const gop = Math.max(1, Math.round(outputFps * clampNumber(settings.gopSeconds, 1, 10, hlsTime)));
+  // إطار مفتاحي واحد عند بداية كل مقطع HLS، فيبدأ كل مقطع من keyframe.
+  const gop = Math.max(1, Math.round(outputFps * hlsTime));
   const sourceType = String(source.type || 'usb').toLowerCase();
   const isNetwork = ['http-hls','http','hls','network','rtsp'].includes(sourceType);
   const audioDevice = source.audioDevice || '';
@@ -1437,7 +1435,6 @@ const server = http.createServer(async (req, res) => {
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
-      outputWidth:[160,3840], outputHeight:[120,2160], outputFps:[1,60], gopSeconds:[1,10],
       startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
       maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
       sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000]
@@ -1445,8 +1442,6 @@ const server = http.createServer(async (req, res) => {
     for (const [key,[min,max]] of Object.entries(numberRanges)) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const n = Number(body[key]);
       if (!Number.isFinite(n) || n < min || n > max) return apiError(res,400,`قيمة ${key} يجب أن تكون بين ${min} و${max}`);
-      // أبعاد الترميز يجب أن تكون زوجية (yuv420p)، وإلا فشل تشغيل القنوات جميعاً.
-      if ((key === 'outputWidth' || key === 'outputHeight') && n % 2 !== 0) return apiError(res,400,`قيمة ${key} يجب أن تكون عدداً زوجياً (الدقة الفردية لا تُرمَّز بـ yuv420p)`);
       data.settings[key] = n;
     }
     if (Object.prototype.hasOwnProperty.call(body,'x264Preset')) {
@@ -1462,8 +1457,7 @@ const server = http.createServer(async (req, res) => {
     Object.assign(cfg, {
       ffmpegPath:data.settings.ffmpegPath||cfg.ffmpegPath, ffprobePath:data.settings.ffprobePath||cfg.ffprobePath, nginxPath:data.settings.nginxPath||cfg.nginxPath,
       port:data.settings.port||cfg.port, nginxPort:data.settings.nginxPort||cfg.nginxPort,
-      outputWidth:data.settings.outputWidth, outputHeight:data.settings.outputHeight, outputFps:data.settings.outputFps,
-      gopSeconds:data.settings.gopSeconds, startupQueueDelayMs:data.settings.startupQueueDelayMs,
+      startupQueueDelayMs:data.settings.startupQueueDelayMs,
       preset:data.settings.x264Preset, threads:data.settings.x264Threads, hlsTime:data.settings.hlsTime,
       hlsListSize:data.settings.hlsListSize, autoRestart:data.settings.autoRestartCrashed,
       maxRestarts:data.settings.maxRestarts, restartDelayMs:data.settings.restartBackoffMs

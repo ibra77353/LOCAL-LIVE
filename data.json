@@ -33,11 +33,7 @@
     "idleStopMinutes": 1,
     "sourceFailStopMinutes": 2,
     "blockedStopMinutes": 1000,
-    "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20",
-    "outputWidth": 640,
-    "outputHeight": 360,
-    "outputFps": 20,
-    "gopSeconds": 2
+    "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20"
   },
   "sources": [],
   "channels": []

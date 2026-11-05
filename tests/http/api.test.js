@@ -435,7 +435,7 @@ test('PUT /api/channels/:id يقبل إفراغ FPS ويعيده إلى إعدا
   const emptyFps = await api.put(`/api/channels/${id}`, { fps: '' });
   assert.equal(emptyFps.status, 200);
   assert.equal(emptyFps.json.channel.fps, '');
-  // القيمة الفارغة تعني الاعتماد على settings.outputFps عند بناء وسائط FFmpeg.
+  // القيمة الفارغة تعني معدل الإطارات الافتراضي (20) عند بناء وسائط FFmpeg.
   assert.equal(nullFps.json.channel.bitrate, '800k');
 
   await api.del(`/api/channels/${id}`);
@@ -491,18 +491,18 @@ test('حفظ إعدادات الترميز يبلّغ عن الحقول المت
   await api.del(`/api/sources/${src.json.source.id}`);
 });
 
-// yuv420p لا يقبل أبعاداً فردية: كانت قيمة مثل 641 تُحفظ ثم تُفشل بدء كل قناة
-// تتبع مقاس الإعدادات، فيجب رفضها من الإعدادات بوضوح.
-test('إعدادات الدقة ترفض الأبعاد الفردية وتقبل الزوجية', async () => {
-  const oddWidth = await api.put('/api/settings', { outputWidth: 641 });
-  assert.equal(oddWidth.status, 400);
-  const oddHeight = await api.put('/api/settings', { outputHeight: 361 });
-  assert.equal(oddHeight.status, 400);
-
-  const even = await api.put('/api/settings', { outputWidth: 642, outputHeight: 362 });
-  assert.equal(even.status, 200);
-  assert.equal(even.json.settings.outputWidth, 642);
-  assert.equal(even.json.settings.outputHeight, 362);
+// إعدادات الدقة العامة ألغيت: الدقة تُضبط لكل قناة، فأي محاولة لحفظها من
+// /api/settings تُرفض كخاصية غير متوقعة بدل تجاهلها بصمت.
+test('إعدادات الدقة العامة ألغيت وتُرفض من /api/settings', async () => {
+  for (const body of [{ outputWidth: 642 }, { outputHeight: 362 }, { outputFps: 30 }, { gopSeconds: 2 }]) {
+    const res = await api.put('/api/settings', body);
+    assert.equal(res.status, 400);
+  }
+  const after = (await api.get('/api/settings')).json.settings;
+  assert.equal(after.outputWidth, undefined);
+  assert.equal(after.outputHeight, undefined);
+  assert.equal(after.outputFps, undefined);
+  assert.equal(after.gopSeconds, undefined);
 });
 
 test('PUT /api/settings يرفض الخصائص غير المتوقعة', async () => {
