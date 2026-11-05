@@ -50,6 +50,9 @@ function ffmpegBin() { return resolveTool(cfg.ffmpegPath); }
 const streams = new Map(); // channelId -> independent FFmpeg runtime
 let ffmpegLog = '';
 let servedBytes = 0;
+// إجمالي كل ما خدّمه Nginx (مقاطع البث وصفحات اللوحة معاً) مقروءاً من سجلاته،
+// ويشمل ما هو موجود في السجلات قبل الإقلاع أيضاً.
+let nginxServedBytes = 0;
 const channelServedBytes = new Map(); // channelId -> بايتات /hls المخدومة لتلك القناة
 let ingestBps = 0;
 let lastHlsFiles = new Map(); // مسار مقطع -> آخر حجم معروف (لحساب معدل التوليد)
@@ -57,6 +60,7 @@ let lastHlsFiles = new Map(); // مسار مقطع -> آخر حجم معروف (
 // null تعني أن النظام لا يوفّر عدّادات شبكة مقروءة (تظهر «—» في اللوحة).
 let internetBps = null;
 let internetRxTotal = null, internetRxAt = 0;
+let internetProbeBusy = false;
 // سجلات Nginx: على ويندوز تُخدَم مقاطع HLS من القرص مباشرةً فلا يراها Node،
 // لذلك نحتسب بايتات /hls من سجلّ الوصول كي تعمل مقاييس البيانات.
 const NGINX_LOG_DIR = path.resolve(process.env.NGINX_LOG_DIR || path.join(ROOT, 'nginx', 'logs'));
@@ -188,6 +192,27 @@ function hlsFileSizes() {
 // يقرأ ما أُضيف إلى سجلات Nginx منذ آخر قراءة ويضيف بايتات /hls إلى عدّادات
 // القنوات والإجمالي. عند وجود سجلّ Nginx يتوقف Node عن العدّ بنفسه (وإلا تكرّرت
 // البايتات) لأن كل المقاطع تمرّ عبر Nginx في هذه الحالة.
+// أول قراءة للسجل تقرأ ما هو موجود بالكامل (بحد أقصى آخر 32MB) حتى يظهر إجمالي
+// البيانات التاريخي، ثم تتابع الإضافات فقط. تُحسب كل استجابة ناجحة 200/206 في
+// إجمالي Nginx، ومقاطع /hls أيضاً في باندويث الخروج وعدّادات القنوات.
+const NGINX_LOG_TAIL_BYTES = 32 * 1024 * 1024;
+const NGINX_LOG_CHUNK = 1024 * 1024;
+function countNginxLogLine(line) {
+  const match = line.match(/"\w+ ([^"\s]+) [^"]*" (\d{3}) (\d+)/);
+  if (!match) return;
+  const status = Number(match[2]);
+  if (status !== 200 && status !== 206) return;
+  const bytes = Number(match[3]) || 0;
+  if (!bytes) return;
+  nginxServedBytes += bytes;
+  const parts = match[1].split('/');
+  if (parts[1] !== 'hls') return; // صفحات وواجهات API لا تدخل في باندويث المشاهدين
+  servedBytes += bytes;
+  const channelId = parts[2];
+  if (channelId && data.channels.some(c => c.id === channelId)) {
+    channelServedBytes.set(channelId, (channelServedBytes.get(channelId) || 0) + bytes);
+  }
+}
 function readNginxLogs() {
   for (const name of ['stream.log', 'access.log']) {
     const file = path.join(NGINX_LOG_DIR, name);
@@ -195,32 +220,34 @@ function readNginxLogs() {
     try { stat = fs.statSync(file); } catch { continue; }
     if (!stat.isFile()) continue;
     nginxLogActive = true;
-    const previous = nginxLogOffsets.get(file);
-    if (previous == null || stat.size < previous) { nginxLogOffsets.set(file, stat.size); continue; }
-    if (stat.size === previous) continue;
-    let chunk = '';
+    const known = nginxLogOffsets.get(file);
+    let position = known == null ? Math.max(0, stat.size - NGINX_LOG_TAIL_BYTES) : known;
+    // عند بدء القراءة من وسط سجل كبير يكون السطر الأول مبتوراً فنهمله.
+    let skipPartialLine = known == null && position > 0;
+    if (stat.size < position) { position = 0; skipPartialLine = false; } // تدوير/تفريغ السجل
+    if (stat.size === position) continue;
+    let fd;
+    try { fd = fs.openSync(file, 'r'); } catch { continue; }
+    const buffer = Buffer.alloc(NGINX_LOG_CHUNK);
+    let pending = Buffer.alloc(0);
+    let end = position;
     try {
-      const length = stat.size - previous;
-      const buffer = Buffer.alloc(length);
-      const fd = fs.openSync(file, 'r');
-      try { fs.readSync(fd, buffer, 0, length, previous); } finally { fs.closeSync(fd); }
-      chunk = buffer.toString('utf8');
-    } catch { continue; }
-    const end = chunk.lastIndexOf('\n');
-    if (end < 0) continue; // لا سطر مكتمل بعد: ننتظر القراءة التالية
-    const complete = chunk.slice(0, end + 1);
-    nginxLogOffsets.set(file, previous + Buffer.byteLength(complete, 'utf8'));
-    for (const line of complete.split('\n')) {
-      const match = line.match(/"\w+ (\/hls\/[^"\s]+) [^"]*" (\d{3}) (\d+)/);
-      if (!match) continue;
-      const status = Number(match[2]);
-      if (status !== 200 && status !== 206) continue;
-      const channelId = match[1].split('/')[2];
-      const bytes = Number(match[3]) || 0;
-      if (!channelId || !bytes || !data.channels.some(c => c.id === channelId)) continue;
-      servedBytes += bytes;
-      channelServedBytes.set(channelId, (channelServedBytes.get(channelId) || 0) + bytes);
-    }
+      while (position < stat.size) {
+        const read = fs.readSync(fd, buffer, 0, Math.min(NGINX_LOG_CHUNK, stat.size - position), position);
+        if (!read) break;
+        position += read;
+        pending = Buffer.concat([pending, buffer.subarray(0, read)]);
+        let nl;
+        while ((nl = pending.indexOf(10)) >= 0) {
+          const line = pending.toString('utf8', 0, nl);
+          pending = pending.subarray(nl + 1);
+          end = position - pending.length; // نهاية آخر سطر مكتمل
+          if (skipPartialLine) { skipPartialLine = false; continue; }
+          countNginxLogLine(line);
+        }
+      }
+    } catch { /* تبقى القراءة التالية من آخر سطر مكتمل */ } finally { try { fs.closeSync(fd); } catch {} }
+    nginxLogOffsets.set(file, end);
   }
 }
 // بايتات الشبكة الواردة على مستوى النظام: Linux من /proc/net/dev،
@@ -1517,6 +1544,9 @@ const server = http.createServer(async (req, res) => {
       runningChannels: channels.filter(c => c.status === 'running').length,
       totalChannels: channels.length,
       hlsBytesTotal, egressBytesTotal: servedBytes,
+      // إجمالي حركة Nginx من السجلات + حصيلة عدّادات الشبكة منذ الإقلاع.
+      nginxBytesTotal: nginxServedBytes, nginxLogActive,
+      internetRxBytesTotal: internetRxTotal,
       ingestBandwidthBps: ingestBps, egressBandwidthBps: egressBps, internetBandwidthBps: internetBps
     });
   }
@@ -1624,16 +1654,21 @@ setInterval(() => {
   const elapsed = Math.max(1, (now - lastServedSample.at) / 1000);
   egressBps = Math.max(0, Math.round((servedBytes - lastServedSample.bytes) / elapsed));
   lastServedSample = { bytes: servedBytes, at: now };
-  readSystemRx((err, rx) => {
-    if (err || rx == null) { internetBps = null; return; }
-    const at = Date.now();
-    if (internetRxTotal == null || rx < internetRxTotal) {
-      internetRxTotal = rx; internetRxAt = at; internetBps = 0; return;
-    }
-    const seconds = Math.max(1, (at - internetRxAt) / 1000);
-    internetBps = Math.max(0, Math.round((rx - internetRxTotal) / seconds));
-    internetRxTotal = rx; internetRxAt = at;
-  });
+  // netstat على ويندوز يستغرق وقتاً، فنمنع تداخل قراءتين.
+  if (!internetProbeBusy) {
+    internetProbeBusy = true;
+    readSystemRx((err, rx) => {
+      internetProbeBusy = false;
+      if (err || rx == null) { internetBps = null; return; }
+      const at = Date.now();
+      if (internetRxTotal == null || rx < internetRxTotal) {
+        internetRxTotal = rx; internetRxAt = at; internetBps = 0; return;
+      }
+      const seconds = Math.max(1, (at - internetRxAt) / 1000);
+      internetBps = Math.max(0, Math.round((rx - internetRxTotal) / seconds));
+      internetRxTotal = rx; internetRxAt = at;
+    });
+  }
   // باندويث الإدخال: نمو مقاطع HLS بين عينتين. يُحسب لكل ملف على حدة حتى لا
   // يُلغي حذف المقاطع القديمة (hlsDeleteThreshold) البايتات المولَّدة حديثاً.
   const hls = hlsFileSizes();

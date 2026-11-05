@@ -842,10 +842,11 @@ async function refreshDashboard() {
     dashCard('blue-accent', '📊', m.totalViewers, '', 'إجمالي المشاهدين', 'منذ بدء التشغيل', false),
     dashCard('purple-accent', '📺', m.runningChannels, ` / ${m.totalChannels}`, 'قنوات تبثّ الآن', `${m.watchedChannels} منها مُشاهَدة`, m.runningChannels > 0),
     dashCard('green-accent', '⬇️', fmtBytes(m.hlsBytesTotal), '', 'بيانات HLS المُولّدة', 'إجمالي مقاطع m3u8', false),
-    dashCard('live-accent', '⬆️', fmtBytes(m.egressBytesTotal), '', 'البيانات الخارجة للمشتركين', 'تقدير حسب المشاهدين', false),
+    dashCard('live-accent', '⬆️', fmtBytes(m.egressBytesTotal), '', 'البيانات الخارجة للمشتركين', m.nginxLogActive ? 'مقاطع البث من سجلات Nginx' : 'من داخل الخادم', false),
+    dashCard('green-accent', '🧮', fmtBytes(m.nginxBytesTotal), '', 'إجمالي البيانات عبر Nginx', m.nginxLogActive ? 'كل الاستجابات من السجل' : 'لا توجد سجلات Nginx', false),
     dashCard('blue-accent', '📡', fmtBps(m.ingestBandwidthBps), '', 'باندويث البث الحالي', 'وارد من المصادر', m.ingestBandwidthBps > 0),
     dashCard('amber-accent', '🌐', fmtBps(m.egressBandwidthBps), '', 'باندويث الخروج للمشاهدين', 'تقدير فعلي حالي', m.egressBandwidthBps > 0),
-    dashCard('purple-accent', '🔌', m.internetBandwidthBps == null ? '—' : fmtBps(m.internetBandwidthBps), '', 'باندويث الإنترنت المستهلك', m.internetBandwidthBps == null ? 'غير متاح على هذا النظام' : 'حالياً (وارد)', m.internetBandwidthBps > 0)
+    dashCard('purple-accent', '🔌', m.internetBandwidthBps == null ? '—' : fmtBps(m.internetBandwidthBps), '', 'باندويث الإنترنت المستهلك', m.internetBandwidthBps == null ? 'غير متاح على هذا النظام' : ('وارد حالياً · الإجمالي ' + fmtBytes(m.internetRxBytesTotal)), m.internetBandwidthBps > 0)
   ].join('');
 }
 

@@ -8,6 +8,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { startTestServer } = require('./lib/harness');
 const { createClient } = require('./lib/client');
 
@@ -302,6 +304,28 @@ test('GET /api/stats و /api/metrics يعيدان بيانات صالحة', asyn
   const metrics = await api.get('/api/metrics');
   assert.equal(metrics.status, 200);
   assert.equal(metrics.json.ok, true);
+});
+
+// إجمالي البيانات يُقرأ من سجلات Nginx: كل استجابة 200/206 تدخل الإجمالي،
+// ومقاطع /hls وحدها تدخل باندويث الخروج (404 لا تدخل).
+test('GET /api/metrics يجمع إجمالي البيانات من سجلات Nginx', async () => {
+  const logDir = path.join(srv.dir, 'nginx', 'logs');
+  fs.mkdirSync(logDir, { recursive: true });
+  const lines = [
+    '10.0.0.5 [05/Nov/2026:10:00:00 +0300] "GET /hls/ch_unknown/index.m3u8 HTTP/1.1" 200 300 rt=0.001',
+    '10.0.0.5 [05/Nov/2026:10:00:01 +0300] "GET /hls/ch_unknown/seg00001.ts HTTP/1.1" 206 4096 rt=0.002',
+    '10.0.0.6 [05/Nov/2026:10:00:02 +0300] "GET /admin HTTP/1.1" 200 8192 rt=0.003',
+    '10.0.0.7 [05/Nov/2026:10:00:03 +0300] "GET /hls/ch_unknown/missing.ts HTTP/1.1" 404 153 rt=0.001'
+  ];
+  fs.writeFileSync(path.join(logDir, 'stream.log'), lines.join('\n') + '\n', 'utf8');
+  const m = await waitFor(async () => {
+    const res = await api.get('/api/metrics');
+    return res.json && res.json.nginxBytesTotal >= 300 + 4096 + 8192 ? res.json : null;
+  }, 12000, 400);
+  assert.ok(m, 'لم تُقرأ سجلات Nginx خلال المهلة');
+  assert.equal(m.nginxLogActive, true);
+  assert.equal(m.nginxBytesTotal, 300 + 4096 + 8192);
+  assert.equal(m.egressBytesTotal, 300 + 4096);
 });
 
 test('المسارات غير المعروفة تحت /api تعيد 404 بصيغة JSON', async () => {
