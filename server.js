@@ -950,7 +950,7 @@ function buildArgs(channel, forceTranscode = false) {
   }
   const audioMap = captureAudioInput === null ? '0:a:0?' : `${captureAudioInput}:a:0?`;
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
-  if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 360p أو 480p أو 720p.');
+  if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 288p أو 320p أو 360p أو 432p أو 480p أو 720p.');
   if (isCopyQuality(channel.quality) && isNetwork && !forceTranscode) {
     args.push('-map','0:v:0','-map',audioMap,'-c:v','copy','-c:a','aac','-b:a',cfg.audioBitrate||'96k');
   } else {
@@ -1554,7 +1554,7 @@ const server = http.createServer(async (req, res) => {
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
-    if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','auto','240p','360p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
+    if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','auto','240p','288p','320p','360p','432p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
     // null/'' يعني «استخدم FPS الإعدادات» — نموذج اللوحة يرسل null عند إفراغ الحقل،
     // وكان يُرفض سابقاً فيتعذر حفظ القناة دون قيمة FPS.
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
