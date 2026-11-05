@@ -36,6 +36,26 @@ const CH_BITRATES = [
   ['800k', '800k — متوازن'],
   ['1000k', '1000k — جودة عالية']
 ];
+// دقات الفيديو الشائعة — تُستخدم في «دقة الفيديو» بإعدادات الخرج وفي مصدر التقاط الشاشة.
+const VIDEO_SIZES = [
+  ['1920x1080', 'Full HD'], ['1600x1200', ''], ['1360x768', ''], ['1280x1024', ''],
+  ['1280x960', ''], ['1280x720', 'HD'], ['1024x768', ''], ['800x600', ''],
+  ['720x576', 'PAL'], ['720x480', 'NTSC'], ['640x480', 'VGA'], ['352x288', 'CIF'],
+  ['320x240', 'QVGA']
+];
+// علامة LTR: بلاها يعكس سياق RTL ترتيب «1280×720» إلى «720×1280» داخل القائمة.
+const LTR_MARK = '\u200E';
+function videoSizeLabel(size, note) {
+  return `${LTR_MARK}${size.replace('x', '×')}${LTR_MARK}${note ? ' (' + note + ')' : ''}`;
+}
+// خيارات قائمة الدقة؛ autoLabel يضيف خيار «تلقائي» بقيمة فارغة، والقيمة الحالية غير المشهورة تُضاف كخيار.
+function videoSizeOptions(current, autoLabel) {
+  const list = autoLabel ? [['', autoLabel]].concat(VIDEO_SIZES) : VIDEO_SIZES.slice();
+  const known = list.some(([v]) => v === current);
+  if (current && !known) list.push([current, 'الحالي']);
+  return list.map(([v, l]) => `<option value="${v}" ${v === current ? 'selected' : ''}>${
+    v ? esc(videoSizeLabel(v, l)) : esc(l)}</option>`).join('');
+}
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const TYPE_LABELS = {
   usb: 'كرت التقاط (DirectShow / V4L2)', http: 'HTTP مباشر', hls: 'HLS / M3U8',
@@ -161,6 +181,19 @@ $('#s_encodingMode').addEventListener('change', syncEncodingModeUI);
 $('#s_crfValue').addEventListener('change', syncEncodingModeUI);
 $('#s_defaultBitrate').addEventListener('change', syncEncodingModeUI);
 
+// «دقة الفيديو» في أبعاد الخرج: القائمة تكتب في حقلي العرض/الارتفاع المحفوظين.
+function syncOutputSizeSelect() {
+  const sel = $('#s_outputSize');
+  if (!sel) return;
+  const w = $('#s_outputWidth').value, h = $('#s_outputHeight').value;
+  sel.innerHTML = videoSizeOptions(w && h ? `${w}x${h}` : '');
+}
+$('#s_outputSize').addEventListener('change', () => {
+  const [w, h] = $('#s_outputSize').value.split('x');
+  $('#s_outputWidth').value = w;
+  $('#s_outputHeight').value = h;
+});
+
 async function loadSettings() {
   const { settings, nginx } = await api('/settings');
   DATA.settings = settings;
@@ -178,6 +211,7 @@ async function loadSettings() {
     if (el.type === 'checkbox') el.checked = !!settings[k]; else el.value = settings[k] ?? '';
   }
   syncEncodingModeUI();
+  syncOutputSizeSelect();
   document.body.classList.toggle('worldcup', settings.theme === 'worldcup');
   $('#brandName').textContent = settings.siteName || 'البرنس لايف';
   $('#adminFooter').textContent = 'جميع الحقوق محفوظة © البرنس لايف';
@@ -434,7 +468,8 @@ async function renderSourceFields() {
   } else if (type === 'screen') {
     box.innerHTML = `
       <label>FPS<input class="input" id="m_fps" type="number" min="5" max="60" value="${esc(src?.fps || 15)}"></label>
-      <label>الدقة (اختياري)<input class="input" id="m_videoSize" placeholder="1920x1080" value="${esc(src?.videoSize)}"></label>`;
+      <label>دقة الفيديو
+        <select class="input" id="m_videoSize">${videoSizeOptions(src?.videoSize || '', 'اختيار تلقائي')}</select></label>`;
   } else {
     box.innerHTML = `<label>الرابط<input class="input" id="m_url" dir="ltr" value="${esc(src?.url)}"
       placeholder="http://.../stream.m3u8"></label>

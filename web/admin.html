@@ -222,8 +222,10 @@
               <h4>أبعاد الخرج</h4>
               <div class="fields-grid">
                 <label>GOP (ث)<input class="input" id="s_gopSeconds" type="number" min="1" max="10"></label>
-                <label>العرض (بكسل)<input class="input" id="s_outputWidth" type="number" min="160" max="3840" step="16"></label>
-                <label>الارتفاع (بكسل)<input class="input" id="s_outputHeight" type="number" min="120" max="2160" step="16"></label>
+                <label>دقة الفيديو
+                  <select class="input" id="s_outputSize"></select></label>
+                <input id="s_outputWidth" type="number" min="160" max="3840" step="16" hidden>
+                <input id="s_outputHeight" type="number" min="120" max="2160" step="16" hidden>
                 <label>معدل الإطارات<input class="input" id="s_outputFps" type="number" min="1" max="60"></label>
               </div>
               <p class="field-note">إعدادات القناة تتجاوز هذه القيم.</p>
