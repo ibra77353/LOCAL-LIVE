@@ -1,5 +1,5 @@
 'use strict';
-/* أمان لايف — مشغّل المشاهدين */
+/* البرنس لايف — مشغّل المشاهدين */
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -29,8 +29,8 @@ async function init() {
   const s = await fetch('/api/public/settings').then(r => r.json());
   SETTINGS = s.settings || {};
   document.title = SETTINGS.siteName + ' — البث المباشر';
-  $('#siteTitle').textContent = SETTINGS.siteName || 'أمان لايف';
-  // الفوتر ثابت في HTML (أمان تيليكوم) — لا يُحقن من الإعدادات
+  $('#siteTitle').textContent = SETTINGS.siteName || 'البرنس لايف';
+  // الفوتر ثابت في HTML (البرنس تيليكوم) — لا يُحقن من الإعدادات
   if (SETTINGS.phone) { $('#sitePhone').textContent = SETTINGS.phone; $('#sitePhone').href = 'tel:' + SETTINGS.phone; }
   if (SETTINGS.logo) {
     const l = $('#siteLogo');

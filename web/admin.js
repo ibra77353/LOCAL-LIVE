@@ -1,5 +1,5 @@
 'use strict';
-/* أمان لايف — منطق لوحة التحكم */
+/* البرنس لايف — منطق لوحة التحكم */
 
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
@@ -134,8 +134,8 @@ async function loadSettings() {
   if ($('#logoSizeVal')) $('#logoSizeVal').textContent = (settings.logoSizePct ?? 10) + '٪';
   if ($('#logoOpacityVal')) $('#logoOpacityVal').textContent = (settings.logoOpacityPct ?? 50) + '٪';
   document.body.classList.toggle('worldcup', settings.theme === 'worldcup');
-  $('#brandName').textContent = settings.siteName || 'أمان لايف';
-  $('#adminFooter').textContent = 'جميع الحقوق محفوظة © أمان لايف';
+  $('#brandName').textContent = settings.siteName || 'البرنس لايف';
+  $('#adminFooter').textContent = 'جميع الحقوق محفوظة © البرنس لايف';
   const logo = $('#brandLogo');
   if (settings.logo) { logo.src = getAssetUrl(settings.logo); logo.classList.remove('hidden'); }
   else logo.classList.add('hidden');
