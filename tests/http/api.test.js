@@ -496,6 +496,7 @@ test('Bitrate خاص بكل قناة ويُطبَّق في وسائط FFmpeg ب�
   assert.match(channelBitrateArgs, /-b:v 600k/);
   assert.doesNotMatch(channelBitrateArgs, /-crf/);
   assert.match(channelBitrateArgs, /scale=640:360/);
+  assert.doesNotMatch(channelBitrateArgs, /pad=/);
   assert.match(channelBitrateArgs, /fps=25/);
   assert.match(channelBitrateArgs, /-preset (superfast|veryfast)/);
 
