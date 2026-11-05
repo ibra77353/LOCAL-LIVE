@@ -846,14 +846,18 @@ label .input {
   }
 
   #statusTable td:nth-child(5)::before {
-    content: "إعادة التشغيل"
+    content: "معدّل البت"
   }
 
   #statusTable td:nth-child(6)::before {
-    content: "آخر الأخطاء"
+    content: "إعادة التشغيل"
   }
 
   #statusTable td:nth-child(7)::before {
+    content: "آخر الأخطاء"
+  }
+
+  #statusTable td:nth-child(8)::before {
     content: "إجراءات"
   }
 
@@ -913,8 +917,8 @@ label .input {
 
   /* اسم القناة/المصدر والتفاصيل والإجراءات تمتد على كامل عرض البطاقة */
   #statusTable td:nth-child(1),
-  #statusTable td:nth-child(6),
   #statusTable td:nth-child(7),
+  #statusTable td:nth-child(8),
   #channelsTable td:nth-child(2),
   #channelsTable td:nth-child(3),
   #channelsTable td:nth-child(9),
@@ -1045,6 +1049,18 @@ label .input {
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: Consolas, monospace
+}
+
+/* معدّل البت الفعلي مقابل المضبوط: أحمر عند تجاوز المضبوط */
+.bw-cell {
+  display: inline-block;
+  direction: ltr;
+  white-space: nowrap
+}
+
+.bw-cell.bw-over {
+  color: #FF6B5C;
+  font-weight: 700
 }
 
 /* تلوين الأخطاء حسب الخطورة على عمل القناة */

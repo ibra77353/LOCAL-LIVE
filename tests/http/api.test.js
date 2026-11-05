@@ -433,8 +433,10 @@ test('bitrate القناة يعمل كسقف أعلى في وضع CRF ويبقى
   const abr = await argsFor();
   assert.match(abr, /-b:v 400k/);
   assert.match(abr, /-maxrate 400k/);
-  // bufsize يتبع المعدّل المختار (ضعفه) لا قيمة ثابتة.
-  assert.match(abr, /-bufsize 800k/);
+  // وضع Bitrate = سقف صارم: مخزن ثانية واحدة بمعدّل القناة (لا الضعف) فلا يقفز
+  // الخرج فوق القيمة المختارة، وبلا حشو CBR حتى تبقى المشاهد الهادئة موفّرة.
+  assert.match(abr, /-bufsize 400k/);
+  assert.doesNotMatch(abr, /nal-hrd/);
   assert.doesNotMatch(abr, /-crf/);
 
   await api.del(`/api/channels/${id}`);

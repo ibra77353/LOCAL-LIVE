@@ -74,6 +74,12 @@ let servedBytes = 0;
 // ويشمل ما هو موجود في السجلات قبل الإقلاع أيضاً.
 let nginxServedBytes = 0;
 const channelServedBytes = new Map(); // channelId -> بايتات /hls المخدومة لتلك القناة
+// معدّل البت الفعلي لكل قناة لمقارنته بالمضبوط في إعداداتها. المقاطع تُكتب كل
+// ثانيتين بينما العيّنة كل ثلاث، فحساب المعدّل من عيّنة واحدة يتذبذب (مقطع أو
+// مقطعان في النافذة)؛ لذلك يُحسب على نافذة 12 ثانية من إجمالي البايتات المولَّدة.
+const channelGenBytes = new Map(); // channelId -> إجمالي بايتات مقاطعها المولَّدة
+const channelGenSnapshot = new Map(); // channelId -> { bytes, at } بداية النافذة الحالية
+const channelOutputBps = new Map(); // channelId -> بايت/ثانية على نافذة القياس
 let ingestBps = 0;
 let lastHlsFiles = new Map(); // مسار مقطع -> آخر حجم معروف (لحساب معدل التوليد)
 // باندويث الإنترنت: مجموع البايتات المستقبَلة على واجهات الشبكة الفعلية.
@@ -341,7 +347,8 @@ function publicChannel(channel) {
     state: live ? 'running' : 'stopped', pid: runtime?.proc?.pid || null, viewers, restarts: runtime?.restartCount || 0,
     lastErrorText,
     lastError: lastErrorText ? { text: lastErrorText, severity: /exit|error|فشل|تعذر/i.test(lastErrorText) ? 'high' : 'low' } : null,
-    lastErrors: lastErrorText ? [lastErrorText] : [], bytesOut: channelServedBytes.get(channel.id) || 0 };
+    lastErrors: lastErrorText ? [lastErrorText] : [], bytesOut: channelServedBytes.get(channel.id) || 0,
+    outputBps: runtime?.proc ? (channelOutputBps.get(channel.id) || 0) : 0 };
 }
 
 function readBody(req, maxBytes=1024*1024) {
@@ -949,9 +956,11 @@ function buildArgs(channel, forceTranscode = false) {
       }
     }
     else {
-      // bufsize يتبع معدّل البت المختار (ضعفه) بدل قيمة ثابتة، فيتغيّر مع 500k/2000k.
+      // وضع Bitrate = سقف صارم: مخزن VBV يساوي ثانية واحدة بمعدّل القناة (لا ضعفه)
+      // فلا يقفز الخرج فوق القيمة المختارة بين المقاطع. لا نستخدم nal-hrd=cbr لأن
+      // حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً بدل توفير البيانات.
       const cap = bitrateKbps(videoBitrate);
-      args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize',`${cap ? cap * 2 : 2000}k`);
+      args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize',`${cap || 2000}k`);
     }
     if (isNetwork || audioDevice || sourceType === 'file') args.push('-map',audioMap,'-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
@@ -1898,12 +1907,32 @@ setInterval(() => {
   // يُلغي حذف المقاطع القديمة (hlsDeleteThreshold) البايتات المولَّدة حديثاً.
   const hls = hlsFileSizes();
   let generated = 0;
+  const generatedByChannel = new Map();
   if (lastHlsFiles.size) for (const [file, size] of hls.sizes) {
     const prev = lastHlsFiles.get(file) || 0;
-    if (size > prev) generated += size - prev;
+    if (size > prev) {
+      const delta = size - prev;
+      generated += delta;
+      // مجلد كل قناة يحمل معرّفها، فننسب بايتات مقاطعها إليها وحدها.
+      const channelId = path.basename(path.dirname(file));
+      generatedByChannel.set(channelId, (generatedByChannel.get(channelId) || 0) + delta);
+    }
   }
   lastHlsFiles = hls.sizes;
   ingestBps = lastHlsFiles.size && generated ? Math.max(0, Math.round(generated / elapsed)) : 0;
+  // معدّل البت الفعلي لكل قناة: تراكم البايتات + معدّل على نافذة 12 ثانية.
+  for (const [channelId, bytes] of generatedByChannel) {
+    channelGenBytes.set(channelId, (channelGenBytes.get(channelId) || 0) + bytes);
+  }
+  const sampleAt = Date.now();
+  for (const [channelId, total] of channelGenBytes) {
+    const snapshot = channelGenSnapshot.get(channelId);
+    if (!snapshot) { channelGenSnapshot.set(channelId, { bytes: total, at: sampleAt }); continue; }
+    const seconds = (sampleAt - snapshot.at) / 1000;
+    if (seconds < 12) continue;
+    channelOutputBps.set(channelId, Math.max(0, Math.round((total - snapshot.bytes) / seconds)));
+    channelGenSnapshot.set(channelId, { bytes: total, at: sampleAt });
+  }
   probeNginxPort();
 }, 3000).unref();
 probeNginxPort();

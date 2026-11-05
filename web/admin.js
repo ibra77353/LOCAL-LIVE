@@ -855,6 +855,7 @@ async function refreshStatus() {
     <td><span class="chip ${c.status}">${STATUS_LABELS[c.status] || c.status}</span></td>
     <td>${c.viewers}</td>
     <td>${fmtBytes(c.bytesOut)}</td>
+    <td>${bitrateCell(c)}</td>
     <td>${c.restarts}</td>
     <td>${errCell(c)}</td>
     <td><div class="row-actions">
@@ -921,6 +922,32 @@ function errCell(c) {
   return `<div class="err-lines ${cls}" title="${esc((c.lastErrors || []).join('\n'))}">${esc(e.text)}</div>`;
 }
 
+// معدّل البت المضبوط للقناة بالكيلوبت (null حين لا يوجد معدّل ثابت: نسخ المصدر،
+// وضع CRF، أو بِتريت فارغ يتبع دقة الخرج).
+function channelTargetKbps(c) {
+  const q = String(c.quality || '').trim().toLowerCase();
+  if (!q || q === 'copy' || q === 'source') return null;
+  if (String(c.encodingMode || '') === 'crf') return null;
+  const value = String(c.bitrate || '').trim().toLowerCase();
+  if (!value) return null;
+  const num = Number(value.replace(/[km]$/, ''));
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return /m$/.test(value) ? num * 1000 : num;
+}
+// خلية جدول المراقبة: الفعلي مقابل المضبوط في إعدادات القناة، بالأحمر عند تجاوز
+// المضبوط بأكثر من 25%: مقاطع TS تضيف عادةً 7–17% أشغال حاوية فوق معدّل الفيديو،
+// فلا يُعدّ ذلك تجاوزاً، ويظهر بالأحمر التجاوز الحقيقي فقط.
+function bitrateCell(c) {
+  const q = String(c.quality || '').trim().toLowerCase();
+  const label = (!q || q === 'copy' || q === 'source') ? 'نسخ المصدر'
+    : (String(c.encodingMode || '') === 'crf' ? 'CRF ' + (c.crfValue || 23)
+      : (String(c.bitrate || '').trim() || 'تلقائي'));
+  const actual = Number(c.outputBps) || 0;
+  if (!actual) return `<span class="cell-muted">— / ${esc(label)}</span>`;
+  const target = channelTargetKbps(c);
+  const over = target ? actual * 8 > target * 1000 * 1.25 : false;
+  return `<span class="bw-cell${over ? ' bw-over' : ''}" title="${over ? 'الفعلي يتجاوز المعدّل المضبوط بأكثر من 25%' : 'ضمن المعدّل المضبوط (يشمل أشغال الحاوية)'}">${fmtBps(actual)} <span class="cell-muted">/ ${esc(label)}</span></span>`;
+}
 // تسمية جودة القناة للعرض (copy = نسخ المصدر)
 function qualityLabel(q) { return (!q || q === 'copy') ? 'نسخ المصدر' : (q === 'auto' ? 'تلقائي' : q); }
 // تنسيق حجم البيانات بشكل مقروء
@@ -980,7 +1007,7 @@ async function refreshDashboard() {
     dashCard('green-accent', '⬇️', fmtBytes(m.hlsBytesTotal), '', 'بيانات HLS المُولّدة', 'إجمالي مقاطع m3u8', false),
     dashCard('live-accent', '⬆️', fmtBytes(m.egressBytesTotal), '', 'البيانات الخارجة للمشتركين', m.nginxLogActive ? 'مقاطع البث من سجلات Nginx' : 'من داخل الخادم', false),
     dashCard('green-accent', '🧮', fmtBytes(m.nginxBytesTotal), '', 'إجمالي البيانات عبر Nginx', m.nginxLogActive ? 'كل الاستجابات من السجل' : 'لا توجد سجلات Nginx', false),
-    dashCard('blue-accent', '📡', fmtBps(m.ingestBandwidthBps), '', 'باندويث البث الحالي', 'وارد من المصادر', m.ingestBandwidthBps > 0),
+    dashCard('blue-accent', '📡', fmtBps(m.ingestBandwidthBps), '', 'باندويث البث الحالي', 'مقاطع HLS المولّدة الآن', m.ingestBandwidthBps > 0),
     dashCard('amber-accent', '🌐', fmtBps(m.egressBandwidthBps), '', 'باندويث الخروج للمشاهدين', 'تقدير فعلي حالي', m.egressBandwidthBps > 0),
     dashCard('purple-accent', '🔌', m.internetBandwidthBps == null ? '—' : fmtBps(m.internetBandwidthBps), '', 'باندويث الإنترنت المستهلك', m.internetBandwidthBps == null ? 'غير متاح على هذا النظام' : ('وارد حالياً · الإجمالي ' + fmtBytes(m.internetRxBytesTotal)), m.internetBandwidthBps > 0)
   ].join('');
