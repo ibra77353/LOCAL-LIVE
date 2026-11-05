@@ -71,10 +71,65 @@ PORT=3000 HOST=0.0.0.0 node server.js
 
 ## التشغيل والإيقاف
 
+كل ملفات التشغيل في `scripts\`، وتُشغَّل بالنقر المزدوج أو من موجّه الأوامر، وتقرأ المنافذ من المصدر نفسه الذي يقرأه الخادم.
+
+| الملف | الوظيفة |
+| --- | --- |
+| `scripts\start.bat` | تشغيل خادم Node ثم Nginx والتحقق من جاهزيتهما فعلياً |
+| `scripts\stop.bat` | إيقاف القنوات ثم Nginx ثم خادم Node |
+| `scripts\check.bat` | فحص Node وملفات المشروع والمنافذ وملاك العمليات |
+| `scripts\restart-nginx.bat` / `stop-nginx.bat` | إعادة تشغيل Nginx أو إيقافه وحده |
+| `scripts\firewall.bat` / `allow-lan.bat` | فتح منفذي المشاهدة والإدارة في جدار الحماية (`remove` للإلغاء) |
+
 - مصدر المنافذ الوحيد هو `data.json` (`settings.port` و`settings.nginxPort`) عبر `scripts\ports.js`، وكل ملفات BAT (start/stop/check/firewall/restart-nginx) تقرأ منه، فيستخدم التشغيل والإيقاف المنفذ نفسه دائماً. متغير البيئة `PORT` يبقى له الأولوية كما في `server.js`.
 - `start.bat` لا يعلن نجاح التشغيل إلا بعد أن يجيب `/api/status` فعلياً ويستمع Nginx على منفذ المشاهدة؛ وإذا تعذّر تشغيل إحدى الخدمتين يطبع السبب ويعيد رمز خروج `1`.
 - `stop.bat` لا يوقف إلا عمليات PrinceLive: خادم Node.js يُعرَف بمسار `%ROOT%\server.js` أو بملف `run/server.pid`، وNginx بمسار `nginx\nginx.exe` داخل المشروع (عبر `scripts\procs.js`). أي عملية أخرى تستخدم نفس المنفذ تُترك كما هي ويُطبع تنبيه باسمها.
 - الإيقاف العادي لا يحذف السجلات: `logs\server.log` و`nginx\logs\*.log` تبقى للمراجعة. تُنظَّف فقط مقاطع HLS القديمة في `srv\hls` حتى لا يُعرض بث متوقف.
+
+### التشغيل على Windows
+
+1. تأكد من Node.js 18+ في `PATH`، ومن وجود `ffmpeg.exe` (و`ffprobe.exe` مستحسن) بجانب `server.js`، ومن أن منفذَي `settings.port` و`settings.nginxPort` غير مستخدمين.
+2. انقر `scripts\start.bat`. الخطوات التي ينفّذها بالترتيب:
+   - يقرأ المنفذين من `data.json` عبر `scripts\ports.js`، ويتحقق من وجود `server.js` و`config.json` وNode.js.
+   - ينشئ المجلدات الناقصة: `logs` و`run` و`srv\hls` و`srv\uploads`.
+   - إن لم تكن قاعدة `PrinceLive HTTP <nginxPort>` موجودة في جدار الحماية، يستدعي `scripts\firewall.bat` تلقائياً (نافذة UAC واحدة) لفتح منفذ المشاهدة ومنفذ لوحة الإدارة.
+   - يشغّل الخادم في نافذة مصغّرة باسم **Prince Live API** (`node server.js`) وينتظر استجابة `GET /api/status` حتى 30 ثانية.
+   - ينفّذ `nginx -t`، ويشغّل Nginx إن لم يكن يعمل، ثم ينتظر استماعه على منفذ المشاهدة حتى 10 ثوانٍ.
+   - يطبع العنوانين ويعيد رمز خروج `0`، أو يطبع سبب الفشل ويعيد `1`.
+3. بعد النجاح: `http://127.0.0.1:<nginxPort>/` لواجهة المشاهدين، و`http://127.0.0.1:<nginxPort>/admin/` للوحة الإدارة، و`http://127.0.0.1:<port>` وصول مباشر إلى خادم Node.
+4. للوصول من أجهزة الشبكة المحلية نفّذ `scripts\allow-lan.bat` (يفوّض إلى `firewall.bat` لفتح المنفذين على الشبكة الخاصة)، ثم افتح `http://<IP-الجهاز>:<nginxPort>/`. وللإلغاء لاحقاً: `firewall.bat remove`.
+5. للتشخيص فقط يمكن تشغيل الخادم يدوياً: `node server.js` من جذر المشروع؛ في هذه الحالة لا يبدأ Nginx تلقائياً، وشغّله بـ `nginx\nginx.exe -p "%CD%\nginx/" -c conf/nginx.conf`.
+
+### الإيقاف على Windows
+
+انقر `scripts\stop.bat`. ترتيب الإيقاف:
+
+1. يقرأ المنفذين من `data.json`، ثم يطلب `POST /api/stop` من الخادم بترويسة رمز التحكّم المحلي `run\control.token` (مهلة 15 ثانية) لإيقاف كل القنوات وتفريغ مقاطع HLS.
+2. يوقف Nginx الخاص بالمشروع فقط عبر `scripts\nginx-stop.bat`.
+3. يوقف عملية Node الخاصة بالمشروع (عبر `run\server.pid` أو سطر أوامر يحتوي `server.js`) بـ `taskkill /T /F` ثم يعيد الفحص للتأكد من انتهائها.
+4. ينظّف `srv\hls` ويحتفظ بالسجلات، ثم يطبع `Prince Live stopped` ورمز خروج `0`، أو `Prince Live did NOT stop completely` ورمز `1`.
+
+- إن ظهرت رسالة تطلب صلاحيات مسؤول فشغّل `stop.bat` كمسؤول؛ إيقاف عملية Node أو Nginx بدأتها جلسة أخرى يحتاج صلاحية أعلى.
+- إذا كان المنفذ مشغولاً ببرنامج آخر لم يبدأه المشروع فسيطبع اسمه ولا يوقفه.
+
+### فحص الحالة قبل التشغيل وبعده
+
+`scripts\check.bat` يطبع: إصدار Node، ووجود `server.js` و`config.json`، وصلاحية JSON وقيم `host` والمنافذ ومسارات FFmpeg وNginx وأبعاد الخرج وعدد المصادر والقنوات، ونتيجة `nginx -t`، وحالة استماع المنفذين، وملاك العمليات (Prince Live أم برنامج آخر).
+
+### إعادة تشغيل Nginx أو إيقافه وحده
+
+- `scripts\stop-nginx.bat`: يوقف Nginx الخاص بالمشروع فقط.
+- `scripts\restart-nginx.bat`: يفحص الإعدادات أولاً، ثم يوقف نسخة المشروع ويعيد تشغيلها. لا يستخدم `nginx -s reload` لأن ملف الـpid قد يحمل معرّف عملية أخرى.
+
+### بعد تغيير الإعدادات
+
+- تغيير `port` أو `nginxPort` أو مسارات `ffmpegPath`/`ffprobePath`/`nginxPath` يحتاج إعادة تشغيل كاملة: `scripts\stop.bat` ثم `scripts\start.bat` (حفظ الإعدادات يحدّث `nginx\conf\nginx.conf` تلقائياً).
+- إعدادات الترميز تُطبَّق على القناة عند تشغيلها التالي، فلا تحتاج إعادة تشغيل الخدمة كلها.
+- لا تشغّل نسختين من المشروع على المنفذ نفسه: `start.bat` يرفض البدء ويسمّي البرنامج الذي يحتل المنفذ.
+
+### على Linux
+
+ملفات BAT مخصّصة لـ Windows. على Linux شغّل `node server.js` (مع `PORT` و`HOST` عند الحاجة) وأوقفه بـ `Ctrl+C` أو `kill`، وشغّل Nginx من حزمة النظام عند الحاجة لتقديم الواجهة على المنفذ 80.
 
 ## إدارة المصادر والقنوات
 
