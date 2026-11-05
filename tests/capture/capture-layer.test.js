@@ -179,23 +179,45 @@ test('القيم التالفة في data.json لا تصل إلى FFmpeg', () =>
   assert.equal(args[args.indexOf('-video_size') + 1], '1280x720');
   assert.equal(args.includes('-pixel_format'), false);
   assert.equal(args.includes('-vcodec'), false);
-  // fps الغائب يستخدم القيمة الاحتياطية 30، والنص الفارغ يُقيَّد إلى 1 — كما في clampNumber الأصلية.
+  // «افتراضي» يصل من اللوحة null أو ''، ويجب أن يعني 30 لا إطاراً واحداً.
   assert.equal(args[args.indexOf('-framerate') + 1], '30');
-  const emptyFps = winCapture.usbInputArgs({ videoDevice: 'USB Video', fps: '' });
-  assert.equal(emptyFps[emptyFps.indexOf('-framerate') + 1], '1');
+  for (const fps of ['', null, undefined, 0, 'abc']) {
+    const fallback = winCapture.usbInputArgs({ videoDevice: 'USB Video', fps });
+    assert.equal(fallback[fallback.indexOf('-framerate') + 1], '30', `fps=${String(fps)} يجب أن يعطي 30`);
+  }
+  const chosen = winCapture.usbInputArgs({ videoDevice: 'USB Video', fps: 25 });
+  assert.equal(chosen[chosen.indexOf('-framerate') + 1], '25');
 });
 
 // ---------------------------------------------------------------- اختبار الالتقاط
-test('وسائط اختبار التقاط الصوت والفيديو مطابقة للأصل', () => {
+// الاختبار يكتب MPEG-TS مُرمَّزاً بدل `-f null`: نسخة FFmpeg المرفقة لا تضم
+// null muxer ولا wrapped_avframe، فكان الاختبار يفشل على جهاز سليم.
+test('وسائط اختبار التقاط الصوت والفيديو تستخدم مُخرَجاً مدعوماً دائماً', () => {
   assert.deepEqual(winCapture.testAudioArgs('USB Audio'), [
-    '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-i', 'audio=USB Audio', '-t', '3', '-f', 'null', '-',
+    '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M',
+    '-i', 'audio=USB Audio', '-t', '3', '-map', '0:a:0?', '-c:a', 'aac', '-f', 'mpegts', '-',
   ]);
   assert.deepEqual(winCapture.testVideoArgs({ videoDevice: 'USB Video', audioDevice: 'USB Audio', videoSize: '1280x720', fps: 30, pixelFormat: 'mjpeg' }), [
     '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M',
     '-framerate', '30', '-video_size', '1280x720',
     '-vcodec', 'mjpeg',
-    '-i', 'video=USB Video:audio=USB Audio', '-t', '3', '-f', 'null', '-',
+    '-i', 'video=USB Video:audio=USB Audio', '-t', '3', '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mpegts', '-',
   ]);
+  // لا يظهر `null` في أي من الأمرين: مُخرَجه غير موجود في نسخة FFmpeg المقلّمة.
+  const audio = winCapture.testAudioArgs('USB Audio');
+  const video = winCapture.testVideoArgs({ videoDevice: 'USB Video' });
+  for (const args of [audio, video]) {
+    assert.equal(args.includes('null'), false);
+    assert.equal(args[args.lastIndexOf('-f') + 1], 'mpegts');
+  }
+});
+
+test('اختبار الالتقاط يحترم الوضع الآمن كما تفعل وسائط القناة', () => {
+  const args = winCapture.testVideoArgs({ videoDevice: 'USB Video', videoSize: '1920x1080', fps: 60, captureSafeMode: true });
+  assert.equal(args.includes('-framerate'), false);
+  assert.equal(args.includes('-video_size'), false);
+  assert.deepEqual(args.slice(0, 7), ['-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M']);
 });
 
 test('اختبار الالتقاط يرفض المدخلات غير الصالحة بنفس رسائل الأصل', () => {

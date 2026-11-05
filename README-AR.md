@@ -26,13 +26,13 @@
 | الملف | الدور |
 | --- | --- |
 | `lib/capture/index.js` | الواجهة الموحّدة واختيار المحرك حسب نظام التشغيل |
-| `lib/capture/dshow.js` | محرك Windows (DirectShow) — نفس منطق الإصدار السابق بلا تغيير |
+| `lib/capture/dshow.js` | محرك Windows (DirectShow) — وسائط الإدخال وتعداد الأجهزة واختبار الالتقاط |
 | `lib/capture/v4l2.js` | محرك Linux: Video4Linux2 للفيديو + ALSA للصوت |
 | `lib/capture/capabilities.js` | تجميع قدرات الجهاز والتوصية (مشترك بين المحركين) |
 | `lib/capture/screen.js` | التقاط الشاشة: gdigrab على Windows وx11grab على Linux |
 
 - **نطاق الدعم (ثلاثة أنظمة فقط):** Windows 10/11 ← DirectShow، Ubuntu/Debian ← V4L2 + ALSA، Docker Linux ← V4L2 + ALSA (مع تمرير `--device /dev/video0 --device /dev/snd` إلى الحاوية). الأنظمة الثلاثة مسجّلة في `capture.supportedTargets()`، و`/api/stats` يعرض المحرك النشط (`captureEngine`).
-- **اختيار المحرك:** `win32 → DirectShow`، و`linux → V4L2` فقط. أي نظام آخر (macOS/BSD وغيرها) غير مدعوم ولا يُعامل كمحرك V4L2: طلب الالتقاط يرفع خطأً واضحاً، و`/api/stats` تُبلّغ `captureEngine: "unsupported"`. سلوك Windows لم يتغيّر إطلاقاً.
+- **اختيار المحرك:** `win32 → DirectShow`، و`linux → V4L2` فقط. أي نظام آخر (macOS/BSD وغيرها) غير مدعوم ولا يُعامل كمحرك V4L2: طلب الالتقاط يرفع خطأً واضحاً، و`/api/stats` تُبلّغ `captureEngine: "unsupported"`. وسائط الإدخال على Windows هي نفسها المعتمدة سابقاً (`-f dshow -rtbufsize 256M` ثم `-framerate`/`-video_size`/الصيغة ثم `-i video=...:audio=...`)، مع تعديلين: «افتراضي» في معدل الإطارات يعني 30 لا 1، ووضع الالتقاط الآمن يُحترم في زر الاختبار كما في وسائط القناة.
 - **تعداد الأجهزة:** على Windows عبر `-list_devices` في FFmpeg؛ وعلى Linux بقراءة `/dev/video*` و`/sys/class/video4linux/*/name` وبطاقات الصوت من `/proc/asound/cards` دون تشغيل FFmpeg.
 - **الصوت:** DirectShow يحمل الصوت مع الفيديو في إدخال واحد (`video=...:audio=...`)، أما V4L2 فلا يحمل صوتاً، فتُضاف طبقة ALSA كإدخال ثانٍ (`-f alsa -i plughw:N`) مع `-map 1:a:0?`. الطبقة تُبلّغ الخادم بفهرس إدخال الصوت (`audioInputIndex`) بدل أن يعرف التفاصيل.
 - **إضافة نظام جديد:** ملف محرك يوفّر الدوال نفسها (`discover`, `capabilitiesArgs`, `inputPlan`, `testVideoArgs`, `testAudioArgs`) + سطر تسجيل في `ENGINES` داخل `lib/capture/index.js`.
@@ -64,7 +64,7 @@ scripts\devices.bat                :: Windows — DirectShow
 node scripts/devices.js --no-caps  # الأجهزة فقط بلا فحص الأوضاع (أسرع)
 ```
 
-يطبع التقرير: المحرك النشط، إصدار FFmpeg، أسماء أجهزة الفيديو والصوت، ولكل جهاز فيديو الدقات ومعدلات الإطارات والصيغ والتوصية (نفس التوصية التي يطبّقها زر «ضبط تلقائي»). في لوحة الإدارة تُقرأ القائمة من `GET /api/devices` عند فتح نافذة المصدر، وتظهر ملاحظة الخادم إن كانت القائمة فارغة، ويوجد زرّا **اختبار الفيديو** و**اختبار الصوت** (3 ثوانٍ) قبل الحفظ.
+يطبع التقرير: المحرك النشط، إصدار FFmpeg، أسماء أجهزة الفيديو والصوت، ولكل جهاز فيديو الدقات ومعدلات الإطارات والصيغ والتوصية (نفس التوصية التي يطبّقها زر «ضبط تلقائي»). في لوحة الإدارة تُقرأ القائمة من `GET /api/devices` عند فتح نافذة المصدر، وتظهر ملاحظة الخادم إن كانت القائمة فارغة، ويوجد زرّا **اختبار الفيديو** و**اختبار الصوت** (3 ثوانٍ) قبل الحفظ. الاختبار يشغّل الجهاز فعلياً ويرمّز الناتج إلى MPEG-TS بـ`libx264`/`aac` (نفس مكوّنات البث) بدل `-f null`، فلا يعتمد على `null muxer` غير المضمون في نسخ FFmpeg المقلّمة. أي نسخة تشغّل قناة بنجاح تُنجح الاختبار أيضاً.
 
 ### على Windows (DirectShow)
 
@@ -85,7 +85,7 @@ node scripts/devices.js --no-caps  # الأجهزة فقط بلا فحص الأ�
 
 - Windows 10/11 64-bit، أو Linux مع `v4l2` و`alsa` (انظر «التشغيل على Linux»).
 - Node.js 18 أو أحدث.
-- FFmpeg build يدعم DirectShow (Windows) أو v4l2/alsa (Linux)، مع libx264 وHLS.
+- FFmpeg build يدعم DirectShow (Windows) أو v4l2/alsa (Linux)، مع libx264 وHLS (أي: مُرمِّز `libx264`، ومُرمِّز `aac`، وموّصل `mpegts`). هذه المكوّنات نفسها يحتاجها زر اختبار الالتقاط، لذا نجاح تشغيل قناة يعني نجاح الاختبار.
 - FFprobe (موصى به للتحقق من توافق codecs).
 - Nginx ليقدّم الواجهة والبث على منفذ `nginxPort` (80 افتراضياً) أمام خادم Node: `nginx.exe` على Windows، وحزمة `nginx` داخل حاوية Docker على المنفذ 80 داخلياً. إن لم يستمع أي خدمة على ذلك المنفذ يظهر تحذير في اللوحة (`nginxBinding` في `/api/status`).
 - كرت التقاط USB (أو `/dev/video*` على Linux) أو مصدر HTTP/HLS أو RTSP متاح للخادم.

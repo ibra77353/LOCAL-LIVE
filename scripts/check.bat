@@ -13,6 +13,7 @@ if not exist "%ROOT%server.js" (
   exit /b 1
 )
 cd /d "%ROOT%"
+chcp 65001 >nul
 
 echo ==== Node.js ====
 where node
@@ -29,6 +30,12 @@ echo.
 echo ==== Nginx ====
 if exist "nginx\nginx.exe" call "%ROOT%scripts\nginx-dirs.bat"
 if exist "nginx\nginx.exe" ("nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -t) else echo MISSING: nginx\nginx.exe
+echo.
+echo ==== Capture devices [DirectShow] ====
+rem نفس فحص scripts/check.sh: إصدار FFmpeg وقابلية تشغيله على ويندوز، ثم أجهزة
+rem الفيديو والصوت التي ستراها لوحة الإدارة — بأوامر طبقة الالتقاط نفسها.
+node scripts\devices.js --no-caps
+if errorlevel 1 echo WARNING: device scan failed - read the message above.
 echo.
 rem المنافذ من نفس المصدر الذي يقرأه الخادم وسكربتا التشغيل والإيقاف
 set "PORTS="

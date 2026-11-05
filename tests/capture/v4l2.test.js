@@ -181,7 +181,7 @@ test('القيم التالفة لا تصل إلى FFmpeg على Linux', () => {
   const args = v4l2.videoInputArgs({ videoDevice: '/dev/video0', videoSize: 'not-a-size', fps: '', pixelFormat: 'bad format!' });
   assert.equal(args[args.indexOf('-video_size') + 1], '1280x720');
   assert.equal(args.includes('-input_format'), false);
-  assert.equal(args[args.indexOf('-framerate') + 1], '1', 'نفس سلوك clampNumber القديم للنص الفارغ');
+  assert.equal(args[args.indexOf('-framerate') + 1], '30', '«افتراضي» يعني 30 لا إطاراً واحداً');
   assert.throws(() => v4l2.videoInputArgs({ videoDevice: '' }), /جهاز الفيديو غير صالح لـ V4L2/);
 });
 
