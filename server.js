@@ -866,8 +866,12 @@ function buildArgs(channel, forceTranscode = false) {
   // تغيير outputHeight/outputWidth مؤثراً فعلياً بدل تجاهله لصالح 360p الثابتة.
   const qualityValue = String(channel.quality || '').trim().toLowerCase();
   const presetHeight = /^\d{3,4}p$/.test(qualityValue) ? Number(qualityValue.replace(/p$/,'')) : 0;
-  const settingsHeight = clampNumber(Number(settings.outputHeight), 120, 2160, 360);
-  const settingsWidth = clampNumber(Number(settings.outputWidth), 160, 3840, 640);
+  // yuv420p يتطلب أبعاداً زوجية: قيمة فردية محفوظة في الإعدادات كانت تُفشل بدء
+  // القناة كلياً (x264: Could not open encoder). تُقرَّب هنا كشبكة أمان لأي
+  // data.json محرَّر يدوياً، وتُرفض الأبعاد الفردية من واجهة الإعدادات نفسها.
+  const evenPx = value => Math.round(value / 2) * 2;
+  const settingsHeight = evenPx(clampNumber(Number(settings.outputHeight), 120, 2160, 360));
+  const settingsWidth = evenPx(clampNumber(Number(settings.outputWidth), 160, 3840, 640));
   const outputHeight = isCopyQuality(qualityValue) ? (srcH || 720) : (presetHeight || settingsHeight);
   const derivedWidth=Math.max(160,Math.round((srcW||1280)*outputHeight/(srcH||720)/2)*2);
   const outputWidth=isCopyQuality(qualityValue)?(srcW||1280):(presetHeight?derivedWidth:settingsWidth);
@@ -1412,6 +1416,8 @@ const server = http.createServer(async (req, res) => {
     for (const [key,[min,max]] of Object.entries(numberRanges)) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const n = Number(body[key]);
       if (!Number.isFinite(n) || n < min || n > max) return apiError(res,400,`قيمة ${key} يجب أن تكون بين ${min} و${max}`);
+      // أبعاد الترميز يجب أن تكون زوجية (yuv420p)، وإلا فشل تشغيل القنوات جميعاً.
+      if ((key === 'outputWidth' || key === 'outputHeight') && n % 2 !== 0) return apiError(res,400,`قيمة ${key} يجب أن تكون عدداً زوجياً (الدقة الفردية لا تُرمَّز بـ yuv420p)`);
       data.settings[key] = n;
     }
     if (Object.prototype.hasOwnProperty.call(body,'x264Preset')) {

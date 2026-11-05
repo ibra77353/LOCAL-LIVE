@@ -437,3 +437,17 @@ test('bitrate القناة يعمل كسقف أعلى في وضع CRF ويبقى
   await api.del(`/api/channels/${id}`);
   await api.del(`/api/sources/${src.json.source.id}`);
 });
+
+// yuv420p لا يقبل أبعاداً فردية: كانت قيمة مثل 641 تُحفظ ثم تُفشل بدء كل قناة
+// تتبع مقاس الإعدادات، فيجب رفضها من الإعدادات بوضوح.
+test('إعدادات الدقة ترفض الأبعاد الفردية وتقبل الزوجية', async () => {
+  const oddWidth = await api.put('/api/settings', { outputWidth: 641 });
+  assert.equal(oddWidth.status, 400);
+  const oddHeight = await api.put('/api/settings', { outputHeight: 361 });
+  assert.equal(oddHeight.status, 400);
+
+  const even = await api.put('/api/settings', { outputWidth: 642, outputHeight: 362 });
+  assert.equal(even.status, 200);
+  assert.equal(even.json.settings.outputWidth, 642);
+  assert.equal(even.json.settings.outputHeight, 362);
+});
