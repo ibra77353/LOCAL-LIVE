@@ -34,8 +34,10 @@ async function init() {
   if (SETTINGS.phone) { $('#sitePhone').textContent = SETTINGS.phone; $('#sitePhone').href = 'tel:' + SETTINGS.phone; }
   if (SETTINGS.logo) {
     const l = $('#siteLogo');
-    l.src = getAssetUrl(SETTINGS.logo);
-    l.classList.remove('hidden');
+    if (l) {
+      l.src = getAssetUrl(SETTINGS.logo);
+      l.classList.remove('hidden');
+    }
   }
   // الثيم يُطبَّق كصنف على body — viewer.css يعرّف body.worldcup فوق متغيرات :root.
   document.body.classList.toggle('worldcup', SETTINGS.theme === 'worldcup');

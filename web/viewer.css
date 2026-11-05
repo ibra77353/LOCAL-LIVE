@@ -42,8 +42,7 @@ a {
 
 /* header */
 .site-head {
-  text-align: center;
-  padding: 26px 16px 0
+  text-align: center
 }
 
 .site-logo {
@@ -53,7 +52,6 @@ a {
 
 .site-head h1 {
   margin: 0;
-  font-size: clamp(26px, 5vw, 40px);
   font-weight: 800;
   letter-spacing: .5px
 }
@@ -71,7 +69,6 @@ a {
 }
 
 .tabs {
-  margin-top: 18px;
   display: flex;
   justify-content: center;
   gap: 8px;
