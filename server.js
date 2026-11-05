@@ -167,12 +167,11 @@ function writeData(value) {
 }
 let data = readData();
 if (Object.prototype.hasOwnProperty.call(data.settings,'ads')) delete data.settings.ads;
-// حقول قنوات ملغاة من المخطط (لا يقرأها أي كود): threads و manualStopped،
-// ووضع CRF (encodingMode/crfValue) بعد إلغائه والاكتفاء بوضع Bitrate.
+// حقول قنوات ملغاة من المخطط (لا يقرأها أي كود): threads و manualStopped.
 // تُحذف من data.json عند الإقلاع حتى تتطابق الملفات القديمة مع المخطط الحالي.
 let prunedChannelFields = false;
 for (const channel of data.channels) {
-  for (const key of ['threads', 'manualStopped', 'encodingMode', 'crfValue']) {
+  for (const key of ['threads', 'manualStopped']) {
     if (Object.prototype.hasOwnProperty.call(channel, key)) { delete channel[key]; prunedChannelFields = true; }
   }
 }

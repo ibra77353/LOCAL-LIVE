@@ -200,7 +200,7 @@ node scripts/devices.js --no-caps  # الأجهزة فقط بلا فحص الأ�
 | `fps` | FPS القناة | `""` = يتبع `settings.outputFps` |
 | `quality` | جودة الخرج | `auto` = أبعاد `outputWidth`/`outputHeight`، أو `240p`/`288p`/`320p`/`360p`/`432p`/`480p`/`720p`، أو `copy` |
 
-> حقلا `encodingMode` و`crfValue` أُلغيَا مع وضع CRF، وتُحذف من `data.json` عند إقلاع الخادم.
+> حقلا `encodingMode` و`crfValue` أُلغيَا مع وضع CRF، ويُتجاهلان تماماً إن وُجدا في ملفات `data.json` قديمة.
 
 ### ترتيب الأولوية الفعلي عند بناء أمر FFmpeg
 
