@@ -624,6 +624,7 @@ label .input {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 700;
   border-radius: 99px;
