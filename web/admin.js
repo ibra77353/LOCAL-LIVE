@@ -232,14 +232,27 @@ function openModal(title, bodyHtml, onSave) {
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = bodyHtml;
   $('#modalError').textContent = '';
+  const save = $('#modalSave');
+  save.textContent = 'حفظ';
+  save.classList.add('btn-primary');
+  save.classList.remove('btn-danger');
   $('#modalOverlay').classList.remove('hidden');
-  $('#modalSave').onclick = async () => {
+  save.onclick = async () => {
     $('#modalError').textContent = '';
     try { await onSave(); closeModal(); }
     catch (e) { $('#modalError').textContent = e.message; }
   };
 }
 function closeModal() { $('#modalOverlay').classList.add('hidden'); }
+
+// نافذة تأكيد قبل الإجراءات الحساسة (بدل confirm الخاص بالمتصفح)
+function confirmAction(title, message, onConfirm) {
+  openModal(title, `<p class="confirm-text">${message}</p>`, onConfirm);
+  const save = $('#modalSave');
+  save.textContent = 'تأكيد الحذف';
+  save.classList.remove('btn-primary');
+  save.classList.add('btn-danger');
+}
 $('#modalOverlay').addEventListener('click', (e) => { if (e.target.id === 'modalOverlay') closeModal(); });
 
 // =====================================================================
@@ -265,10 +278,15 @@ function sourceDetail(s) {
   return s.url || '';
 }
 
-async function deleteSource(id) {
-  if (!confirm('حذف هذا المصدر؟')) return;
-  try { await api('/sources/' + id, { method: 'DELETE' }); loadSources(); toast('تم الحذف'); }
-  catch (e) { toast(e.message, true); }
+function deleteSource(id) {
+  const src = DATA.sources.find(s => s.id === id);
+  confirmAction('حذف المصدر',
+    `سيتم حذف المصدر «${esc(src ? src.name : '')}» نهائياً. لا يمكن التراجع عن هذا الإجراء.`,
+    async () => {
+      await api('/sources/' + id, { method: 'DELETE' });
+      await loadSources();
+      toast('تم الحذف');
+    });
 }
 
 function openSourceModal(id) {
@@ -500,10 +518,16 @@ async function toggleChannelEnabled(id, enabled) {
   } catch (e) { toast(e.message, true); loadChannels(); }
 }
 
-async function deleteChannel(id) {
-  if (!confirm('حذف القناة وجدولتها؟')) return;
-  try { await api('/channels/' + id, { method: 'DELETE' }); loadChannels(); loadSchedules(); toast('تم الحذف'); }
-  catch (e) { toast(e.message, true); }
+function deleteChannel(id) {
+  const ch = DATA.channels.find(c => c.id === id);
+  confirmAction('حذف القناة',
+    `سيتم حذف القناة «${esc(ch ? ch.name : '')}» وجدولتها نهائياً. لا يمكن التراجع عن هذا الإجراء.`,
+    async () => {
+      await api('/channels/' + id, { method: 'DELETE' });
+      await loadChannels();
+      await loadSchedules();
+      toast('تم الحذف');
+    });
 }
 
 function openChannelModal(id) {
@@ -562,9 +586,11 @@ function openChannelModal(id) {
 // SCHEDULER
 // =====================================================================
 async function loadSchedules() {
+  const tb = $('#schedulesTable tbody');
+  if (!tb) return; // لا يوجد جدول جدولة في هذه الواجهة
   DATA.schedules = (await api('/schedules')).schedules;
   const chName = id => DATA.channels.find(c => c.id === id)?.name || '؟';
-  $('#schedulesTable tbody').innerHTML = DATA.schedules.map(s => `<tr>
+  tb.innerHTML = DATA.schedules.map(s => `<tr>
     <td><b>${esc(chName(s.channelId))}</b></td>
     <td>${(s.days || []).map(d => DAYS[d]).join('، ') || 'كل الأيام'}</td>
     <td class="cell-muted" dir="ltr">${(s.slots || []).map(x => x.start + ' → ' + x.end).join(' | ')}</td>

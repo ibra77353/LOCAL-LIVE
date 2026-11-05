@@ -995,6 +995,12 @@ label .input {
   margin: 0
 }
 
+.confirm-text {
+  margin: 0;
+  line-height: 1.9;
+  color: var(--text)
+}
+
 .qual-row,
 .slot-row,
 .variant-row {
