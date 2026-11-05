@@ -103,19 +103,7 @@ let lastServedSample = { bytes: 0, at: Date.now() };
 // (one physical DirectShow input) and exposes it as a configurable channel.
 // data.json هو المصدر الوحيد للحالة: settings + sources + channels.
 const DATA_PATH = path.resolve(process.env.DATA_FILE || path.join(ROOT, 'data.json'));
-// قيم CRF المعروضة في لوحة الإدارة (18 الأعلى جودة، 28 الأصغر حجماً).
-const CRF_VALUES = [18, 20, 23, 26, 28];
-const ENCODING_MODES = ['bitrate', 'crf'];
-// وضع الترميز يُضبط لكل قناة على حدة: «bitrate» يستهدف معدّل بت، و«crf» يثبّت الجودة.
-// القيمة الفارغة (قنوات محفوظة قبل هذا التغيير) تُعامل كوضع bitrate، وقيمة CRF غير الصالحة كـ23.
-function channelEncodingModeOf(channel) {
-  const mode = String((channel && channel.encodingMode) || '').toLowerCase();
-  return ENCODING_MODES.includes(mode) ? mode : 'bitrate';
-}
-function channelCrfValueOf(channel) {
-  const value = Number(channel && channel.crfValue);
-  return CRF_VALUES.includes(value) ? value : 23;
-}
+// وضع الترميز الوحيد هو Bitrate: لكل قناة معدّل بت محدّد (أو تلقائي حسب دقة الخرج).
 // الإعدادات فقط هي الافتراضية؛ لا تُنشأ مصادر أو قنوات تلقائياً عند أول تشغيل.
 function defaultData() {
   return {
@@ -179,11 +167,12 @@ function writeData(value) {
 }
 let data = readData();
 if (Object.prototype.hasOwnProperty.call(data.settings,'ads')) delete data.settings.ads;
-// حقول قنوات ملغاة من المخطط (لا يقرأها أي كود): threads و manualStopped.
+// حقول قنوات ملغاة من المخطط (لا يقرأها أي كود): threads و manualStopped،
+// ووضع CRF (encodingMode/crfValue) بعد إلغائه والاكتفاء بوضع Bitrate.
 // تُحذف من data.json عند الإقلاع حتى تتطابق الملفات القديمة مع المخطط الحالي.
 let prunedChannelFields = false;
 for (const channel of data.channels) {
-  for (const key of ['threads', 'manualStopped']) {
+  for (const key of ['threads', 'manualStopped', 'encodingMode', 'crfValue']) {
     if (Object.prototype.hasOwnProperty.call(channel, key)) { delete channel[key]; prunedChannelFields = true; }
   }
 }
@@ -945,23 +934,11 @@ function buildArgs(channel, forceTranscode = false) {
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
       '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
-    if (channelEncodingModeOf(channel) === 'crf') {
-      args.push('-crf', String(channelCrfValueOf(channel)));
-      // وضع CRF لا يستهدف معدّل بت ثابتاً؛ لذلك بتريت القناة كان يُتجاهل تماماً.
-      // الآن يُطبَّق كسقف أعلى (VBV) حتى يبقى الإعداد مؤثراً دون فرض معدّل ثابت.
-      if (String(channel.bitrate || '').trim()) {
-        // السقف (VBV) يأتي من البِتريت نفسه، وحجم المخزن ضعفه دائماً.
-        const cap = bitrateKbps(videoBitrate);
-        if (cap > 0) args.push('-maxrate',`${cap}k`,'-bufsize',`${cap * 2}k`);
-      }
-    }
-    else {
-      // وضع Bitrate = سقف صارم: مخزن VBV يساوي ثانية واحدة بمعدّل القناة (لا ضعفه)
-      // فلا يقفز الخرج فوق القيمة المختارة بين المقاطع. لا نستخدم nal-hrd=cbr لأن
-      // حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً بدل توفير البيانات.
-      const cap = bitrateKbps(videoBitrate);
-      args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize',`${cap || 2000}k`);
-    }
+    // وضع Bitrate = سقف صارم: مخزن VBV يساوي ثانية واحدة بمعدّل القناة (لا ضعفه)
+    // فلا يقفز الخرج فوق القيمة المختارة بين المقاطع. لا نستخدم nal-hrd=cbr لأن
+    // حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً بدل توفير البيانات.
+    const cap = bitrateKbps(videoBitrate);
+    args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize',`${cap || 2000}k`);
     if (isNetwork || audioDevice || sourceType === 'file') args.push('-map',audioMap,'-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
   }
@@ -1510,12 +1487,7 @@ const server = http.createServer(async (req, res) => {
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
     const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
-    // وضع الترميز يُضبط لكل قناة؛ الافتراضي bitrate حين لا يُرسل.
-    const encMode = String(body.encodingMode || '').toLowerCase() || 'bitrate';
-    if (!ENCODING_MODES.includes(encMode)) return apiError(res, 400, 'وضع ترميز القناة يجب أن يكون bitrate أو crf');
-    const crfValue = body.crfValue === '' || body.crfValue === null || body.crfValue === undefined ? '' : Number(body.crfValue);
-    if (crfValue !== '' && !CRF_VALUES.includes(crfValue)) return apiError(res, 400, `قيمة CRF للقناة يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);
-    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), encodingMode: encMode, crfValue, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
+    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
     data.channels.push(channel); writeData(data); return send(res, 201, { ok: true, channel: publicChannel(channel) });
   }
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
@@ -1529,27 +1501,16 @@ const server = http.createServer(async (req, res) => {
     // وكان يُرفض سابقاً فيتعذر حفظ القناة دون قيمة FPS.
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
-    // وضع الترميز الخاص بالقناة: '' (قناة قديمة) يُحفظ كـbitrate.
-    if (Object.prototype.hasOwnProperty.call(body,'encodingMode')) {
-      const mode = String(body.encodingMode || '').toLowerCase();
-      if (mode && !ENCODING_MODES.includes(mode)) return apiError(res,400,'وضع ترميز القناة يجب أن يكون bitrate أو crf');
-      body.encodingMode = mode || 'bitrate';
-    }
-    if (Object.prototype.hasOwnProperty.call(body,'crfValue') && body.crfValue !== '' && body.crfValue !== null && body.crfValue !== undefined) {
-      if (!CRF_VALUES.includes(Number(body.crfValue))) return apiError(res,400,`قيمة CRF للقناة يجب أن تكون إحدى القيم ${CRF_VALUES.join('، ')}`);
-      body.crfValue = Number(body.crfValue);
-    }
     if (Object.prototype.hasOwnProperty.call(body,'chanId')) {
       const chanId = String(body.chanId || '').trim();
       if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId && c.id !== channel.id))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
       channel.chanId = chanId || channel.id;
     }
     // إعدادات تؤثر في وسائط FFmpeg: تغييرها على قناة تعمل يحتاج إعادة تشغيل فورية.
-    const encodingKeys = ['sourceId','quality','fps','bitrate','encodingMode','crfValue'];
+    const encodingKeys = ['sourceId','quality','fps','bitrate'];
     const encodingBefore = {}; for (const key of encodingKeys) encodingBefore[key] = channel[key];
-    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','encodingMode','crfValue','autoStart','alwaysOn']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
     if (channel.fps === null || channel.fps === undefined) channel.fps = '';
-    if (channel.crfValue === null || channel.crfValue === undefined) channel.crfValue = '';
     if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;
     else if (Object.prototype.hasOwnProperty.call(body,'sortOrder')) channel.sortOrder = Number(body.sortOrder) || 0;
     channel.url = `/hls/${channel.id}/index.m3u8`;

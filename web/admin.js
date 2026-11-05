@@ -22,12 +22,7 @@ const CH_QUALITIES = [
   ['240p', '240p'], ['288p', '288p'], ['320p', '320p'], ['360p', '360p'],
   ['432p', '432p'], ['480p', '480p'], ['720p', '720p']
 ];
-// مستويات CRF المتاحة لكل قناة (نفس قيم الإعدادات العامة).
-const CH_CRF_LEVELS = [
-  [18, '18 — جودة عالية جداً'], [20, '20 — جودة عالية'], [23, '23 — توازن جيد'],
-  [26, '26 — جودة أقل'], [28, '28 — ضغط أكبر وجودة أقل']
-];
-// معدّلات البت المتاحة لكل قناة (CBR) — تُعرض فقط عند اختيار وضع CBR.
+// معدّلات البت المتاحة لكل قناة (CBR) — وضع الترميز الوحيد في اللوحة.
 const CH_BITRATES = [
   ['', 'تلقائي حسب جودة الخرج'],
   ['300k', '300k — استهلاك منخفض جداً'],
@@ -595,21 +590,6 @@ function deleteChannel(id) {
     });
 }
 
-// وضع ترميز القناة: يظهر حقل الوضع المختار فقط (معدّل البت أو مستوى CRF)، ويبقى «افتراضي» بلا حقول.
-function syncChannelEncodingUI() {
-  const mode = $('#m_cencmode')?.value || 'bitrate';
-  const bitrateBox = $('#m_cbitrateBox');
-  const crfBox = $('#m_ccrfBox');
-  if (bitrateBox) bitrateBox.style.display = mode === 'bitrate' ? '' : 'none';
-  if (crfBox) crfBox.style.display = mode === 'crf' ? '' : 'none';
-  // مربّعا الشرح يظهران فقط عند اختيار وضع CRF أو CBR لهذه القناة.
-  const infoCrf = $('#m_cencInfoCrf');
-  const infoWarn = $('#m_cencInfoWarn');
-  const showInfo = mode === 'crf' || mode === 'bitrate' ? '' : 'none';
-  if (infoCrf) infoCrf.style.display = showInfo;
-  if (infoWarn) infoWarn.style.display = showInfo;
-}
-
 function openChannelModal(id) {
   const ch = id ? DATA.channels.find(c => c.id === id) : null;
   const curQ = ch?.quality || 'copy';
@@ -638,26 +618,11 @@ function openChannelModal(id) {
       </select></label>
     <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
     <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
-    <label>وضع الترميز لهذه القناة
-      <select class="input" id="m_cencmode" onchange="syncChannelEncodingUI()">
-        <option value="bitrate" ${ch?.encodingMode === 'crf' ? '' : 'selected'}>Bitrate — معدّل بت محدّد</option>
-        <option value="crf" ${ch?.encodingMode === 'crf' ? 'selected' : ''}>CRF — جودة ثابتة</option>
-      </select></label>
-    <label id="m_cbitrateBox">معدّل البت (Bitrate) لهذه القناة
+    <label>معدّل البت (Bitrate) لهذه القناة
       <select class="input" id="m_cbitrate" dir="ltr">
         ${bitrateOptions.map(([v, l]) => `<option value="${v}" ${curBitrate === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
-    <label id="m_ccrfBox">مستوى CRF لهذه القناة
-      <select class="input" id="m_ccrf">
-        ${CH_CRF_LEVELS.map(([v, l]) => `<option value="${v}" ${Number(ch?.crfValue) === v ? 'selected' : ''}>${l}</option>`).join('')}
-      </select></label>
-    <div id="m_cencInfoCrf" style="display:none; background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.2); border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; color: rgb(56,189,248); line-height: 1.6; margin-bottom: 8px;">
-      ℹ️ <b>وضع CRF :</b> يقلل استهلاك البيانات في المشاهد الهادئة (الاستديو) ويرفعه في المشاهد السريعة. سقف البتريت المحدد يمثل «أقصى حد مسموح» لمنع الضغط الزائد على الشبكة.
-    </div>
-    <div id="m_cencInfoWarn" style="display:none; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; color: rgb(239,68,68); line-height: 1.6;">
-      ⚠️ <b>العيوب :</b> تقطيع البث — أجهزة الأكسس بوينت الضعيفة أو المزدحمة بالتشويش لا تستطيع معالجة هذا الارتفاع المفاجئ، مما يؤدي إلى امتلاء الـ Buffer وتوقف الفيديو عند العميل.
-    </div>
-    <p class="hint">وضع الترميز يُضبط هنا لهذه القناة وحدها. «Bitrate» يستهدف المعدّل المحدّد (أعلى = جودة أوضح واستهلاك شبكة أكبر). «CRF» يثبّت الجودة ويتغيّر الحجم حسب المشهد، ومعدّل البت المحدّد يعمل كسقف أعلى. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ.</p>
+    <p class="hint">معدّل البت يُضبط هنا لهذه القناة وحدها ويُطبَّق كسقف صارم: أعلى = جودة أوضح واستهلاك شبكة أكبر، وفارغ = يُحسب تلقائياً حسب دقة الخرج. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
@@ -669,8 +634,6 @@ function openChannelModal(id) {
         quality: $('#m_cquality').value,
         fps: $('#m_cfps').value || null,
         bitrate: $('#m_cbitrate').value || null,
-        encodingMode: $('#m_cencmode').value,
-        crfValue: $('#m_cencmode').value === 'crf' ? Number($('#m_ccrf').value) : null,
         autoStart: $('#m_cauto').checked, alwaysOn: $('#m_calwayson').checked
       };
       const saved = id
@@ -679,7 +642,6 @@ function openChannelModal(id) {
       await loadChannels();
       toast(saved && saved.restarted ? 'تم الحفظ وإعادة تشغيل القناة' : 'تم الحفظ');
     });
-  syncChannelEncodingUI();
 }
 
 // =====================================================================
@@ -922,12 +884,11 @@ function errCell(c) {
   return `<div class="err-lines ${cls}" title="${esc((c.lastErrors || []).join('\n'))}">${esc(e.text)}</div>`;
 }
 
-// معدّل البت المضبوط للقناة بالكيلوبت (null حين لا يوجد معدّل ثابت: نسخ المصدر،
-// وضع CRF، أو بِتريت فارغ يتبع دقة الخرج).
+// معدّل البت المضبوط للقناة بالكيلوبت (null حين لا يوجد معدّل ثابت: نسخ المصدر
+// أو بِتريت فارغ يتبع دقة الخرج).
 function channelTargetKbps(c) {
   const q = String(c.quality || '').trim().toLowerCase();
   if (!q || q === 'copy' || q === 'source') return null;
-  if (String(c.encodingMode || '') === 'crf') return null;
   const value = String(c.bitrate || '').trim().toLowerCase();
   if (!value) return null;
   const num = Number(value.replace(/[km]$/, ''));
@@ -940,8 +901,7 @@ function channelTargetKbps(c) {
 function bitrateCell(c) {
   const q = String(c.quality || '').trim().toLowerCase();
   const label = (!q || q === 'copy' || q === 'source') ? 'نسخ المصدر'
-    : (String(c.encodingMode || '') === 'crf' ? 'CRF ' + (c.crfValue || 23)
-      : (String(c.bitrate || '').trim() || 'تلقائي'));
+    : (String(c.bitrate || '').trim() || 'تلقائي');
   const actual = Number(c.outputBps) || 0;
   if (!actual) return `<span class="cell-muted">— / ${esc(label)}</span>`;
   const target = channelTargetKbps(c);
