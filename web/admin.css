@@ -106,24 +106,29 @@ a {
 }
 
 .brand {
-  padding: 22px 18px 14px;
-  border-bottom: 1px solid var(--line)
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px
 }
 
 .brand-logo {
   max-height: 42px;
   max-width: 100%;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   display: block
 }
 
 .brand-name {
   font-size: 22px;
-  font-weight: 800
+  font-weight: 800;
+  line-height: 1.2
 }
 
 .onair-strip {
-  margin-top: 10px;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;

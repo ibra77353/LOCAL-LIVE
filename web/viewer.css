@@ -42,7 +42,8 @@ a {
 
 /* header */
 .site-head {
-  text-align: center
+  text-align: center;
+  padding: 14px 16px 0
 }
 
 .site-logo {
