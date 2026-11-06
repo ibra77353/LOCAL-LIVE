@@ -7,3 +7,5 @@ nginx/logs/*
 !nginx/logs/.gitkeep
 nginx/temp/*
 !nginx/temp/.gitkeep
+# أرشيفات ZIP المؤقتة للتحميل — لا تُحفظ في المستودع
+srv/uploads/*.zip
