@@ -2,9 +2,7 @@
 
 منصة بث محلي متعددة القنوات تعتمد Node.js وFFmpeg وHLS، مع لوحة أدمن وواجهة مشاهد منفصلتين.
 
-**الحزمة (ZIP):** [PrinceLive-API-Server.zip](PrinceLive-API-Server.zip) — نسخة **Windows 10/11** فقط تعمل بمحرك DirectShow. بلا ملفات تشغيل (سجلات، مقاطع HLS، رموز، `node_modules`، و`ffmpeg.exe`/`ffprobe.exe`)، وتبدأ بـ`data.json` نظيف: الإعدادات فقط دون مصادر أو قنوات تجريبية.
-
-> تُبنى الحزمة من ملفات المشروع نفسها: `server.js` و`lib/**` و`web/**` و`scripts/**` و`nginx/**` مع `README-AR.md` و`config.json` و`data.json` و`package.json`. إن عدّلت `data.json` أو أي ملف من هذه الملفات فعلياً، أعد بناء الحزمة حتى لا تتخلّف عنها.
+**الحزمة:** لا يُرفَق أي أرشيف `.zip` داخل المستودع؛ تُبنى نسخة **Windows 10/11** عند الحاجة من ملفات المشروع نفسها: `server.js` و`lib/**` و`web/**` و`scripts/**` و`nginx/**` مع `README-AR.md` و`config.json` و`data.json` و`package.json`، بلا ملفات تشغيل (سجلات، مقاطع HLS، رموز، `node_modules`، و`ffmpeg.exe`/`ffprobe.exe`)، وتبدأ بـ`data.json` نظيف: الإعدادات فقط دون مصادر أو قنوات تجريبية.
 
 ## نظام التشغيل المدعوم: Windows فقط
 
