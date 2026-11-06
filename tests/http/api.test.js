@@ -614,6 +614,24 @@ test('إعدادات الدقة العامة ألغيت وتُرفض من /api/s
   await api.put('/api/settings', { gopSeconds: 0 });
 });
 
+// POST وPUT متكافئان على /api/settings: كلاهما يحفظ ويطبّق الإعدادات فوراً،
+// فالواجهة الأمامية تستطيع إرسال التحديثات بأي من الطريقتين.
+test('POST /api/settings يحفظ الإعدادات كـPUT ويطبّقها على القنوات النشطة', async () => {
+  const before = (await api.get('/api/settings')).json.settings;
+  const targetThreads = Number(before.x264Threads) === 4 ? 3 : 4;
+  const saved = await api.post('/api/settings', { x264Threads: targetThreads });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.json.changedSettings, ['x264Threads']);
+  assert.deepEqual(saved.json.restartedChannels, [], 'لا قناة نشطة في هذه اللحظة');
+  assert.equal(saved.json.settings.x264Threads, targetThreads);
+
+  const rejected = await api.post('/api/settings', { crf: 23 });
+  assert.equal(rejected.status, 400);
+
+  await api.put('/api/settings', { x264Threads: before.x264Threads });
+  assert.equal((await api.get('/api/settings')).json.settings.x264Threads, before.x264Threads);
+});
+
 test('PUT /api/settings يرفض الخصائص غير المتوقعة', async () => {
   const withCrf = await api.put('/api/settings', { siteName: 'اسم مرفوض', crf: 23 });
   assert.equal(withCrf.status, 400);

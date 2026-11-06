@@ -1506,7 +1506,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/settings' && req.method === 'GET') {
     return send(res, 200, { ok: true, settings: data.settings, nginx: { binary: nginxExecutable(), binaryExists: nginxBinaryExists() } });
   }
-  if (url.pathname === '/api/settings' && req.method === 'PUT') {
+  // POST وPUT متكافئان: كلاهما يحفظ الإعدادات ويطبّقها فوراً على القنوات النشطة.
+  if (url.pathname === '/api/settings' && (req.method === 'PUT' || req.method === 'POST')) {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
     const unexpectedSetting = unexpectedField(body, SETTINGS_WRITE_FIELDS);

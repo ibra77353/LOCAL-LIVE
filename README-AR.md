@@ -300,7 +300,7 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 
 `encodingMode` و`crfValue` و`crf` (وضع CRF)، و`outputWidth` و`outputHeight` و`outputFps` (إعدادات الدقة العامة) لم يعد لها وجود:
 
-- `POST/PUT /api/channels` و`PUT /api/settings` ترفضها برمز `400` ورسالة «خاصية غير متوقعة…» بدل تجاهلها بصمت.
+- `POST/PUT /api/channels` و`PUT/POST /api/settings` ترفضها برمز `400` ورسالة «خاصية غير متوقعة…» بدل تجاهلها بصمت.
 - `PATCH /api/channels/:id` يقبل `enabled` فقط.
 - تُحذف بقايا `outputWidth`/`outputHeight`/`outputFps` من `settings` عند إقلاع الخادم إن وُجدت في `data.json` قديم.
 - `gopSeconds` استثناء مقصود: يبقى إعداداً عاماً في `settings` (`0` أو فارغ = تلقائي = طول مقطع HLS)، ويُرفض على مستوى القناة (`POST/PUT /api/channels`) كبقية حقول الترميز العامة.
@@ -374,7 +374,7 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 - `POST /api/channels/:id/start`
 - `POST /api/channels/:id/stop`
 - `POST /api/channels/:id/restart`
-- `GET/PUT /api/settings`
+- `GET/PUT/POST /api/settings` — `POST` و`PUT` متكافئان في الحفظ والتطبيق الفوري
 - `GET /api/devices`
 - `GET /api/devices/capabilities?videoDevice=<name>`
 - `POST /api/devices/test`
@@ -382,7 +382,7 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 - `GET /api/stats`
 - `GET /api/logs`
 
-لكل مسار قائمة حقول مسموحة: أي خاصية غير معروفة في `POST/PUT /api/channels` أو `POST/PUT /api/sources` أو `PUT /api/settings` تُرفض بـ`400` (مثل `crf` أو `encodingMode` أو `outputWidth`)، و`PATCH /api/channels/:id` يقبل `enabled` فقط.
+لكل مسار قائمة حقول مسموحة: أي خاصية غير معروفة في `POST/PUT /api/channels` أو `POST/PUT /api/sources` أو `PUT/POST /api/settings` تُرفض بـ`400` (مثل `crf` أو `encodingMode` أو `outputWidth`)، و`PATCH /api/channels/:id` يقبل `enabled` فقط.
 
 ## ملاحظات مهمة
 
