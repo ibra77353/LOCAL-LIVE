@@ -55,27 +55,8 @@ function listProcessesWindows() {
   }).filter(Boolean);
 }
 
-// على غير ويندوز نقرأ /proc حتى تبقى نفس قواعد التمييز قابلة للاختبار محلياً.
-function listProcessesPosix() {
-  let entries = [];
-  try { entries = fs.readdirSync('/proc'); } catch { return []; }
-  const out = [];
-  for (const entry of entries) {
-    if (!/^\d+$/.test(entry)) continue;
-    let cmdline = '';
-    try { cmdline = fs.readFileSync(`/proc/${entry}/cmdline`, 'utf8').replace(/\0/g, ' ').trim(); } catch { continue; }
-    let exePath = '';
-    try { exePath = fs.readlinkSync(`/proc/${entry}/exe`); } catch {}
-    let name = '';
-    try { name = fs.readFileSync(`/proc/${entry}/comm`, 'utf8').trim(); } catch { name = path.basename(exePath || ''); }
-    if (!/^(node|nginx)/i.test(name)) continue;
-    out.push({ pid: Number(entry), name, path: exePath, cmdline });
-  }
-  return out;
-}
-
 function listProcesses() {
-  return process.platform === 'win32' ? listProcessesWindows() : listProcessesPosix();
+  return listProcessesWindows();
 }
 
 function readPidFile(root, name) {
@@ -91,29 +72,18 @@ function readPidFile(root, name) {
 function portOwner(port) {
   const target = Number(port);
   if (!Number.isInteger(target) || target <= 0) return null;
-  if (process.platform === 'win32') {
-    const result = spawnSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
-    if (result.status !== 0 || !result.stdout) return null;
-    for (const line of result.stdout.split(/\r?\n/)) {
-      const cols = line.trim().split(/\s+/);
-      if (cols.length < 5 || !/LISTENING/i.test(cols[3])) continue;
-      if (!cols[1].endsWith(`:${target}`)) continue;
-      const pid = Number(cols[4]);
-      if (!Number.isInteger(pid) || pid <= 0) continue;
-      const proc = listProcesses().find(p => p.pid === pid);
-      return { pid, name: proc ? proc.name : '' };
-    }
-    return null;
-  }
-  const result = spawnSync('ss', ['-ltnp'], { encoding: 'utf8', timeout: 10000 });
+  const result = spawnSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
   if (result.status !== 0 || !result.stdout) return null;
-  const line = result.stdout.split(/\r?\n/).find(row => new RegExp(`:${target}\\s`).test(row) && /LISTEN/i.test(row));
-  if (!line) return null;
-  const pidMatch = /pid=(\d+)/.exec(line);
-  if (!pidMatch) return null;
-  const pid = Number(pidMatch[1]);
-  const proc = listProcesses().find(p => p.pid === pid);
-  return { pid, name: proc ? proc.name : '' };
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 5 || !/LISTENING/i.test(cols[3])) continue;
+    if (!cols[1].endsWith(`:${target}`)) continue;
+    const pid = Number(cols[4]);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const proc = listProcesses().find(p => p.pid === pid);
+    return { pid, name: proc ? proc.name : '' };
+  }
+  return null;
 }
 
 // عملية خادم PrinceLive: مسار مطلق لـ server.js داخل المشروع، أو معرّف مسجّل في

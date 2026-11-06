@@ -34,7 +34,7 @@ const CH_BITRATES = [
 ];
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const TYPE_LABELS = {
-  usb: 'كرت التقاط (DirectShow / V4L2)', http: 'HTTP مباشر', hls: 'HLS / M3U8',
+  usb: 'كرت التقاط (DirectShow)', http: 'HTTP مباشر', hls: 'HLS / M3U8',
 file: 'ملف فيديو محلي', screen: 'التقاط الشاشة'
 };
 const STATUS_LABELS = { running: 'تعمل ON AIR', stopped: 'متوقفة', starting: 'جارٍ التشغيل', stopping: 'جارٍ الإيقاف', restarting: 'إعادة تشغيل', error: 'خطأ', blocked: 'محظورة من المزوّد' };
@@ -392,7 +392,7 @@ async function renderSourceFields() {
       await loadSizeOptions(src);
     } catch (e) {
       if (seq !== _srcFieldsSeq) return;
-      box.innerHTML = `<p class="form-error">${esc(e.message)} — على ويندوز يلزم دعم DirectShow، وعلى لينكس يظهر الجهاز كـ /dev/video* (كرت UVC مع صلاحية وصول).</p>`;
+      box.innerHTML = `<p class="form-error">${esc(e.message)} — يلزم دعم DirectShow في ويندوز، وأن يظهر كرت UVC في «إدارة الأجهزة ← Cameras».</p>`;
     }
   } else if (type === 'file') {
     box.innerHTML = `

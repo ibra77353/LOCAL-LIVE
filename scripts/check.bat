@@ -32,7 +32,7 @@ if exist "nginx\nginx.exe" call "%ROOT%scripts\nginx-dirs.bat"
 if exist "nginx\nginx.exe" ("nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -t) else echo MISSING: nginx\nginx.exe
 echo.
 echo ==== Capture devices [DirectShow] ====
-rem نفس فحص scripts/check.sh: إصدار FFmpeg وقابلية تشغيله على ويندوز، ثم أجهزة
+rem نفس فحص devices.js: إصدار FFmpeg وقابلية تشغيله على ويندوز، ثم أجهزة
 rem الفيديو والصوت التي ستراها لوحة الإدارة — بأوامر طبقة الالتقاط نفسها.
 node scripts\devices.js --no-caps
 if errorlevel 1 echo WARNING: device scan failed - read the message above.

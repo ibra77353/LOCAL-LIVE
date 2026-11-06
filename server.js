@@ -7,7 +7,7 @@ const { spawn, execFile } = require('child_process');
 const os = require('os');
 const net = require('net');
 const crypto = require('crypto');
-// طبقة الالتقاط الموحّدة: الخادم لا يتعامل مع dshow/v4l2 مباشرة.
+// طبقة الالتقاط الموحّدة: الخادم لا يتعامل مع DirectShow مباشرة.
 const capture = require('./lib/capture');
 const { clampNumber } = require('./lib/shared/clamp');
 
@@ -35,6 +35,8 @@ if (process.env.FFPROBE_PATH) cfg.ffprobePath = process.env.FFPROBE_PATH;
 // ffmpegPath في config.json قد يكون اسماً مجرداً مثل "ffmpeg" مع أن الحزمة تحمل
 // ffmpeg.exe بجانب server.js؛ الاعتماد على PATH كان يفشل بـ ENOENT إذا شُغّل
 // الخادم من مجلد آخر. نحل الاسم إلى الملف المرفق إن وُجد ثم نترك PATH كبديل.
+// على ويندوز تُجرَّب اللاحقة .exe (الحزمة تحمل ffmpeg.exe). خارج ويندوز لا تُجرَّب
+// أبداً، وإلا اختير ملف ffmpeg.exe المرفق — وهو ملف ويندوز لا يعمل هناك.
 function resolveTool(toolName) {
   const value = String(toolName || '').trim();
   if (!value || path.isAbsolute(value)) return value;
@@ -273,32 +275,15 @@ function readNginxLogs() {
     nginxLogOffsets.set(file, end);
   }
 }
-// بايتات الشبكة الواردة على مستوى النظام: Linux من /proc/net/dev،
-// وWindows من netstat -e. غير المدعوم يعيد null فتظهر القيمة «—».
+// بايتات الشبكة الواردة على مستوى النظام من netstat -e (ويندوز).
+// التعذّر يعيد null فتظهر القيمة «—».
 function readSystemRx(cb) {
-  if (process.platform === 'linux') {
-    try {
-      let total = 0;
-      for (const line of fs.readFileSync('/proc/net/dev', 'utf8').split('\n').slice(2)) {
-        const parts = line.split(':');
-        if (!parts[1]) continue;
-        const iface = parts[0].trim();
-        if (!iface || iface === 'lo') continue;
-        total += Number(parts[1].trim().split(/\s+/)[0]) || 0;
-      }
-      return cb(null, total);
-    } catch { return cb(null, null); }
-  }
-  if (process.platform === 'win32') {
-    execFile('netstat', ['-e'], { encoding: 'utf8', windowsHide: true, timeout: 5000 }, (err, stdout) => {
-      if (err || !stdout) return cb(null, null);
-      // أول سطر رقمي بعد الترويسة هو سطر Bytes (تسميته مترجمة على ويندوز).
-      const row = stdout.match(/^\s*[^\d\s][^\d]*?(\d+)\s+(\d+)\s*$/m);
-      return cb(null, row ? Number(row[1]) : null);
-    });
-    return;
-  }
-  return cb(null, null);
+  execFile('netstat', ['-e'], { encoding: 'utf8', windowsHide: true, timeout: 5000 }, (err, stdout) => {
+    if (err || !stdout) return cb(null, null);
+    // أول سطر رقمي بعد الترويسة هو سطر Bytes (تسميته مترجمة على ويندوز).
+    const row = stdout.match(/^\s*[^\d\s][^\d]*?(\d+)\s+(\d+)\s*$/m);
+    return cb(null, row ? Number(row[1]) : null);
+  });
 }
 function playlistPath(channel) { return path.join(channelHlsDir(channel), 'index.m3u8'); }
 // هل توجد قائمة تشغيل حديثة؟ نفس شرط «live» في publicChannel، ويُستخدم لتصفير
@@ -774,7 +759,7 @@ function runNginxCommand(extraArgs) {
       const output = `${stdout || ''}${stderr || ''}`.trim();
       if (!err) return resolve({ ok:true, binary:bin, output, message:'تم تنفيذ أمر Nginx بنجاح.' });
       const reason = ['ENOEXEC','EACCES','EPERM'].includes(err.code)
-        ? `تعذر تنفيذ ملف Nginx «${bin}» على نظام ${process.platform} (${err.code}); استخدم نسخة Nginx الصحيحة لهذا النظام.`
+        ? `تعذر تنفيذ ملف Nginx «${bin}» (${err.code}); تأكد من وجود nginx\\nginx.exe في مجلد المشروع.`
         : (output || err.message);
       resolve({ ok:false, binary:bin, output, message:reason });
     });
@@ -912,9 +897,6 @@ function buildArgs(channel, forceTranscode = false) {
   const sourceType = String(source.type || 'usb').toLowerCase();
   const isNetwork = ['http-hls','http','hls','network','rtsp'].includes(sourceType);
   const audioDevice = source.audioDevice || '';
-  // فهرس إدخال الصوت حين يأتي من إدخال ثانٍ (ALSA على Linux)؛ null يعني أن الصوت
-  // داخل الإدخال الأول كما في DirectShow.
-  let captureAudioInput = null;
   const args = ['-hide_banner','-loglevel','warning','-thread_queue_size','512'];
   if (isNetwork) {
     const streamUrl = validateNetworkStreamUrl(source.streamUrl || source.url || '');
@@ -927,16 +909,14 @@ function buildArgs(channel, forceTranscode = false) {
     if (!filePath) throw new Error('مسار ملف المصدر غير محدد');
     args.push('-re','-stream_loop','-1','-i',filePath);
   } else if (sourceType === 'screen') {
-    // التقاط الشاشة (gdigrab/x11grab) يأتي من طبقة الالتقاط.
+    // التقاط الشاشة (gdigrab) يأتي من طبقة الالتقاط.
     args.push(...capture.screenInputArgs(source));
   } else {
-    // وسائط جهاز الالتقاط تأتي من طبقة الالتقاط: DirectShow على Windows،
-    // وV4L2 + ALSA على Linux (إدخال صوت منفصل).
-    const plan = capture.captureInputArgs(source);
-    args.push(...plan.args);
-    captureAudioInput = plan.audioInputIndex;
+    // وسائط جهاز الالتقاط (DirectShow) تأتي من طبقة الالتقاط.
+    args.push(...capture.captureInputArgs(source));
   }
-  const audioMap = captureAudioInput === null ? '0:a:0?' : `${captureAudioInput}:a:0?`;
+  // DirectShow يحمل الصوت مع الفيديو في الإدخال الأول نفسه.
+  const audioMap = '0:a:0?';
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
   if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 288p أو 320p أو 360p أو 432p أو 480p أو 720p.');
   if (isCopyQuality(channel.quality) && isNetwork && !forceTranscode) {
@@ -1111,8 +1091,8 @@ function runFfmpegArgs(args) {
 
 function listDevices(res) {
   // التعداد وتحليل مخرجاته في طبقة الالتقاط؛ هنا تُبنى استجابة الـAPI فقط.
-  // DirectShow يعدّد عبر FFmpeg، وV4L2 يقرأ /dev و/sys و/proc مباشرة.
-  capture.discoverDevices(process.platform, runFfmpegArgs).then(result => {
+  // DirectShow يعدّد الأجهزة عبر FFmpeg.
+  capture.discoverDevices(runFfmpegArgs).then(result => {
     if (!res) return console.log(result.output || 'لم تظهر أجهزة');
     return send(res, 200, {
       ok: true,
@@ -1145,7 +1125,7 @@ function queryCaptureCapabilities(videoDevice, callback) {
   execFile(ffmpegBin(), capabilityArgs,
     { windowsHide: true, timeout: 20000, maxBuffer: 2*1024*1024 }, (err, stdout, stderr) => {
       const output = `${stderr || ''}\n${stdout || ''}`.trim();
-      // تحليل قدرات الجهاز في محرك الالتقاط المناسب للنظام (dshow/v4l2).
+      // تحليل قدرات الجهاز في محرك الالتقاط (DirectShow).
       const capabilities = capture.parseCapabilities(output);
       if (!capabilities.videoSizes.length) {
         const error = new Error(err && !output ? `تعذر تشغيل FFmpeg: ${err.message}` : 'لم يعرض FFmpeg أو تعريف الجهاز أوضاع فيديو قابلة للاستخراج');

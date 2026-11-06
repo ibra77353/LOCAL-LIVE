@@ -1,7 +1,6 @@
 'use strict';
-// اختبارات وحدة لطبقة الالتقاط (lib/capture).
-// تغطي ما لا يمكن ممارسته عبر HTTP على Linux: أوامر DirectShow وتحليل مخرجاته،
-// ووسائط التقاط الشاشة على Windows (gdigrab) مقابل Linux (x11grab)،
+// اختبارات وحدة لطبقة الالتقاط (lib/capture) — Windows فقط.
+// تغطي أوامر DirectShow وتحليل مخرجاته، ووسائط التقاط الشاشة (gdigrab)،
 //
 // التشغيل: node --test tests/capture/
 
@@ -15,55 +14,27 @@ const dshow = require('../../lib/capture/dshow');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 
-// هذا الملف يوثّق محرك Windows (DirectShow). الاختبارات تعمل على Linux، لذلك
-// نمرّر 'win32' صراحةً لكل استدعاء حتى لا يتأثر ناتجها بالمحرك الافتراضي للمنصة.
+// المشروع Windows فقط: لا يوجد اختيار محرك حسب النظام، فكل الاستدعاءات تعود
+// إلى DirectShow مباشرة.
 const winCapture = {
-  deviceListArgs: () => capture.deviceListArgs('win32'),
-  parseDeviceList: (output) => capture.parseDeviceList(output, 'win32'),
-  describeDevices: (devices, err, output) => capture.describeDevices(devices, err, output, 'win32'),
-  capabilitiesArgs: (device) => capture.capabilitiesArgs(device, 'win32'),
-  parseCapabilities: (output) => capture.parseCapabilities(output, 'win32'),
-  usbInputArgs: (source) => capture.usbInputArgs(source, 'win32'),
-  testVideoArgs: (body) => capture.testVideoArgs(body, 'win32'),
-  testAudioArgs: (device) => capture.testAudioArgs(device, 'win32'),
+  deviceListArgs: () => capture.deviceListArgs(),
+  parseDeviceList: (output) => capture.parseDeviceList(output),
+  describeDevices: (devices, err, output) => capture.describeDevices(devices, err, output),
+  capabilitiesArgs: (device) => capture.capabilitiesArgs(device),
+  parseCapabilities: (output) => capture.parseCapabilities(output),
+  usbInputArgs: (source) => capture.usbInputArgs(source),
+  testVideoArgs: (body) => capture.testVideoArgs(body),
+  testAudioArgs: (device) => capture.testAudioArgs(device),
 };
 
-// ---------------------------------------------------------------- تسجيل المحركات
-test('المحرك المسجّل لويندوز هو DirectShow، ولينكس هو V4L2', () => {
-  assert.equal(capture.engineFor('win32').name, 'dshow');
-  assert.equal(capture.engineFor('linux').name, 'v4l2');
-  assert.deepEqual(capture.registeredEngines(), ['win32', 'linux']);
+// ---------------------------------------------------------------- المحرك
+test('المحرك هو DirectShow ويندوز', () => {
+  assert.equal(capture.engineName(), 'dshow');
+  assert.equal(capture.engineLabel(), 'DirectShow (Windows)');
 });
 
-test('اختيار المحرك تلقائي حسب النظام وWindows يبقى DirectShow', () => {
-  assert.equal(capture.engineName('win32'), 'dshow');
-  assert.equal(capture.engineLabel('win32'), 'DirectShow (Windows)');
-  assert.equal(capture.engineName('linux'), 'v4l2');
-  assert.equal(capture.engineLabel('linux'), 'V4L2 + ALSA (Linux)');
-});
-
-test('نطاق الدعم ثلاثة أنظمة ولكل بيئة محركها الصحيح', () => {
-  const targets = capture.supportedTargets();
-  assert.deepEqual(targets.map(t => t.target), ['Windows 10/11', 'Ubuntu / Debian', 'Docker Linux']);
-  assert.deepEqual(targets.map(t => t.engine), ['dshow', 'v4l2', 'v4l2']);
-  // Ubuntu/Debian وDocker Linux يشتركان في منصة linux ومحرك v4l2 نفسه.
-  assert.equal(targets[1].platform, 'linux');
-  assert.equal(targets[2].platform, 'linux');
-  assert.equal(capture.engineFor(targets[2].platform).name, 'v4l2');
-});
-
-test('الأنظمة غير المدعومة لا تُعامل كمحرك V4L2', () => {
-  for (const platform of ['darwin', 'freebsd', 'openbsd', 'aix', 'sunos']) {
-    assert.equal(capture.isSupported(platform), false);
-    assert.throws(() => capture.engineFor(platform), /غير مدعوم/);
-    // لوحة الحالة تبقى قابلة للقراءة بدل رفع خطأ.
-    assert.equal(capture.engineName(platform), 'unsupported');
-    assert.equal(capture.engineLabel(platform), 'نظام غير مدعوم');
-    assert.throws(() => capture.usbInputArgs({ videoDevice: 'x' }, platform), /غير مدعوم/);
-    assert.throws(() => capture.screenInputArgs({ fps: 15 }, platform), /غير مدعوم/);
-  }
-  assert.equal(capture.isSupported('win32'), true);
-  assert.equal(capture.isSupported('linux'), true);
+test('نطاق الدعم: Windows 10/11 فقط', () => {
+  assert.deepEqual(capture.supportedTargets(), [{ target: 'Windows 10/11', platform: 'win32', engine: 'dshow' }]);
 });
 
 // ---------------------------------------------------------------- تعداد الأجهزة
@@ -229,28 +200,16 @@ test('اختبار الالتقاط يرفض المدخلات غير الصال�
 });
 
 // ---------------------------------------------------------------- التقاط الشاشة
-test('التقاط الشاشة على Windows يستخدم gdigrab بوسائط مطابقة للأصل', () => {
-  assert.deepEqual(capture.screenInputArgs({ fps: 15 }, 'win32'), ['-f', 'gdigrab', '-framerate', '15', '-i', 'desktop']);
-  assert.deepEqual(capture.screenInputArgs({}, 'win32'), ['-f', 'gdigrab', '-framerate', '15', '-i', 'desktop']);
-});
-
-test('التقاط الشاشة على Linux يستخدم x11grab مع DISPLAY', () => {
-  const previous = process.env.DISPLAY;
-  delete process.env.DISPLAY;
-  try {
-    assert.deepEqual(capture.screenInputArgs({ fps: 20 }, 'linux'), ['-f', 'x11grab', '-framerate', '20', '-i', ':0.0']);
-    process.env.DISPLAY = ':5.1';
-    assert.deepEqual(capture.screenInputArgs({ fps: 20 }, 'linux'), ['-f', 'x11grab', '-framerate', '20', '-i', ':5.1']);
-  } finally {
-    if (previous === undefined) delete process.env.DISPLAY;
-    else process.env.DISPLAY = previous;
-  }
+test('التقاط الشاشة يستخدم gdigrab بوسائط مطابقة للأصل', () => {
+  assert.deepEqual(capture.screenInputArgs({ fps: 15 }), ['-f', 'gdigrab', '-framerate', '15', '-i', 'desktop']);
+  assert.deepEqual(capture.screenInputArgs({}), ['-f', 'gdigrab', '-framerate', '15', '-i', 'desktop']);
+  assert.deepEqual(capture.screenInputArgs({ fps: 20 }), ['-f', 'gdigrab', '-framerate', '20', '-i', 'desktop']);
 });
 
 // ---------------------------------------------------------------- عزل الطبقة
-test('server.js لا يبني أوامر dshow/gdigrab/x11grab بنفسه بعد الاستخراج', () => {
+test('server.js لا يبني أوامر dshow/gdigrab بنفسه بعد الاستخراج', () => {
   const source = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  for (const literal of ["'dshow'", "'gdigrab'", "'x11grab'", '"-f", "dshow"']) {
+  for (const literal of ["'dshow'", "'gdigrab'", '"-f", "dshow"']) {
     assert.equal(source.includes(literal), false, `ما زال server.js يحتوي ${literal}`);
   }
   assert.ok(source.includes("require('./lib/capture')"), 'server.js يجب أن يستورد طبقة الالتقاط');

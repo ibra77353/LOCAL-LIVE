@@ -17,12 +17,10 @@ let srv;
 let api;
 const state = { sourceId: '', channelId: '', networkSourceId: '' };
 
-// أسماء أجهزة الاختبار تتبع محرك الالتقاط الخاص بنظام التشغيل:
-// DirectShow يستخدم أسماء أجهزة، وV4L2 يستخدم مسارات /dev/video* مع ALSA للصوت.
-const IS_WIN = process.platform === 'win32';
-const VIDEO_DEVICE = IS_WIN ? 'USB Video Test Device' : '/dev/video0';
-const VIDEO_DEVICE_RENAMED = IS_WIN ? 'USB Video Renamed' : '/dev/video1';
-const AUDIO_DEVICE = IS_WIN ? 'USB Audio Test Device' : 'plughw:0';
+// المشروع Windows فقط: أسماء الأجهزة هي أسماء DirectShow في كل بيئة تشغيل.
+const VIDEO_DEVICE = 'USB Video Test Device';
+const VIDEO_DEVICE_RENAMED = 'USB Video Renamed';
+const AUDIO_DEVICE = 'USB Audio Test Device';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -284,8 +282,8 @@ test('POST /api/channels/:id/start يبني وسائط FFmpeg ويسجّل ال�
     return res.json.logs.includes('FFmpeg args:') ? res.json.logs : null;
   }, 5000);
   assert.ok(logs, 'يجب أن يظهر سطر وسائط FFmpeg في السجل');
-  assert.match(logs, IS_WIN ? /-f dshow/ : /-f v4l2/);
-  assert.match(logs, IS_WIN ? /video=USB Video Test Device/ : /-i \/dev\/video0/);
+  assert.match(logs, /-f dshow/);
+  assert.match(logs, /video=USB Video Test Device/);
 
   const status = await waitFor(async () => {
     const res = await api.get(`/api/status?channelId=${state.channelId}`);
@@ -326,6 +324,7 @@ test('GET /api/devices يعيد قوائم فيديو/صوت بنية ثابتة
   assert.equal(Array.isArray(res.json.video), true);
   assert.equal(Array.isArray(res.json.audio), true);
   assert.equal(typeof res.json.note, 'string');
+  assert.equal(res.json.engine, 'dshow');
 });
 
 test('نقاط الأجهزة ترفض المدخلات الناقصة بـ 422', async () => {
@@ -345,6 +344,7 @@ test('GET /api/stats و /api/metrics يعيدان بيانات صالحة', asyn
   assert.equal(stats.status, 200);
   assert.equal(stats.json.ok, true);
   assert.equal(typeof stats.json.stats.platform, 'string');
+  assert.equal(stats.json.stats.captureEngine, 'dshow');
   assert.equal(typeof stats.json.stats.channels.total, 'number');
 
   const metrics = await api.get('/api/metrics');
