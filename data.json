@@ -21,6 +21,7 @@
     "x264Preset": "superfast",
     "x264Threads": 2,
     "hlsTime": 2,
+    "gopSeconds": 2,
     "hlsListSize": 6,
     "hlsDeleteThreshold": 4,
     "port": 3001,
