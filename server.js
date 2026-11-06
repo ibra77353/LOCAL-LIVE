@@ -1583,14 +1583,19 @@ const server = http.createServer(async (req, res) => {
     if (!source) return apiError(res, 404, 'مصدر البث غير موجود');
     const nextType = Object.prototype.hasOwnProperty.call(body, 'type') ? normalizeSourceType(body.type) : normalizeSourceType(source.type);
     if (!nextType) return apiError(res, 400, 'نوع المصدر غير مدعوم');
+    const previousType = source.type;
+    // التحقق قبل إيقاف القنوات المرتبطة: حفظ غير صالح أثناء التشغيل يجب أن يُرفض
+    // دون قطع بث يعمل (كان الإيقاف يسبق التحقق فتتوقف القناة بلا إعادة تشغيل).
+    const candidate = Object.assign({}, source, { type: nextType });
+    if (previousType !== nextType) { delete candidate.streamUrl; delete candidate.path; delete candidate.videoDevice; }
+    const invalid = applySourceFields(candidate, body);
+    if (invalid) return apiError(res, 400, invalid);
     const linked = data.channels.filter(c => c.sourceId === source.id);
     const wasRunning = linked.filter(c => channelRuntime(c.id)?.proc).map(c => c.id);
     wasRunning.forEach(stopChannel);
-    const previousType = source.type;
     source.type = nextType;
     if (previousType !== nextType) { delete source.streamUrl; delete source.path; delete source.videoDevice; }
-    const invalid = applySourceFields(source, body);
-    if (invalid) { source.type = previousType; return apiError(res, 400, invalid); }
+    applySourceFields(source, body);
     if (source.type === 'file') {
       const dimensions = await probeFileDimensions(source.path);
       if (dimensions) source.videoSize = dimensions;

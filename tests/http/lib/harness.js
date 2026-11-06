@@ -29,7 +29,7 @@ function writeConfig(dir) {
 
 // بيانات اختبار فارغة: لا مصادر ولا قنوات، وإعادة التشغيل التلقائي معطّلة حتى
 // لا تُلوّث سجلات الاختبار بمحاولات إعادة تشغيل FFmpeg على بيئة بلا جهاز التقاط.
-function writeData(dir, port) {
+function writeData(dir, port, options = {}) {
   const data = {
     settings: {
       port,
@@ -38,7 +38,8 @@ function writeData(dir, port) {
       idleStopEnabled: false,
       startupQueueDelayMs: 0,
       hideCosmeticLogs: false,
-      ffmpegPath: 'ffmpeg',
+      // يمكن استبداله ببديل قابل للتنفيذ (اختبارات التشغيل) بدل FFmpeg الحقيقي.
+      ffmpegPath: options.ffmpegPath || 'ffmpeg',
       ffprobePath: 'ffprobe',
       x264Preset: 'veryfast',
       x264Threads: 2,
@@ -77,7 +78,7 @@ async function startTestServer(options = {}) {
     fs.cpSync(path.join(ROOT, entry), path.join(dir, entry), { recursive: true });
   }
   writeConfig(dir);
-  writeData(dir, port);
+  writeData(dir, port, options);
 
   const logsDir = path.join(dir, 'logs');
   const hlsDir = path.join(dir, 'hls');
