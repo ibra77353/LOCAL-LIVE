@@ -968,9 +968,11 @@ function buildArgs(channel, forceTranscode = false) {
   } else {
     const encoder = resolveEncoderSettings(settings);
     // بلا pad: القياس وحده إلى الدقة المختارة يدوياً لقناة، فلا أشرطة سوداء حول الصورة.
-    args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight},fps=${outputFps}`,
+    // فِلتر fps في سلسلة الفيديو يضبط معدّل الخرج ويُسقط/يكرّر الإطارات قبل الترميز،
+    // فلا حاجة لخيار -r بعده (كان مكرراً بالقيمة نفسها).
+    args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight},format=yuv420p,fps=${outputFps}`,
       '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
-      '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
+      '-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
     // وضع Bitrate = سقف صارم: مخزن VBV يساوي ثانية واحدة بمعدّل القناة (لا ضعفه)
     // فلا يقفز الخرج فوق القيمة المختارة بين المقاطع. لا نستخدم nal-hrd=cbr لأن
     // حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً بدل توفير البيانات.
