@@ -556,7 +556,7 @@ async function loadChannels() {
       <td>${esc(srcName(c.sourceId))}</td>
       <td class="cell-muted">${qualityLabel(c.quality)}</td>
       <td>${c.autoStart ? 'نعم' : 'لا'}</td>
-      <td><span class="chip" data-chip="${c.id}">…</span></td>
+      <td><span class="chip" data-chip="${c.id}">…</span>${c.manualStopped ? '<span class="cell-muted" title="أُوقفت يدوياً: لا تعمل تلقائياً حتى تشغيلها"> · يدوي</span>' : ''}</td>
       <td><div class="row-actions">
         <label class="ch-enable" title="إلغاء التفعيل يوقف القناة نهائياً ويُخفيها عن المشاهدين حتى إعادة تفعيلها">
           <input type="checkbox" ${c.enabled !== false ? 'checked' : ''} onchange="toggleChannelEnabled('${c.id}', this.checked)"> مفعّلة</label>
@@ -638,6 +638,9 @@ function openChannelModal(id) {
         ${bitrateOptions.map(([v, l]) => `<option value="${v}" ${curBitrate === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
     <p class="hint">معدّل البت يُضبط هنا لهذه القناة وحدها ويُطبَّق كسقف صارم: أعلى = جودة أوضح واستهلاك شبكة أكبر، وفارغ = يُحسب تلقائياً حسب دقة الخرج. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ.</p>
+    <label>عدد خيوط الترميز (Threads) لهذه القناة
+      <input class="input" id="m_cthreads" type="number" min="1" max="64" dir="ltr" value="${esc(ch?.threads ?? '')}" placeholder="فارغ = الإعداد العام"></label>
+    <p class="hint">عدد خيوط libx264 لهذه القناة وحدها (1–64). فارغ = يتبع الإعداد العام x264Threads. قلّله إن كانت قنوات كثيرة تعمل معاً على معالج ضعيف.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
@@ -649,6 +652,7 @@ function openChannelModal(id) {
         quality: $('#m_cquality').value,
         fps: $('#m_cfps').value || null,
         bitrate: $('#m_cbitrate').value || null,
+        threads: $('#m_cthreads').value ? Number($('#m_cthreads').value) : null,
         autoStart: $('#m_cauto').checked, alwaysOn: $('#m_calwayson').checked
       };
       const saved = id

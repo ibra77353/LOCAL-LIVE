@@ -177,15 +177,15 @@ function writeData(value) {
 }
 let data = readData();
 if (Object.prototype.hasOwnProperty.call(data.settings,'ads')) delete data.settings.ads;
-// حقول قنوات ملغاة من المخطط (لا يقرأها أي كود): threads و manualStopped.
-// تُحذف من data.json عند الإقلاع حتى تتطابق الملفات القديمة مع المخطط الحالي.
-let prunedChannelFields = false;
+// threads و manualStopped حقول قنوات معتمدة: الأول خيوط ترميز اختيارية للقناة
+// (فارغ = الإعداد العام x264Threads)، والثاني يثبّت الإيقاف اليدوي فيمنع أي
+// تشغيل تلقائي حتى يبدأها المشغّل بنفسه.
+let normalizedChannelFields = false;
 for (const channel of data.channels) {
-  for (const key of ['threads', 'manualStopped']) {
-    if (Object.prototype.hasOwnProperty.call(channel, key)) { delete channel[key]; prunedChannelFields = true; }
-  }
+  if (channel.manualStopped === undefined) { channel.manualStopped = false; normalizedChannelFields = true; }
+  else if (typeof channel.manualStopped !== 'boolean') { channel.manualStopped = !!channel.manualStopped; normalizedChannelFields = true; }
 }
-if (prunedChannelFields) writeData(data);
+if (normalizedChannelFields) writeData(data);
 data.settings = { ...defaultData().settings, ...data.settings };
 // حقول دقة عامة ألغيت (الدقة تُضبط لكل قناة)؛ تُحذف بقاياها من data.json القديم.
 let prunedSettingsFields = false;
@@ -345,9 +345,14 @@ function readBody(req, maxBytes=1024*1024) {
 }
 // الحقول الوحيدة المسموح بها عند إنشاء القناة أو تحديثها. أي خاصية أخرى في جسم
 // الطلب (مثل الدقة أو CRF أو GOP) تُرفض صراحةً بدل تجاهلها بصمت.
-const CHANNEL_WRITE_FIELDS = ['name','chanId','sourceId','category','sort','sortOrder','cover','enabled','quality','bitrate','fps','autoStart','alwaysOn'];
+const CHANNEL_WRITE_FIELDS = ['name','chanId','sourceId','category','sort','sortOrder','cover','enabled','quality','bitrate','fps','threads','autoStart','alwaysOn'];
 // مسار PATCH مخصّص لتبديل التفعيل فقط، فلا يقبل أي حقل آخر.
 const CHANNEL_PATCH_FIELDS = ['enabled'];
+// خيوط ترميز القناة: 1..64، وأي قيمة فارغة أو غير صالحة تعني «اتبع الإعداد العام».
+function normalizeThreads(value) {
+  const count = Math.round(Number(value));
+  return Number.isFinite(count) && count >= 1 && count <= 64 ? count : '';
+}
 // حقول المصدر المعتمدة (اتحاد الحقول المشتركة والحقول الخاصة بكل نوع).
 const SOURCE_WRITE_FIELDS = ['name','type','videoDevice','videoDeviceLabel','audioDevice','videoSize','fps','pixelFormat','vcodec','captureSafeMode','enabled','url','streamUrl','path'];
 // حقول الإعدادات المعتمدة = النصوص + المفاتيح المنطقية + النطاقات الرقمية + x264Preset والثيم.
@@ -854,15 +859,21 @@ function bitrateKbps(value) {
   if (!Number.isFinite(num) || num <= 0) return 0;
   return /m$/.test(text) ? num * 1000 : Math.round(num);
 }
+// عدد خيوط الترميز: خاصية القناة إن حُدّدت، وإلا الإعداد العام x264Threads.
+function channelThreadsChoice(channel, settings) {
+  const own = Math.round(Number(channel?.threads));
+  return own >= 1 ? { value: own, label: `threads «${channel.name || channel.id}»` } : { value: settings.x264Threads, label: 'x264Threads' };
+}
 // يضمن أن preset وعدد الخيوط صالحان حتى لو عُدّلت data.json يدوياً.
-function resolveEncoderSettings(settings) {
+function resolveEncoderSettings(settings, channel) {
   const warnings = [];
   const presetRaw = String(settings.x264Preset || '').trim().toLowerCase();
   const preset = X264_PRESETS.includes(presetRaw) ? presetRaw : 'veryfast';
   if (presetRaw && preset !== presetRaw) warnings.push(`preset «${presetRaw}» غير مدعوم في libx264؛ سيُستخدم veryfast`);
-  const threadsRaw = Math.round(Number(settings.x264Threads));
-  const threads = clampNumber(settings.x264Threads, 1, 64, 2);
-  if (Number.isFinite(threadsRaw) && threadsRaw !== threads) warnings.push(`x264Threads=${threadsRaw} خارج النطاق 1..64؛ سيُستخدم ${threads}`);
+  const threadsChoice = channelThreadsChoice(channel, settings);
+  const threadsRaw = Math.round(Number(threadsChoice.value));
+  const threads = clampNumber(threadsChoice.value, 1, 64, 2);
+  if (Number.isFinite(threadsRaw) && threadsRaw !== threads) warnings.push(`${threadsChoice.label}=${threadsRaw} خارج النطاق 1..64؛ سيُستخدم ${threads}`);
   // التحذير مرة واحدة لكل قيمة، حتى لا يتكرر مع كل إعادة تشغيل.
   const fresh = warnings.filter(w => !encoderWarningsLogged.has(w));
   if (fresh.length) { fresh.forEach(w => encoderWarningsLogged.add(w)); logLine(`تنبيه إعدادات FFmpeg: ${fresh.join(' | ')}`); }
@@ -970,7 +981,7 @@ function buildArgs(channel, forceTranscode = false) {
   if (isCopyQuality(channel.quality) && isNetwork && !forceTranscode) {
     args.push('-map','0:v:0','-map',audioMap,'-c:v','copy','-c:a','aac','-b:a',cfg.audioBitrate||'96k');
   } else {
-    const encoder = resolveEncoderSettings(settings);
+    const encoder = resolveEncoderSettings(settings, channel);
     // بلا pad: القياس وحده إلى الدقة المختارة يدوياً لقناة، فلا أشرطة سوداء حول الصورة.
     // فِلتر fps في سلسلة الفيديو يضبط معدّل الخرج ويُسقط/يكرّر الإطارات قبل الترميز،
     // فلا حاجة لخيار -r بعده (كان مكرراً بالقيمة نفسها).
@@ -1013,6 +1024,8 @@ function formatLastExit(exit) {
 function startChannel(channelId, manual = false) {
   const channel = data.channels.find(c=>c.id===channelId);
   if (!channel) return {ok:false,message:'القناة غير موجودة'};
+  // تشغيل يدوي يلغي تثبيت الإيقاف اليدوي، فيعود التشغيل التلقائي للعمل عليها.
+  if (manual) setManualStopped(channelId, false);
   if (channel.enabled===false) return {ok:false,message:'القناة معطلة'};
   const source = sourceForChannel(channel); if (!source || source.enabled===false) return {ok:false,message:'مصدر القناة غير متاح'};
   for (const [otherId, rt] of streams) {
@@ -1077,7 +1090,7 @@ function startChannel(channelId, manual = false) {
 }
 function scheduleChannelRestart(channelId) {
   const rt=streams.get(channelId), channel=data.channels.find(c=>c.id===channelId);
-  if(!rt||!channel||rt.stopping||rt.failedStop||!data.settings.autoRestartCrashed||rt.restartCount>=Number(data.settings.maxRestarts||20))return;
+  if(!rt||!channel||channel.manualStopped||rt.stopping||rt.failedStop||!data.settings.autoRestartCrashed||rt.restartCount>=Number(data.settings.maxRestarts||20))return;
   clearTimeout(rt.restartTimer);rt.restartCount++;
   const delay=Number(data.settings.restartBackoffMs)||5000;
   rt.restartTimer=setTimeout(()=>{if(!rt.stopping&&!rt.proc)startChannel(channelId);},delay);
@@ -1132,6 +1145,15 @@ function stopStream(origin = '') {
   const signaled = results.filter(r => /جارٍ إيقاف/.test(r.message)).length;
   logLine(`اكتمل إرسال أوامر الإيقاف${context}: ${signaled} قناة أُرسل لها الإيقاف، ${results.length - signaled} كانت متوقفة أصلاً`);
   return {ok:true,message:'تم إرسال أوامر إيقاف جميع القنوات',results};
+}
+// تثبيت الإيقاف اليدوي في القناة: ما دام مفعّلاً لا يعيد أي مسار تلقائي
+// (بدء عند الإقلاع، تشغيل عند الطلب، إعادة بعد عطل، تشغيل دائم) تشغيلها.
+// يُلغى فقط بتشغيل يدوي من لوحة التحكم.
+function setManualStopped(channelId, value) {
+  const channel = data.channels.find(c => c.id === channelId);
+  if (!channel || !!channel.manualStopped === !!value) return;
+  channel.manualStopped = !!value;
+  writeData(data);
 }
 
 // تنفيذ أمر FFmpeg يمرّره محرك الالتقاط (DirectShow يحتاجه لتعداد الأجهزة).
@@ -1393,6 +1415,7 @@ const server = http.createServer(async (req, res) => {
     const channel = data.channels.find(c => c.id === body.id && c.enabled !== false);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة أو معطلة');
     if (!data.settings.autoStartOnDemand) return send(res, 200, { ok: true, started: false, reason: 'disabled', message: 'التشغيل عند الطلب غير مفعّل' });
+    if (channel.manualStopped) return send(res, 200, { ok: true, started: false, reason: 'manual', message: 'القناة موقوفة يدوياً من لوحة التحكم' });
     const result = startChannel(channel.id, true);
     return send(res, result.ok ? 200 : 503, { ...result, started: !!result.ok });
   }
@@ -1535,7 +1558,7 @@ const server = http.createServer(async (req, res) => {
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
     const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
-    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
+    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), threads: normalizeThreads(body.threads), manualStopped: false, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
     data.channels.push(channel); writeData(data); return send(res, 201, { ok: true, channel: publicChannel(channel) });
   }
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
@@ -1552,16 +1575,19 @@ const server = http.createServer(async (req, res) => {
     // وكان يُرفض سابقاً فيتعذر حفظ القناة دون قيمة FPS.
     if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
     if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
+    // null/'' يعني «اتبع الإعداد العام x264Threads».
+    if (Object.prototype.hasOwnProperty.call(body,'threads') && body.threads !== '' && body.threads !== null && body.threads !== undefined && !normalizeThreads(body.threads)) return apiError(res,400,'عدد الخيوط يجب أن يكون بين 1 و64، أو اتركه فارغاً لاستخدام الإعداد العام');
     if (Object.prototype.hasOwnProperty.call(body,'chanId')) {
       const chanId = String(body.chanId || '').trim();
       if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId && c.id !== channel.id))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
       channel.chanId = chanId || channel.id;
     }
     // إعدادات تؤثر في وسائط FFmpeg: تغييرها على قناة تعمل يحتاج إعادة تشغيل فورية.
-    const encodingKeys = ['sourceId','quality','fps','bitrate'];
+    const encodingKeys = ['sourceId','quality','fps','bitrate','threads'];
     const encodingBefore = {}; for (const key of encodingKeys) encodingBefore[key] = channel[key];
     for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
     if (channel.fps === null || channel.fps === undefined) channel.fps = '';
+    if (Object.prototype.hasOwnProperty.call(body,'threads')) channel.threads = normalizeThreads(body.threads);
     if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;
     else if (Object.prototype.hasOwnProperty.call(body,'sortOrder')) channel.sortOrder = Number(body.sortOrder) || 0;
     channel.url = `/hls/${channel.id}/index.m3u8`;
@@ -1703,7 +1729,7 @@ const server = http.createServer(async (req, res) => {
   const channelAction = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)\/(start|stop|restart)$/);
   if (channelAction && req.method === 'POST') {
     const [,id,action]=channelAction;
-    if(action==='stop') return send(res,200,stopChannel(id,clientInfo(req)));
+    if(action==='stop'){ const result=stopChannel(id,clientInfo(req)); setManualStopped(id,true); return send(res,200,result); }
     if(action==='restart')return send(res,202,restartChannel(id));
     logLine(`طلب تشغيل القناة ${id}: ${clientInfo(req)}`);
     return send(res,200,startChannel(id, true));
@@ -1713,7 +1739,12 @@ const server = http.createServer(async (req, res) => {
     const started=data.channels.filter(c=>c.enabled!==false && c.autoStart).map(c=>startChannel(c.id, true));
     return send(res,200,{ok:true,message:'تم إرسال أوامر تشغيل القنوات المحددة للتشغيل التلقائي',results:started});
   }
-  if (req.method === 'POST' && url.pathname === '/api/stop') return send(res,200,stopStream(clientInfo(req)));
+  if (req.method === 'POST' && url.pathname === '/api/stop') {
+    // إيقاف كل القنوات من لوحة التحكم = إيقاف يدوي: يمنع كل مسار تلقائي من تشغيلها.
+    const result = stopStream(clientInfo(req));
+    data.channels.forEach(c => setManualStopped(c.id, true));
+    return send(res,200,result);
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/logs') {
     return send(res, 200, { logs: ffmpegLog });
@@ -2004,7 +2035,7 @@ server.listen(LISTEN_PORT, LISTEN_HOST, () => {
   logLine(`الخادم يعمل على http://${LISTEN_HOST}:${LISTEN_PORT} (منفذ Nginx: ${Number(data.settings.nginxPort) || 80})`);
   for (const item of getNetworkInterfaces()) logLine(`رابط المشاهدة: ${item.url} | الواجهة: ${item.name}`);
   if (process.argv.includes('--devices')) listDevices();
-  const bootChannels=data.channels.filter(c=>c.enabled!==false && (c.autoStart||c.alwaysOn));
+  const bootChannels=data.channels.filter(c=>c.enabled!==false && !c.manualStopped && (c.autoStart||c.alwaysOn));
   // كل دورة تُشغّل startupConcurrency قناة معاً: 1 = تسلسلي كما كان، وأكثر = دفعات متزامنة بفاصل ثانية بين الدفعات.
   const bootConcurrency=Math.max(1,Number(data.settings.startupConcurrency)||1);
   bootChannels.forEach((c,i)=>setTimeout(()=>startChannel(c.id),Math.max(0,Number(data.settings.startupQueueDelayMs)||0)+Math.floor(i/bootConcurrency)*1000));
