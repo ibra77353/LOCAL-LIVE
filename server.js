@@ -81,6 +81,10 @@ const channelServedBytes = new Map(); // channelId -> بايتات /hls المخ
 const channelGenBytes = new Map(); // channelId -> إجمالي بايتات مقاطعها المولَّدة
 const channelGenSnapshot = new Map(); // channelId -> { bytes, at } بداية النافذة الحالية
 const channelOutputBps = new Map(); // channelId -> بايت/ثانية على نافذة القياس
+// إقلاع FFmpeg يستغرق ثوانٍ (فتح الالتقاط وضبط الترميز) قبل كتابة أول مقطع، فالقياس
+// الذي يبدأ أثناء الإقلاع يجمع صفراً في أول النافذة فيظهر «أقل من الهدف» كذباً
+// (213k مقابل 396k في أول سطر). تبدأ النافذة بعد انتهاء الإقلاع فقط.
+const BITRATE_WARMUP_MS = 6000;
 // فقدان إشارة الالتقاط أثناء بث نشط: كرت/جهاز DirectShow قد يفقد الإشارة دون أن
 // تخرج عملية FFmpeg، فتبقى «تعمل» بلا مقاطع جديدة والمشاهدون على صورة مجمّدة.
 // إن مضت هذه المدة بلا بايتات مولَّدة نُنهي العملية لتعيد المحاولة الاتصال تلقائياً.
@@ -1971,7 +1975,11 @@ setInterval(() => {
   const sampleAt = Date.now();
   for (const [channelId, total] of channelGenBytes) {
     const snapshot = channelGenSnapshot.get(channelId);
-    if (!snapshot) { channelGenSnapshot.set(channelId, { bytes: total, at: sampleAt }); continue; }
+    // نافذة بدأت أثناء إقلاع العملية تُحتسب منقوصة؛ نعيد ضبط بدايتها حتى ينتهي الإقلاع.
+    const startedAt = Date.parse(channelRuntime(channelId)?.startedAt || '') || 0;
+    if (!snapshot || snapshot.at < startedAt + BITRATE_WARMUP_MS) {
+      channelGenSnapshot.set(channelId, { bytes: total, at: sampleAt }); continue;
+    }
     const seconds = (sampleAt - snapshot.at) / 1000;
     if (seconds < 12) continue;
     const bps = Math.max(0, Math.round((total - snapshot.bytes) / seconds));
