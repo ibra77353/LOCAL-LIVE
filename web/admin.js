@@ -32,6 +32,12 @@ const CH_BITRATES = [
   ['800k', '800k — متوازن'],
   ['1000k', '1000k — جودة عالية']
 ];
+// معدّل الإطارات (FPS) لكل قناة — فارغ = الافتراضي 20 إطاراً.
+const CH_FPS = [
+  ['', 'تلقائي (20 إطار)'],
+  ['15', '15 إطار'], ['20', '20 إطار'], ['25', '25 إطار'],
+  ['30', '30 إطار'], ['50', '50 إطار'], ['60', '60 إطار']
+];
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const TYPE_LABELS = {
   usb: 'كرت التقاط (DirectShow)', http: 'HTTP مباشر', hls: 'HLS / M3U8',
@@ -598,6 +604,11 @@ function openChannelModal(id) {
   const bitrateOptions = CH_BITRATES.some(([v]) => v === curBitrate)
     ? CH_BITRATES
     : CH_BITRATES.concat([[curBitrate, curBitrate + ' — الحالي']]);
+  // معدّل الإطارات الحالي؛ أي قيمة خارج القائمة (مثل 24) تُضاف كخيار حتى لا تُفقد عند الحفظ.
+  const curFps = String(ch?.fps || '').trim();
+  const fpsOptions = CH_FPS.some(([v]) => v === curFps)
+    ? CH_FPS
+    : CH_FPS.concat([[curFps, curFps + ' — الحالي']]);
   openModal(id ? 'تعديل قناة' : 'إضافة قناة', `
     <label>اسم القناة<input class="input" id="m_cname" value="${esc(ch?.name)}"></label>
     <label>معرّف القناة (إنجليزي، يستخدم في الروابط)<input class="input" id="m_cid" dir="ltr" value="${esc(ch?.chanId)}" placeholder="sport1"></label>
@@ -617,6 +628,11 @@ function openChannelModal(id) {
         ${CH_QUALITIES.map(([v, l]) => `<option value="${v}" ${curQ === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
     <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
+    <label>معدّل الإطارات (FPS) لهذه القناة
+      <select class="input" id="m_cfps" dir="ltr">
+        ${fpsOptions.map(([v, l]) => `<option value="${v}" ${curFps === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>
+    <p class="hint">عدد الإطارات في الثانية لخرج هذه القناة وحدها؛ أقل = أستهلك معالجاً وشبكة أقل، وأعلى = حركة أنعم. يُطبَّق في وضع الترميز فقط (يُهمَل عند «نسخ المصدر»).</p>
     <label>معدّل البت (Bitrate) لهذه القناة
       <select class="input" id="m_cbitrate" dir="ltr">
         ${bitrateOptions.map(([v, l]) => `<option value="${v}" ${curBitrate === v ? 'selected' : ''}>${l}</option>`).join('')}
@@ -631,6 +647,7 @@ function openChannelModal(id) {
         sourceId: $('#m_csource').value, category: $('#m_ccat').value.trim(),
         sort: Number($('#m_csort').value || 0), cover: $('#m_ccover').value.trim(),
         quality: $('#m_cquality').value,
+        fps: $('#m_cfps').value || null,
         bitrate: $('#m_cbitrate').value || null,
         autoStart: $('#m_cauto').checked, alwaysOn: $('#m_calwayson').checked
       };
