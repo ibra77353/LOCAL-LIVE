@@ -34,13 +34,12 @@ if (process.env.FFPROBE_PATH) cfg.ffprobePath = process.env.FFPROBE_PATH;
 
 // ffmpegPath في config.json قد يكون اسماً مجرداً مثل "ffmpeg" مع أن الحزمة تحمل
 // ffmpeg.exe بجانب server.js؛ الاعتماد على PATH كان يفشل بـ ENOENT إذا شُغّل
-// الخادم من مجلد آخر. نحل الاسم إلى الملف المرفق إن وُجد ثم نترك PATH كبديل.
-// على ويندوز تُجرَّب اللاحقة .exe (الحزمة تحمل ffmpeg.exe). خارج ويندوز لا تُجرَّب
-// أبداً، وإلا اختير ملف ffmpeg.exe المرفق — وهو ملف ويندوز لا يعمل هناك.
+// الخادم من مجلد آخر. نحل الاسم إلى الملف المرفق إن وُجد ثم نترك PATH كبديل،
+// وتُجرَّب اللاحقة .exe لأن الإصدار مخصص لويندوز فقط.
 function resolveTool(toolName) {
   const value = String(toolName || '').trim();
   if (!value || path.isAbsolute(value)) return value;
-  const names = process.platform === 'win32' ? [value, `${value}.exe`] : [value];
+  const names = [value, `${value}.exe`];
   for (const name of names) {
     const candidate = path.join(ROOT, name);
     try { if (fs.statSync(candidate).isFile()) return candidate; } catch {}

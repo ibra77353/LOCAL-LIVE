@@ -181,9 +181,11 @@ if (fs.existsSync(filePath('scripts/start.bat'))) {
 }
 // 10.5) الخادم يكتب معرّف عمليته ليستخدمه stop.bat
 if (serverJs && !/server\.pid/.test(serverJs)) failures.push('server.js لا يكتب run\\server.pid اللازم لتمييز عملية PrinceLive');
-// 10.6) المشروع Windows فقط: لا ملفات تشغيل أو محرّكات خاصة بأنظمة أخرى
-for (const file of ['scripts/start.sh', 'scripts/stop.sh', 'scripts/check.sh', 'scripts/devices.sh', 'lib/capture/v4l2.js']) {
-  if (fs.existsSync(filePath(file))) failures.push(`ملف خاص بنظام آخر ما زال موجوداً: ${file}`);
+// 10.6) المشروع Windows فقط: مجلدات التشغيل والالتقاط تحمل .bat و.js فقط
+for (const dir of ['scripts', 'lib/capture']) {
+  for (const file of fs.readdirSync(filePath(dir))) {
+    if (!/\.(bat|js)$/i.test(file)) failures.push(`ملف غير مدعوم في ${dir}: ${file}`);
+  }
 }
 // 10.7) أداة الأجهزة: devices.bat يفوّض إلى scripts/devices.js
 if (fs.existsSync(filePath('scripts/devices.bat')) && !readText('scripts/devices.bat').includes('scripts\\devices.js')) {

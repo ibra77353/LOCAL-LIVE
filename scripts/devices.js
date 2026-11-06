@@ -32,11 +32,11 @@ const cfg = readJson('config.json') || {};
 const settings = data.settings || {};
 
 // نفس قاعدة server.js: المسار النسبي يُبحث عنه بجانب server.js أولاً ثم في PATH،
-// وعلى ويندوز تُجرَّب اللاحقة .exe كما في إعدادات المستخدم.
+// وتُجرَّب اللاحقة .exe كما في إعدادات المستخدم (ويندوز فقط).
 function resolveTool(toolName) {
   const value = String(toolName || '').trim();
   if (!value || path.isAbsolute(value)) return value;
-  const names = process.platform === 'win32' ? [value, `${value}.exe`] : [value];
+  const names = [value, `${value}.exe`];
   for (const name of names) {
     const candidate = path.join(ROOT, name);
     try { if (fs.statSync(candidate).isFile()) return candidate; } catch {}
