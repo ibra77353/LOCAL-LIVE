@@ -869,11 +869,9 @@ function describeEncoderParamError(text) {
   return 'فشل FFmpeg بسبب خيار غير صالح؛ راجع آخر سطر في سجل القناة.';
 }
 
-function buildArgs(channel, forceTranscode = false) {
-  const source = sourceForChannel(channel);
-  if (!channel || channel.enabled === false) throw new Error('القناة غير موجودة أو معطلة');
-  if (!source || source.enabled === false) throw new Error('مصدر البث غير موجود أو معطل');
-  const settings = data.settings;
+// أبعاد الخرج ومعدّل الإطارات والهدف المحسوب للبِتريت من إعدادات القناة والمصدر.
+// يُستخدم في buildArgs للتشفير وفي سجل استقرار البث، فيبقى الهدف واحداً في الاثنين.
+function channelOutputPlan(channel, source) {
   const [srcW, srcH] = String(source.videoSize || cfg.videoSize || '1280x720').split('x').map(Number);
   // الجودة إما نسخ المصدر، أو مقاس مسمّى (240p..720p) يُحسب عرضه من نسبة المصدر،
   // أو «تلقائي» (auto/فارغ) = 360p. الدقة تُضبط لكل قناة فقط؛ لا إعداد عام للأبعاد.
@@ -887,6 +885,29 @@ function buildArgs(channel, forceTranscode = false) {
   const tierBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
   // البِتريت يُضبط لكل قناة؛ وفارغه يعني قيمة تلقائية حسب دقة الخرج.
   const videoBitrate = normalizeVideoBitrate(channel.bitrate, tierBitrate);
+  return { outputWidth, outputHeight, outputFps, videoBitrate };
+}
+
+// سطر سجل استقرار البِتريت: المعدّل الفعلي للخرج مقابل الهدف المحسوب على
+// نافذة القياس (12 ثانية). يظهر في سجل الخادم وفي سجل القناة معاً.
+function logBitrateWindow(channel, source, bytesPerSecond, seconds) {
+  const targetKbps = bitrateKbps(channelOutputPlan(channel, source).videoBitrate);
+  if (!targetKbps) return;
+  const actualKbps = Math.round((bytesPerSecond * 8) / 1000);
+  const deviation = Math.round(((actualKbps - targetKbps) / targetKbps) * 100);
+  const verdict = Math.abs(deviation) <= 10 ? 'مستقر ضمن الهدف' : (deviation > 0 ? 'أعلى من الهدف' : 'أقل من الهدف');
+  const line = `استقرار البِتريت «${channel.name}»: الفعلي ${actualKbps}k مقابل الهدف ${targetKbps}k `
+    + `(${deviation > 0 ? '+' : ''}${deviation}%، ${verdict}) على نافذة ${Math.round(seconds)} ثانية`;
+  logLine(line);
+  appendChannelLog(channel.id, line);
+}
+
+function buildArgs(channel, forceTranscode = false) {
+  const source = sourceForChannel(channel);
+  if (!channel || channel.enabled === false) throw new Error('القناة غير موجودة أو معطلة');
+  if (!source || source.enabled === false) throw new Error('مصدر البث غير موجود أو معطل');
+  const settings = data.settings;
+  const { outputWidth, outputHeight, outputFps, videoBitrate } = channelOutputPlan(channel, source);
   if (String(channel.bitrate || '').trim() && videoBitrate !== String(channel.bitrate).trim()) {
     logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
   }
@@ -1902,8 +1923,13 @@ setInterval(() => {
     if (!snapshot) { channelGenSnapshot.set(channelId, { bytes: total, at: sampleAt }); continue; }
     const seconds = (sampleAt - snapshot.at) / 1000;
     if (seconds < 12) continue;
-    channelOutputBps.set(channelId, Math.max(0, Math.round((total - snapshot.bytes) / seconds)));
+    const bps = Math.max(0, Math.round((total - snapshot.bytes) / seconds));
+    channelOutputBps.set(channelId, bps);
     channelGenSnapshot.set(channelId, { bytes: total, at: sampleAt });
+    // السجل للقنوات العاملة فقط: قناة متوقفة تُنتج صفراً فتظهر «أقل من الهدف» بلا معنى.
+    const channel = data.channels.find(c => c.id === channelId);
+    const source = channel ? sourceForChannel(channel) : null;
+    if (channel && source && channelRuntime(channelId)?.proc) logBitrateWindow(channel, source, bps, seconds);
   }
   probeNginxPort();
 }, 3000).unref();
