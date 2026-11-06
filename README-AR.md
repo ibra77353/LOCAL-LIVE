@@ -164,7 +164,7 @@ ffmpeg -hide_banner -list_devices true -f dshow -i dummy
 :: 2) ما الأوضاع التي يدعمها الجهاز؟
 ffmpeg -hide_banner -f dshow -list_options true -i video="اسم جهاز الفيديو"
 :: 3) هل يفتح الجهاز بالإعدادات المطلوبة؟ (5 ثوانٍ إلى NUL)
-ffmpeg -hide_banner -f dshow -rtbufsize 256M -framerate 30 -video_size 1280x720 -i video="اسم جهاز الفيديو":audio="اسم جهاز الصوت" -t 5 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -f mpegts NUL
+ffmpeg -hide_banner -f dshow -rtbufsize 256M -framerate 30 -video_size 1280x720 -i video="اسم جهاز الفيديو":audio="اسم جهاز الصوت" -t 5 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -c:a aac -f mpegts NUL
 ```
 
 إن فشل الأمر الثالث فستفشل القناة حتماً؛ عدّل الدقة/المعدل أو فعّل الوضع الآمن أولاً.

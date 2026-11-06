@@ -173,7 +173,7 @@ test('وسائط اختبار التقاط الصوت والفيديو تستخ�
     '-framerate', '30', '-video_size', '1280x720',
     '-vcodec', 'mjpeg',
     '-i', 'video=USB Video:audio=USB Audio', '-t', '3', '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mpegts', '-',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mpegts', '-',
   ]);
   // لا يظهر `null` في أي من الأمرين: مُخرَجه غير موجود في نسخة FFmpeg المقلّمة.
   const audio = winCapture.testAudioArgs('USB Audio');
