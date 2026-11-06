@@ -36,6 +36,38 @@
     "blockedStopMinutes": 1000,
     "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20"
   },
-  "sources": [],
-  "channels": []
+  "sources": [
+    {
+      "id": "src_38d977bdeb",
+      "name": "local",
+      "type": "usb",
+      "enabled": true,
+      "videoDevice": "@device_pnp_\\\\?\\usb#vid_534d&pid_2109&mi_00#6&2298e36a&7&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\\global",
+      "videoDeviceLabel": "USB Video",
+      "videoSize": "1280x720",
+      "fps": 30,
+      "audioDevice": "@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\\wave_{AD59D56B-A02C-4E77-9EF0-AA2A8115C769}",
+      "pixelFormat": "",
+      "vcodec": "mjpeg",
+      "captureSafeMode": false
+    }
+  ],
+  "channels": [
+    {
+      "id": "ch_935cc5f031",
+      "chanId": "local",
+      "name": "مباريات",
+      "category": "رياضة",
+      "sourceId": "src_38d977bdeb",
+      "cover": "srv/uploads/1792346139182_alprince_live_cover.webp",
+      "enabled": true,
+      "quality": "360p",
+      "fps": 20,
+      "bitrate": "300k",
+      "autoStart": false,
+      "alwaysOn": false,
+      "sortOrder": 0,
+      "url": "/hls/ch_935cc5f031/index.m3u8"
+    }
+  ]
 }
