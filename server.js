@@ -895,15 +895,28 @@ function channelOutputPlan(channel, source) {
   return { outputWidth, outputHeight, outputFps, videoBitrate };
 }
 
+// هل يُضمَّن مسار صوت في مخرَج HLS لهذا المصدر؟ شبكة/ملف دائماً، وجهاز
+// الالتقاط فقط إن كان له مدخل صوت. تُستخدم في buildArgs وفي حساب الهدف.
+function channelMuxesAudio(source) {
+  const type = String(source?.type || 'usb').toLowerCase();
+  if (['http-hls','http','hls','network','rtsp','file'].includes(type)) return true;
+  return !!String(source?.audioDevice || '').trim();
+}
+
 // سطر سجل استقرار البِتريت: المعدّل الفعلي للخرج مقابل الهدف المحسوب على
 // نافذة القياس (12 ثانية). يظهر في سجل الخادم وفي سجل القناة معاً.
+// أحجام مقاطع HLS تشمل الصوت والـ muxing مع الفيديو، فهدف الصوت يُضاف إلى هدف
+// الفيديو، وإلا ظهر انحراف ثابت (+96k دائماً) وليس عيباً في الترميز.
 function logBitrateWindow(channel, source, bytesPerSecond, seconds) {
-  const targetKbps = bitrateKbps(channelOutputPlan(channel, source).videoBitrate);
-  if (!targetKbps) return;
+  const videoKbps = bitrateKbps(channelOutputPlan(channel, source).videoBitrate);
+  if (!videoKbps) return;
+  const audioKbps = channelMuxesAudio(source) ? bitrateKbps(cfg.audioBitrate || '96k') : 0;
+  const targetKbps = videoKbps + audioKbps;
   const actualKbps = Math.round((bytesPerSecond * 8) / 1000);
   const deviation = Math.round(((actualKbps - targetKbps) / targetKbps) * 100);
   const verdict = Math.abs(deviation) <= 10 ? 'مستقر ضمن الهدف' : (deviation > 0 ? 'أعلى من الهدف' : 'أقل من الهدف');
-  const line = `استقرار البِتريت «${channel.name}»: الفعلي ${actualKbps}k مقابل الهدف ${targetKbps}k `
+  const breakdown = audioKbps ? ` (فيديو ${videoKbps}k + صوت ${audioKbps}k)` : '';
+  const line = `استقرار البِتريت «${channel.name}»: الفعلي ${actualKbps}k مقابل الهدف ${targetKbps}k${breakdown} `
     + `(${deviation > 0 ? '+' : ''}${deviation}%، ${verdict}) على نافذة ${Math.round(seconds)} ثانية`;
   logLine(line);
   appendChannelLog(channel.id, line);
@@ -959,7 +972,7 @@ function buildArgs(channel, forceTranscode = false) {
     // حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً بدل توفير البيانات.
     const cap = bitrateKbps(videoBitrate);
     args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize',`${cap || 2000}k`);
-    if (isNetwork || audioDevice || sourceType === 'file') args.push('-map',audioMap,'-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
+    if (channelMuxesAudio(source)) args.push('-map',audioMap,'-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
   }
   const dir = channelHlsDir(channel); fs.mkdirSync(dir,{recursive:true});

@@ -85,7 +85,8 @@ test.before(async () => {
   stallFlag = path.join(stubDir, 'stall');
   const stub = path.join(stubDir, 'ffmpeg-stub.sh');
   // يتجاهل وسائط FFmpeg ويبقى حياً حتى تُوقف القناة — يحاكي التقاطاً مستمراً.
-  // يكتب أيضاً مقاطع HLS بمعدّل ثابت (50KB كل نصف ثانية = 100KB/s ≈ 800kbps) حتى
+  // يكتب أيضاً مقاطع HLS بمعدّل ثابت (56KB كل نصف ثانية = 112KB/s ≈ 896kbps، أي
+  // فيديو 800k + صوت 96k كما يفعل الخرج الحقيقي المجمّع في مقاطع HLS) حتى
   // يحسب الخادم معدّلاً فعلياً حقيقياً على نافذة القياس 12 ثانية. اسم المقطع يحمل
   // معرّف العملية حتى تبدأ كل نسخة ملفات جديدة، فلا يُخفي الكتابة فوق ملف قديم نموَّها.
   fs.writeFileSync(stub, `#!/bin/sh
@@ -105,7 +106,7 @@ while :; do
   # ملف العلامة يحاكي فقدان إشارة الجهاز: العملية تبقى حيّة لكن لا مقاطع تُكتب.
   if [ -f "${stallFlag}" ]; then sleep 0.5; continue; fi
   name=$(printf '%s/seg_%s_%05d.ts' "$dir" "$$" "$index")
-  dd if=/dev/zero of="$name" bs=1000 count=50 2>/dev/null
+  dd if=/dev/zero of="$name" bs=1000 count=56 2>/dev/null
   printf '#EXTM3U\\n#EXT-X-VERSION:3\\n#EXT-X-TARGETDURATION:2\\n#EXTINF:2.0,\\n%s\\n' "$(basename "$name")" > "$playlist"
   index=$((index + 1))
   sleep 0.5
@@ -311,17 +312,19 @@ test('تغيير إعدادات DirectShow لقناة نشطة يبقي البث
   const grew = await waitFor(() => stubSegments() > segmentsAfterRestart, 8000, 150);
   assert.ok(grew && stubSegments() > 0, 'البث يجب أن يستمر بإنتاج مقاطع جديدة بعد إعادة التشغيل');
 
-  // 2) الاستقرار: نافذة قياس جديدة بعد التغيير، والفعلي داخل ±10% من الهدف 800k.
+  // 2) الاستقرار: نافذة قياس جديدة بعد التغيير، والفعلي داخل ±10% من الهدف الكلي
+  // 896k = فيديو 800k (بِتريت القناة) + صوت 96k (لأن المصدر يحمل جهاز صوت).
+  const TARGET_KBPS = 800 + 96;
   const settled = await waitFor(async () => {
     const row = await channelRow();
     if (!row || !row.live || row.outputBps <= 0) return null;
     const lines = windowLines(await logs());
     if (lines.length <= windowsBefore) return null;
     const actualKbps = Math.round((row.outputBps * 8) / 1000);
-    if (Math.abs(actualKbps - 800) / 800 > 0.1) return null;
+    if (Math.abs(actualKbps - TARGET_KBPS) / TARGET_KBPS > 0.1) return null;
     return { row, actualKbps, lastLine: lines[lines.length - 1] };
   }, 26000, 500);
-  assert.ok(settled, 'البتريت الفعلي يجب أن يبقى ضمن ±10% من الهدف بعد تغيير إعدادات DirectShow');
+  assert.ok(settled, 'البتريت الفعلي يجب أن يبقى ضمن ±10% من الهدف الكلي (896k) بعد تغيير إعدادات DirectShow');
   assert.match(settled.lastLine, /مستقر ضمن الهدف/);
   assert.equal(settled.row.live, true, 'البث يبقى نشطاً (قائمة تشغيل حديثة) بعد التعديل');
   assert.ok(settled.row.outputBps > 0, 'معدّل البت الفعلي يتجدّد بعد التعديل');
