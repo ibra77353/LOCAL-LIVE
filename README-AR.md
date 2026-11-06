@@ -298,11 +298,12 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 
 ### حقول أُلغيت وتُرفض صراحةً
 
-`encodingMode` و`crfValue` و`crf` (وضع CRF)، و`outputWidth` و`outputHeight` و`outputFps` و`gopSeconds` (إعدادات الدقة والـGOP العامة) لم يعد لها وجود:
+`encodingMode` و`crfValue` و`crf` (وضع CRF)، و`outputWidth` و`outputHeight` و`outputFps` (إعدادات الدقة العامة) لم يعد لها وجود:
 
 - `POST/PUT /api/channels` و`PUT /api/settings` ترفضها برمز `400` ورسالة «خاصية غير متوقعة…» بدل تجاهلها بصمت.
 - `PATCH /api/channels/:id` يقبل `enabled` فقط.
-- تُحذف بقايا `outputWidth`/`outputHeight`/`outputFps`/`gopSeconds` من `settings` عند إقلاع الخادم إن وُجدت في `data.json` قديم.
+- تُحذف بقايا `outputWidth`/`outputHeight`/`outputFps` من `settings` عند إقلاع الخادم إن وُجدت في `data.json` قديم.
+- `gopSeconds` استثناء مقصود: يبقى إعداداً عاماً في `settings` (`0` أو فارغ = تلقائي = طول مقطع HLS)، ويُرفض على مستوى القناة (`POST/PUT /api/channels`) كبقية حقول الترميز العامة.
 
 ### ترتيب بناء أمر FFmpeg
 

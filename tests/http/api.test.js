@@ -469,6 +469,34 @@ test('bitrate القناة يُطبَّق كسقف صارم في وسائط FFmp
   await api.del(`/api/sources/${src.json.source.id}`);
 });
 
+// gopSeconds إعداد عام: 0 = تلقائي (fps × طول مقطع HLS)، وأي قيمة أخرى = fps × القيمة.
+test('gopSeconds العام يضبط -g في وسائط FFmpeg و0 يعني تلقائياً', async () => {
+  const src = await api.post('/api/sources', { name: 'مصدر GOP', type: 'file', path: 'srv/uploads/quality-test.mp4' });
+  assert.equal(src.status, 201);
+  const ch = await api.post('/api/channels', { name: 'قناة GOP', sourceId: src.json.source.id, quality: '360p', fps: 25 });
+  assert.equal(ch.status, 201);
+  const id = ch.json.channel.id;
+
+  const argsGop = async () => {
+    await api.post(`/api/channels/${id}/start`);
+    const line = await waitFor(async () => {
+      const res = await api.get('/api/logs');
+      return res.json.logs.split(/\r?\n/).filter((l) => l.includes('FFmpeg args:')).pop() || null;
+    }, 5000);
+    await api.post(`/api/channels/${id}/stop`);
+    return /-g (\d+)/.exec(line || '')?.[1];
+  };
+
+  assert.equal(await argsGop(), '50', 'التلقائي = 25 إطاراً × طول المقطع 2 ثانية');
+  const saved = await api.put('/api/settings', { gopSeconds: 1 });
+  assert.equal(saved.status, 200);
+  assert.equal(await argsGop(), '25', 'القيمة العامة = 25 إطاراً × 1 ثانية');
+
+  await api.put('/api/settings', { gopSeconds: 0 });
+  await api.del(`/api/channels/${id}`);
+  await api.del(`/api/sources/${src.json.source.id}`);
+});
+
 // تغيير إعدادات الترميز (Bitrate/الجودة/FPS) لا يحتاج إعادة تشغيل يدوية:
 // الخادم يبلّغ عن الحقول المتغيّرة، ويعيد تشغيل القناة تلقائياً إن كانت تعمل.
 test('حفظ إعدادات الترميز يبلّغ عن الحقول المتغيّرة لتطبيقها تلقائياً', async () => {
@@ -494,7 +522,7 @@ test('حفظ إعدادات الترميز يبلّغ عن الحقول المت
 // إعدادات الدقة العامة ألغيت: الدقة تُضبط لكل قناة، فأي محاولة لحفظها من
 // /api/settings تُرفض كخاصية غير متوقعة بدل تجاهلها بصمت.
 test('إعدادات الدقة العامة ألغيت وتُرفض من /api/settings', async () => {
-  for (const body of [{ outputWidth: 642 }, { outputHeight: 362 }, { outputFps: 30 }, { gopSeconds: 2 }]) {
+  for (const body of [{ outputWidth: 642 }, { outputHeight: 362 }, { outputFps: 30 }]) {
     const res = await api.put('/api/settings', body);
     assert.equal(res.status, 400);
   }
@@ -502,7 +530,11 @@ test('إعدادات الدقة العامة ألغيت وتُرفض من /api/s
   assert.equal(after.outputWidth, undefined);
   assert.equal(after.outputHeight, undefined);
   assert.equal(after.outputFps, undefined);
-  assert.equal(after.gopSeconds, undefined);
+  // gopSeconds ما زال مدعوماً كإعداد عام: 0 = تلقائي (طول مقطع HLS).
+  const savedGop = await api.put('/api/settings', { gopSeconds: 4 });
+  assert.equal(savedGop.status, 200);
+  assert.equal(savedGop.json.settings.gopSeconds, 4);
+  await api.put('/api/settings', { gopSeconds: 0 });
 });
 
 test('PUT /api/settings يرفض الخصائص غير المتوقعة', async () => {

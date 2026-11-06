@@ -139,6 +139,8 @@ function defaultData() {
       x264Preset: cfg.preset || 'veryfast',
       x264Threads: Number(cfg.threads) || 2,
       hlsTime: Number(cfg.hlsTime) || 2,
+      // طول الـGOP بالثواني إعداد عام؛ 0 = تلقائي (يساوي طول مقطع HLS).
+      gopSeconds: Number(cfg.gopSeconds) || 0,
       hlsListSize: Number(cfg.hlsListSize) || 6,
       hlsDeleteThreshold: Number(cfg.hlsDeleteThreshold) || 4,
       port: Number(cfg.port)||3001, nginxPort: Number(cfg.nginxPort)||80,
@@ -187,7 +189,7 @@ if (prunedChannelFields) writeData(data);
 data.settings = { ...defaultData().settings, ...data.settings };
 // حقول دقة عامة ألغيت (الدقة تُضبط لكل قناة)؛ تُحذف بقاياها من data.json القديم.
 let prunedSettingsFields = false;
-for (const key of ['outputWidth','outputHeight','outputFps','gopSeconds']) {
+for (const key of ['outputWidth','outputHeight','outputFps']) {
   if (Object.prototype.hasOwnProperty.call(data.settings, key)) { delete data.settings[key]; prunedSettingsFields = true; }
 }
 if (prunedSettingsFields) writeData(data);
@@ -353,7 +355,7 @@ const SETTINGS_WRITE_FIELDS = [
   'siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent',
   'tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration',
-  'startupQueueDelayMs','startupConcurrency','x264Threads','hlsTime','hlsListSize','hlsDeleteThreshold','port','nginxPort',
+  'startupQueueDelayMs','startupConcurrency','x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold','port','nginxPort',
   'maxRestarts','restartBackoffMs','idleStopMinutes','sourceFailStopMinutes','blockedStopMinutes',
   'x264Preset','theme'
 ];
@@ -936,8 +938,10 @@ function buildArgs(channel, forceTranscode = false) {
     logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
   }
   const hlsTime = clampNumber(settings.hlsTime, 1, 10, 2);
-  // إطار مفتاحي واحد عند بداية كل مقطع HLS، فيبدأ كل مقطع من keyframe.
-  const gop = Math.max(1, Math.round(outputFps * hlsTime));
+  // طول الـGOP: إعداد عام اختياري بالثواني؛ 0 أو فارغ = تلقائي = طول مقطع HLS
+  // (إطار مفتاحي واحد عند بداية كل مقطع، فتكون بداية كل مقطع keyframe).
+  const gopSeconds = Number(settings.gopSeconds) > 0 ? Number(settings.gopSeconds) : hlsTime;
+  const gop = Math.max(1, Math.round(outputFps * gopSeconds));
   const sourceType = String(source.type || 'usb').toLowerCase();
   const isNetwork = ['http-hls','http','hls','network','rtsp'].includes(sourceType);
   const audioDevice = source.audioDevice || '';
@@ -1464,7 +1468,7 @@ const server = http.createServer(async (req, res) => {
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
-      startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
+      startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], gopSeconds:[0,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
       maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
       sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000]
     };
