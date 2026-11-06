@@ -31,8 +31,8 @@
     "maxRestarts": 20,
     "restartBackoffMs": 5000,
     "idleStopEnabled": true,
-    "idleStopMinutes": 1,
-    "sourceFailStopMinutes": 1,
+    "idleStopMinutes": 2,
+    "sourceFailStopMinutes": 3,
     "blockedStopMinutes": 1000,
     "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20"
   },
