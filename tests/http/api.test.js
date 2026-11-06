@@ -578,6 +578,24 @@ test('حفظ إعدادات الترميز يبلّغ عن الحقول المت
   await api.del(`/api/sources/${src.json.source.id}`);
 });
 
+// إعدادات الترميز العامة (/api/settings) تتبع عقد حفظ القناة نفسه: تُبلِّغ عن
+// الحقول المتغيّرة وتعيد تشغيل القنوات النشطة (لا قناة عاملة هنا، فالقائمة فارغة).
+test('حفظ إعدادات الترميز العامة يبلّغ عن الحقول المتغيّرة', async () => {
+  const before = (await api.get('/api/settings')).json.settings;
+  const saved = await api.put('/api/settings', { x264Preset: 'fast', hlsListSize: 8 });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.json.changedSettings.sort(), ['hlsListSize', 'x264Preset']);
+  assert.deepEqual(saved.json.restartedChannels, [], 'لا قناة نشطة في هذه اللحظة');
+
+  // الحفظ نفسه بالقيم نفسها لا يعيد تشغيل أي قناة.
+  const repeated = await api.put('/api/settings', { x264Preset: 'fast', hlsListSize: 8 });
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(repeated.json.changedSettings, []);
+  assert.deepEqual(repeated.json.restartedChannels, []);
+
+  await api.put('/api/settings', { x264Preset: before.x264Preset ?? 'veryfast', hlsListSize: before.hlsListSize ?? 6 });
+});
+
 // إعدادات الدقة العامة ألغيت: الدقة تُضبط لكل قناة، فأي محاولة لحفظها من
 // /api/settings تُرفض كخاصية غير متوقعة بدل تجاهلها بصمت.
 test('إعدادات الدقة العامة ألغيت وتُرفض من /api/settings', async () => {

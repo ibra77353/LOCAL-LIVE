@@ -172,8 +172,12 @@ async function saveSettings() {
   }
   try {
     const r = await api('/settings', { method: 'PUT', body });
-    toast('تم حفظ الإعدادات');
+    // إعدادات الترميز العامة (Preset/Threads/HLS/GOP) يعيد الخادم تشغيل القنوات
+    // النشطة بها فوراً، فنخبر المستخدم بعدد القنوات التي طُبّقت عليها.
+    const applied = (r.restartedChannels || []).length;
+    toast(applied ? `تم حفظ الإعدادات وتطبيقها على ${applied} قناة نشطة` : 'تم حفظ الإعدادات');
     loadSettings();
+    refreshStatus();
     if (r.restartRequired || r.nginxRestartRequired) {
       alert('تم تغيير المنفذ. لتطبيق التغيير:\n1) اضغط «تحديث ملف nginx.conf بالمنافذ الحالية».\n2) أعد تشغيل النظام (أغلق نافذة الأوامر وشغّل start.bat).\n3) أعد تشغيل Nginx.');
     }

@@ -360,6 +360,9 @@ const SETTINGS_WRITE_FIELDS = [
   'maxRestarts','restartBackoffMs','idleStopMinutes','sourceFailStopMinutes','blockedStopMinutes',
   'x264Preset','theme'
 ];
+// إعدادات عامة تظهر في وسائط FFmpeg لكل قناة مُرمَّزة؛ تغييرها أثناء البث
+// يُطبَّق فوراً بإعادة تشغيل القنوات النشطة بدل انتظار إعادة تشغيل يدوية.
+const ENCODING_SETTINGS_KEYS = ['x264Preset','x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold'];
 // يعيد أول خاصية في جسم الطلب غير موجودة في القائمة المسموحة، أو null.
 function unexpectedField(body, fields) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
@@ -1509,6 +1512,9 @@ const server = http.createServer(async (req, res) => {
     const unexpectedSetting = unexpectedField(body, SETTINGS_WRITE_FIELDS);
     if (unexpectedSetting) return apiError(res, 400, `خاصية غير متوقعة في الإعدادات: ${unexpectedSetting}`);
     const previousPort = Number(data.settings.port), previousNginxPort = Number(data.settings.nginxPort);
+    // قيم الترميز قبل الحفظ: نقارنها بعده لنعرف هل تحتاج القنوات النشطة إعادة تشغيل.
+    const encodingSettingsBefore = {};
+    for (const key of ENCODING_SETTINGS_KEYS) encodingSettingsBefore[key] = data.settings[key];
     const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent'];
     for (const key of textKeys) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const value = String(body[key] ?? '');
@@ -1550,7 +1556,23 @@ const server = http.createServer(async (req, res) => {
     // لتظهر رسالة إعادة التشغيل بدل حفظ صامت لا أثر له.
     const restartRequired = Number(data.settings.port) !== previousPort;
     const nginxRestartRequired = Number(data.settings.nginxPort) !== previousNginxPort;
-    writeData(data); syncNginxPorts(); return send(res, 200, { ok: true, settings: data.settings, restartRequired, nginxRestartRequired, message: 'تم حفظ الإعدادات. تغييرات المنافذ تتطلب إعادة تشغيل Node.js وNginx، وتغييرات الترميز تتطلب إعادة تشغيل القنوات.' });
+    writeData(data); syncNginxPorts();
+    // إعدادات الترميز العامة تُطبَّق فوراً: كل قناة تعمل الآن تُعاد تشغيلها
+    // بالقيم الجديدة (والقناة الموقوفة يدوياً أو المتوقفة تبقى كما هي).
+    const changedSettings = ENCODING_SETTINGS_KEYS.filter(key =>
+      String(encodingSettingsBefore[key] ?? '') !== String(data.settings[key] ?? ''));
+    const restartedChannels = [];
+    if (changedSettings.length) {
+      for (const channel of data.channels) {
+        if (channel.enabled === false || channel.manualStopped || !streams.get(channel.id)?.proc) continue;
+        logLine(`تغيّرت إعدادات الترميز العامة (${changedSettings.join(', ')}); إعادة تشغيل «${channel.name}» تلقائياً`);
+        if (restartChannel(channel.id).ok) restartedChannels.push(channel.id);
+      }
+    }
+    return send(res, 200, {
+      ok: true, settings: data.settings, restartRequired, nginxRestartRequired, changedSettings, restartedChannels,
+      message: 'تم حفظ الإعدادات. تغييرات المنافذ تتطلب إعادة تشغيل Node.js وNginx، وتغييرات الترميز تُطبَّق فوراً على القنوات النشطة.'
+    });
   }
   // تغيير كلمة مرور اللوحة: يتحقق من الحالية ثم يحفظ hash جديداً ويعيد فتح جلسة للمستخدم الحالي.
   if (url.pathname === '/api/settings/password' && req.method === 'POST') {

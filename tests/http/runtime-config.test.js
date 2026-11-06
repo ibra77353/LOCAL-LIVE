@@ -395,3 +395,27 @@ test('فقدان إشارة مصدر DirectShow أثناء البث يعيد ا�
   }, 22000, 400);
   assert.ok(resumed, 'البث يجب أن يعود نشطاً تلقائياً بعد عودة إشارة المصدر');
 });
+
+// -------------- إعدادات الترميز العامة أثناء البث: تطبيق فوري على القناة النشطة
+test('حفظ إعدادات الترميز العامة يُعيد تشغيل القناة النشطة بالقيم الجديدة', { skip: SKIP }, async () => {
+  const before = await status();
+  assert.equal(before.running, true, 'القناة يجب أن تكون عاملة قبل حفظ الإعدادات');
+
+  const saved = await api.put('/api/settings', { x264Preset: 'ultrafast' });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.json.changedSettings, ['x264Preset']);
+  assert.deepEqual(saved.json.restartedChannels, [state.channelId], 'القناة النشطة تُعاد تشغيلها بحفظ الإعدادات');
+
+  const restarted = await waitFor(async () => {
+    const s = await status();
+    return s.running && s.pid && s.pid !== before.pid ? s : null;
+  }, 10000, 100);
+  assert.ok(restarted, 'القناة يجب أن تعود للعمل بعد حفظ الإعدادات العامة');
+  const args = argsLines(await logs()).pop() || '';
+  assert.match(args, /-preset ultrafast/, 'وسائط FFmpeg الجديدة تحمل الـpreset المحفوظ');
+  assert.equal(aliveStubPids().length, 1, 'إعادة التشغيل يجب ألا تُبقي نسخة FFmpeg مزدوجة');
+
+  // القناة الموقوفة يدوياً لا تُشغَّل بحفظ الإعدادات العامة.
+  const restored = await api.put('/api/settings', { x264Preset: 'veryfast' });
+  assert.deepEqual(restored.json.restartedChannels, [state.channelId]);
+});
