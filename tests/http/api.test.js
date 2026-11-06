@@ -224,6 +224,17 @@ test('PUT /api/channels/:id يرفض الجودة وFPS والبِتريت غي�
   assert.equal(badBitrate.status, 400);
 });
 
+// نفس التحقق يجب أن يُطبَّق عند الإنشاء، وإلا حُفظت قيمة غير مدعومة يستبدلها
+// محرّك الترميز بالتلقائية بصمت لاحقاً.
+test('POST /api/channels يرفض الجودة والبِتريت غير الصالحين', async () => {
+  const badQuality = await api.post('/api/channels', { name: 'قناة جودة خاطئة', sourceId: state.sourceId, quality: '1080p' });
+  assert.equal(badQuality.status, 400);
+  const badBitrate = await api.post('/api/channels', { name: 'قناة بِتريت خاطئ', sourceId: state.sourceId, bitrate: 'fast' });
+  assert.equal(badBitrate.status, 400);
+  const list = await api.get('/api/channels');
+  assert.equal(list.json.channels.some(c => c.name === 'قناة جودة خاطئة' || c.name === 'قناة بِتريت خاطئ'), false);
+});
+
 test('POST/PUT /api/channels يرفضان الخصائص غير المتوقعة (دقة/CRF/GOP)', async () => {
   const postCrf = await api.post('/api/channels', { name: 'قناة CRF', sourceId: state.sourceId, crf: 23 });
   assert.equal(postCrf.status, 400);

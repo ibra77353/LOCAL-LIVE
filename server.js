@@ -900,6 +900,26 @@ function describeEncoderParamError(text) {
   return 'فشل FFmpeg بسبب خيار غير صالح؛ راجع آخر سطر في سجل القناة.';
 }
 
+// قيم الجودة المدعومة في نموذج الترميز الحالي (نفس قائمة نافذة القناة في
+// web/admin.js): نسخ المصدر أو «تلقائي» أو مقاس مسمّى حتى 720p.
+const CHANNEL_QUALITIES = ['source','copy','auto','240p','288p','320p','360p','432p','480p','720p'];
+// تحقّق واحد من حقول الترميز (الجودة/البِتريت/FPS/الخيوط) يُطبَّق عند إنشاء القناة
+// وتعديلها معاً، فلا تُحفظ قيمة غير مدعومة يُستبدلها النظام لاحقاً بالتلقائية بصمت.
+// يعيد رسالة الخطأ العربية أو '' عند الصلاحية؛ الحقول الغائبة تُترك كما هي.
+function validateChannelEncodingFields(body) {
+  const has = key => Object.prototype.hasOwnProperty.call(body, key);
+  if (has('quality') && !CHANNEL_QUALITIES.includes(String(body.quality))) return 'جودة القناة غير صالحة';
+  // null/'' يعني «استخدم الافتراضي 20» — نموذج القناة يرسل null عند إفراغ الحقل.
+  if (has('fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined
+    && (!Number.isFinite(Number(body.fps)) || Number(body.fps) < 1 || Number(body.fps) > 60)) return 'FPS يجب أن يكون بين 1 و60';
+  // البِتريت نص من نمط «رقم + k» (مثل 800k)؛ الفارغ يعني «تلقائي حسب دقة الخرج».
+  if (has('bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return 'صيغة Bitrate غير صالحة؛ مثال 1500k';
+  // null/'' يعني «اتبع الإعداد العام x264Threads».
+  if (has('threads') && body.threads !== '' && body.threads !== null && body.threads !== undefined
+    && !normalizeThreads(body.threads)) return 'عدد الخيوط يجب أن يكون بين 1 و64، أو اتركه فارغاً لاستخدام الإعداد العام';
+  return '';
+}
+
 // أبعاد الخرج ومعدّل الإطارات والهدف المحسوب للبِتريت من إعدادات القناة والمصدر.
 // يُستخدم في buildArgs للتشفير وفي سجل استقرار البث، فيبقى الهدف واحداً في الاثنين.
 function channelOutputPlan(channel, source) {
@@ -1567,6 +1587,8 @@ const server = http.createServer(async (req, res) => {
     if (unexpectedNew) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedNew}`);
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم القناة مطلوب');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
+    const newEncodingError = validateChannelEncodingFields(body);
+    if (newEncodingError) return apiError(res, 400, newEncodingError);
     const channelId = 'ch_' + require('crypto').randomBytes(5).toString('hex');
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
@@ -1583,13 +1605,9 @@ const server = http.createServer(async (req, res) => {
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
-    if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','auto','240p','288p','320p','360p','432p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
-    // null/'' يعني «استخدم الافتراضي 20» — نموذج القناة يرسل null عند إفراغ الحقل،
-    // وكان يُرفض سابقاً فيتعذر حفظ القناة دون قيمة FPS.
-    if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
-    if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
-    // null/'' يعني «اتبع الإعداد العام x264Threads».
-    if (Object.prototype.hasOwnProperty.call(body,'threads') && body.threads !== '' && body.threads !== null && body.threads !== undefined && !normalizeThreads(body.threads)) return apiError(res,400,'عدد الخيوط يجب أن يكون بين 1 و64، أو اتركه فارغاً لاستخدام الإعداد العام');
+    // نفس تحقق الإنشاء: الجودة/البِتريت/FPS/الخيوط.
+    const updateEncodingError = validateChannelEncodingFields(body);
+    if (updateEncodingError) return apiError(res, 400, updateEncodingError);
     if (Object.prototype.hasOwnProperty.call(body,'chanId')) {
       const chanId = String(body.chanId || '').trim();
       if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId && c.id !== channel.id))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
