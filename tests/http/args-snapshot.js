@@ -3,7 +3,7 @@
 // (نفس نقطة النهاية POST /api/channels/:id/start والسجل)، ويطبعها JSON منظّماً.
 //
 // الغرض: مقارنة الناتج قبل استخراج طبقة الالتقاط وبعده — يجب أن يكون متطابقاً.
-// التشغيل: node tests/http/args-snapshot.js > /tmp/args.json
+// التشغيل: node tests\http\args-snapshot.js > args.json
 
 const fs = require('fs');
 const path = require('path');

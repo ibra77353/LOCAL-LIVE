@@ -29,7 +29,7 @@
 | `lib/capture/capabilities.js` | تجميع قدرات الجهاز والتوصية |
 | `lib/capture/screen.js` | التقاط الشاشة عبر gdigrab |
 
-- **نطاق الدعم:** Windows 10/11 فقط، والمحرك هو DirectShow (يظهر في `/api/stats` باسم `captureEngine: "dshow"`). لا توجد محرّكات أخرى ولا قراءة لـ`/dev` أو `/proc`.
+- **نطاق الدعم:** Windows 10/11 فقط، والمحرك هو DirectShow (يظهر في `/api/stats` باسم `captureEngine: "dshow"`). لا توجد محرّكات أخرى ولا اعتماد على أدوات أو مسارات خاصة بأنظمة تشغيل أخرى.
 - **الإدخال:** `-f dshow -rtbufsize 256M` ثم `-framerate`/`-video_size`/الصيغة ثم `-i video=...:audio=...`. «افتراضي» في معدل الإطارات يعني 30 لا 1، ووضع الالتقاط الآمن يُحترم في زر الاختبار كما في وسائط القناة.
 - **تعداد الأجهزة:** عبر `-list_devices` في FFmpeg.
 - **الصوت:** DirectShow يحمل الصوت مع الفيديو في إدخال واحد (`video=...:audio=...`)، فخريطة الصوت دائماً `-map 0:a:0?`.
