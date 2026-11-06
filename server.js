@@ -975,7 +975,7 @@ function buildArgs(channel, forceTranscode = false) {
   const sourceType = String(source.type || 'usb').toLowerCase();
   const isNetwork = ['http-hls','http','hls','network','rtsp'].includes(sourceType);
   const audioDevice = source.audioDevice || '';
-  const args = ['-hide_banner','-loglevel','warning','-thread_queue_size','512'];
+  const args = ['-hide_banner','-loglevel','warning','-y','-thread_queue_size','512'];
   if (isNetwork) {
     const streamUrl = validateNetworkStreamUrl(source.streamUrl || source.url || '');
     args.push('-rw_timeout','15000000');
@@ -994,7 +994,7 @@ function buildArgs(channel, forceTranscode = false) {
     args.push(...capture.captureInputArgs(source));
   }
   // DirectShow يحمل الصوت مع الفيديو في الإدخال الأول نفسه.
-  const audioMap = '0:a:0?';
+  const audioMap = '0:a?';
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
   if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 288p أو 320p أو 360p أو 432p أو 480p أو 720p.');
   if (isCopyQuality(channel.quality) && isNetwork && !forceTranscode) {
@@ -1002,22 +1002,25 @@ function buildArgs(channel, forceTranscode = false) {
   } else {
     const encoder = resolveEncoderSettings(settings, channel);
     // بلا pad: القياس وحده إلى الدقة المختارة يدوياً لقناة، فلا أشرطة سوداء حول الصورة.
-    // فِلتر fps في سلسلة الفيديو يضبط معدّل الخرج ويُسقط/يكرّر الإطارات قبل الترميز،
-    // فلا حاجة لخيار -r بعده (كان مكرراً بالقيمة نفسها).
-    args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight},format=yuv420p,fps=${outputFps}`,
-      '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
-      '-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
+    // معدّل الإطارات يُضبط بخيار خرج -r (لا فِلتر fps)، وzerolatency يقلّل الإطارات
+    // المحجوزة في المخزن فيقلّ التأخير على حساب ضغط أقل كفاءة يسيراً.
+    args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight},format=yuv420p`,
+      '-c:v','libx264','-preset',encoder.preset,'-tune','zerolatency','-pix_fmt','yuv420p','-threads',String(encoder.threads),
+      '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
     // وضع Bitrate = سقف صارم: مخزن VBV يساوي ثانية واحدة بمعدّل القناة (لا ضعفه)
     // فلا يقفز الخرج فوق القيمة المختارة بين المقاطع. لا نستخدم nal-hrd=cbr لأن
     // حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً بدل توفير البيانات.
     const cap = bitrateKbps(videoBitrate);
     args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize',`${cap || 2000}k`);
-    if (channelMuxesAudio(source)) args.push('-map',audioMap,'-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
+    if (channelMuxesAudio(source)) args.push('-map',audioMap,'-af','aresample=async=1','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
   }
   const dir = channelHlsDir(channel); fs.mkdirSync(dir,{recursive:true});
+  // بادئة فريدة لكل تشغيل: أسماء المقاطع لا تتكرّر بعد إعادة التشغيل، فلا يقدّم
+  // مشغّل أو وسيط تخزين نسخة قديمة من ملف بالاسم نفسه.
+  const sessionTag = crypto.randomBytes(6).toString('hex');
   args.push('-f','hls','-hls_time',String(hlsTime),'-hls_list_size',String(Number(settings.hlsListSize)||6),'-hls_delete_threshold',String(Number(settings.hlsDeleteThreshold)||4),
-    '-hls_flags','delete_segments+append_list+omit_endlist+independent_segments+program_date_time','-hls_segment_filename',path.join(dir,'seg_%05d.ts'),path.join(dir,'index.m3u8'));
+    '-hls_flags','delete_segments+independent_segments+program_date_time','-hls_segment_filename',path.join(dir,`seg_${sessionTag}_%05d.ts`),path.join(dir,'index.m3u8'));
   return args;
 }
 // سجل خروج FFmpeg: يحفظ رمز الخروج والإشارة والسبب الحقيقي، مع آخر 5 محاولات

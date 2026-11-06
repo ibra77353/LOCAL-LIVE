@@ -640,7 +640,7 @@ test('Bitrate خاص بكل قناة ويُطبَّق في وسائط FFmpeg ب�
   assert.doesNotMatch(channelBitrateArgs, /-crf/);
   assert.match(channelBitrateArgs, /scale=640:360/);
   assert.doesNotMatch(channelBitrateArgs, /pad=/);
-  assert.match(channelBitrateArgs, /fps=25/);
+  assert.match(channelBitrateArgs, /-r 25/);
   assert.match(channelBitrateArgs, /-preset (superfast|veryfast)/);
 
   await api.put(`/api/channels/${id}`, { bitrate: '1200k' });

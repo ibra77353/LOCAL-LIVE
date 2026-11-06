@@ -309,7 +309,7 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 
 1. **الأبعاد:** `copy` = أبعاد المصدر كما هي؛ مقاس مسمّى (`360p`) = ارتفاعه مع عرض مُشتق من نسبة أبعاد المصدر؛ `auto` = 360p. العرض يُجبَر على أن يكون زوجياً (وبحد أدنى 160) لأن `yuv420p` يرفض الأبعاد الفردية.
 2. **معدل الإطارات:** `channel.fps` أو 20.
-3. **الفلاتر:** `scale=<العرض>:<الارتفاع>,fps=<المعدل>` بلا `pad`، فلا أشرطة سوداء حول الصورة.
+3. **الفلاتر:** `scale=<العرض>:<الارتفاع>,format=yuv420p` بلا `pad`، فلا أشرطة سوداء حول الصورة، ومعدّل الإطارات يُضبط بخيار الخرج `-r` لا بفلتر `fps`.
 4. **البِتريت:** `channel.bitrate` كما هو، أو القيمة التلقائية حسب ارتفاع الخرج: `2000k` لـ720p وأعلى، `1000k` لـ480p، `500k` لما دون ذلك. أي قيمة غير صالحة تُستبدل بالتلقائية ويُكتب تنبيه في `logs/server.log`.
 
 ### كيف يُطبَّق البِتريت
@@ -317,10 +317,11 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 يُفرض سقفاً صارماً بلا حشو: `-b:v` مع `-maxrate` ومخزن VBV `-bufsize` يساوي **ثانية واحدة** بمعدّل القناة (لا ضعفه)، فلا يقفز الخرج فوق القيمة المختارة بين المقاطع، وبلا `nal-hrd=cbr` حتى تبقى المشاهد الهادئة منخفضة الاستهلاك. وسائط قناة 360p بمعدل 25 إطاراً وبِتريت `800k` ومقطع HLS ثانيتين تبدو هكذا:
 
 ```text
--map 0:v:0 -vf scale=640:360,fps=25 -c:v libx264 -preset veryfast -pix_fmt yuv420p -threads 2
+-map 0:v:0 -vf scale=640:360,format=yuv420p -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -threads 2
 -r 25 -g 50 -keyint_min 50 -sc_threshold 0 -b:v 800k -maxrate 800k -bufsize 800k
--map 0:a:0? -af aresample=async=1:first_pts=0 -c:a aac -b:a 96k -ar 44100 -ac 2
--f hls -hls_time 2 -hls_list_size 6 -hls_delete_threshold 4 ...
+-map 0:a? -af aresample=async=1 -c:a aac -b:a 96k -ar 44100 -ac 2
+-f hls -hls_time 2 -hls_list_size 6 -hls_delete_threshold 4 -hls_flags delete_segments+independent_segments+program_date_time
+-hls_segment_filename <المجلد>/seg_<بادئة-فريدة-لكل-تشغيل>_%05d.ts <المجلد>/index.m3u8
 ```
 
 - **GOP:** إطار مفتاحي واحد عند بداية كل مقطع HLS (`gop = fps × hlsTime`)، فيبدأ كل مقطع من keyframe.

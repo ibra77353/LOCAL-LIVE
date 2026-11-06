@@ -181,7 +181,7 @@ test('تغيير Bitrate وFPS أثناء التشغيل يعيد تشغيل ا�
 
   const args = argsLines(await logs()).pop() || '';
   assert.match(args, /-b:v 1200k/);
-  assert.match(args, /fps=20/);
+  assert.match(args, /-r 20/);
 
   await waitFor(async () => aliveStubPids().length === 1);
   assert.equal(aliveStubPids().length, 1, 'يجب ألا تبقى أكثر من عملية FFmpeg واحدة');
