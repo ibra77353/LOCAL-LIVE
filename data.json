@@ -65,7 +65,7 @@
       "fps": "20",
       "bitrate": "300k",
       "threads": null,
-      "manualStopped": false,
+      "manualStopped": true,
       "autoStart": false,
       "alwaysOn": false,
       "sortOrder": 0,

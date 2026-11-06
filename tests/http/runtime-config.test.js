@@ -31,6 +31,7 @@ let api;
 let stubDir = '';
 let pidFile = '';
 let stallFlag = '';
+let slowStopFlag = '';
 const state = { sourceId: '', channelId: '' };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,6 +84,9 @@ test.before(async () => {
   stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pl-ffmpeg-stub-'));
   pidFile = path.join(stubDir, 'pids.txt');
   stallFlag = path.join(stubDir, 'stall');
+  // ملف علامة يجعل البديل يتأخر 0.6 ثانية قبل الخروج، فتكون هناك نافذة حقيقية
+  // «إغلاق جارٍ» لاختبار سباق الإيقاف اليدوي مع حفظ الإعدادات.
+  slowStopFlag = path.join(stubDir, 'slow-stop');
   const stub = path.join(stubDir, 'ffmpeg-stub.sh');
   // يتجاهل وسائط FFmpeg ويبقى حياً حتى تُوقف القناة — يحاكي التقاطاً مستمراً.
   // يكتب أيضاً مقاطع HLS بمعدّل ثابت (56KB كل نصف ثانية = 112KB/s ≈ 896kbps، أي
@@ -101,7 +105,7 @@ for arg in "$@"; do
 done
 dir=$(dirname "$segment")
 index=1
-trap 'exit 0' TERM INT
+trap 'if [ -f "${slowStopFlag}" ]; then sleep 0.6; fi; exit 0' TERM INT
 while :; do
   # ملف العلامة يحاكي فقدان إشارة الجهاز: العملية تبقى حيّة لكن لا مقاطع تُكتب.
   if [ -f "${stallFlag}" ]; then sleep 0.5; continue; fi
@@ -246,6 +250,29 @@ test('حفظ إعدادات DirectShow غير صالحة أثناء التشغي
   assert.equal(source.videoDevice, VIDEO_DEVICE_RENAMED, 'المصدر يبقى بقيمه السابقة');
 });
 
+// ------------------- الإيقاف اليدوي يمنع إعادة التشغيل التلقائية (بما فيها الحفظ)
+test('الإيقاف اليدوي يمنع إعادة تشغيل القناة عند حفظ إعدادات الترميز', { skip: SKIP }, async () => {
+  await api.post(`/api/channels/${state.channelId}/start`);
+  const running = await waitFor(async () => { const s = await status(); return s.running ? s : null; });
+  assert.ok(running, 'القناة يجب أن تعمل قبل الإيقاف اليدوي');
+
+  fs.writeFileSync(slowStopFlag, '1');
+  const stopped = await api.post(`/api/channels/${state.channelId}/stop`);
+  assert.equal(stopped.status, 200);
+
+  // حفظ إعدادات ترميز أثناء إغلاق FFmpeg: كان يفتح القناة الموقوفة يدوياً من جديد.
+  const saved = await api.put(`/api/channels/${state.channelId}`, { bitrate: '400k' });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.json.changedEncoding, ['bitrate']);
+  assert.equal(saved.json.restarted, false, 'الحفظ يجب ألا يعيد تشغيل قناة موقوفة يدوياً');
+
+  await sleep(1500);
+  assert.equal((await status()).running, false, 'القناة الموقوفة يدوياً يجب أن تبقى متوقفة');
+  assert.equal((await channelRow()).manualStopped, true, 'الإيقاف اليدوي يبقى مثبتاً بعد الحفظ');
+  assert.equal(aliveStubPids().length, 0, 'يجب ألا تبقى عملية FFmpeg حية');
+  fs.rmSync(slowStopFlag, { force: true });
+});
+
 test('تعديل الإعدادات والقناة متوقفة لا يشغّلها تلقائياً', { skip: SKIP }, async () => {
   const stop = await api.post(`/api/channels/${state.channelId}/stop`);
   assert.equal(stop.status, 200);
@@ -267,6 +294,8 @@ test('تعديل الإعدادات والقناة متوقفة لا يشغّل�
   }, 8000, 150);
   assert.ok(args, 'التشغيل اليدوي يقرأ أحدث إعدادات المصدر');
   await api.post(`/api/channels/${state.channelId}/stop`);
+  // الانتظار حتى يخرج FFmpeg فعلياً قبل الاختبار التالي (تشغيل أثناء الإغلاق يُرفض).
+  await waitFor(() => aliveStubPids().length === 0, 5000);
 });
 
 // ------------------------------------- تعديل DirectShow أثناء بث نشط: استمرار واستقرار

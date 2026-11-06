@@ -1024,6 +1024,9 @@ function formatLastExit(exit) {
 function startChannel(channelId, manual = false) {
   const channel = data.channels.find(c=>c.id===channelId);
   if (!channel) return {ok:false,message:'القناة غير موجودة'};
+  // الإيقاف اليدوي يمنع كل مسار تلقائي (حفظ إعدادات، تعديل مصدر، إقلاع، تشغيل
+  // عند الطلب) من تشغيل القناة؛ يُلغى فقط بتشغيل يدوي من لوحة التحكم.
+  if (!manual && channel.manualStopped) return {ok:false,message:'القناة موقوفة يدوياً من لوحة التحكم',channelId};
   // تشغيل يدوي يلغي تثبيت الإيقاف اليدوي، فيعود التشغيل التلقائي للعمل عليها.
   if (manual) setManualStopped(channelId, false);
   if (channel.enabled===false) return {ok:false,message:'القناة معطلة'};
@@ -1123,15 +1126,18 @@ function stopChannel(channelId, origin = '') {
     return {ok:false,message:e.message,channelId};
   }
 }
-function restartChannel(channelId) {
+function restartChannel(channelId, manual = false) {
+  const channel = data.channels.find(c => c.id === channelId);
+  // إعادة التشغيل التلقائية (بعد حفظ إعدادات) لا تُبطل إيقافاً يدوياً.
+  if (channel?.manualStopped && !manual) return {ok:false,message:'القناة موقوفة يدوياً؛ لن تُعاد قبل تشغيلها يدوياً',channelId};
   const rt=streams.get(channelId);
-  if (!rt?.proc) return startChannel(channelId, true);
+  if (!rt?.proc) return startChannel(channelId, manual);
   // إعادة تشغيل قيد التنفيذ: لا تُسجَّل مستمعات خروج إضافية، وإلا بدأت نسختان من
   // FFmpeg عند حفظ إعدادات متتابع بسرعة. النسخة القادمة تقرأ أحدث إعدادات من data.
   if (rt.restartPending) return {ok:true,message:'إعادة التشغيل قيد التنفيذ (ستُطبَّق أحدث إعدادات)',channelId};
   rt.restartPending=true;
   const proc=rt.proc;
-  const begin=()=>setTimeout(()=>startChannel(channelId, true),250);
+  const begin=()=>setTimeout(()=>startChannel(channelId, manual),250);
   proc.once('exit',begin);
   const stopped=stopChannel(channelId);
   if (!stopped.ok) { rt.restartPending=false; return stopped; }
@@ -1671,7 +1677,8 @@ const server = http.createServer(async (req, res) => {
     const invalid = applySourceFields(candidate, body);
     if (invalid) return apiError(res, 400, invalid);
     const linked = data.channels.filter(c => c.sourceId === source.id);
-    const wasRunning = linked.filter(c => channelRuntime(c.id)?.proc).map(c => c.id);
+    // القناة الموقوفة يدوياً لا تُعاد حتى لو كان إغلاق FFmpeg ما زال جارياً.
+    const wasRunning = linked.filter(c => !c.manualStopped && channelRuntime(c.id)?.proc).map(c => c.id);
     wasRunning.forEach(stopChannel);
     source.type = nextType;
     if (previousType !== nextType) { delete source.streamUrl; delete source.path; delete source.videoDevice; }
@@ -1730,7 +1737,7 @@ const server = http.createServer(async (req, res) => {
   if (channelAction && req.method === 'POST') {
     const [,id,action]=channelAction;
     if(action==='stop'){ const result=stopChannel(id,clientInfo(req)); setManualStopped(id,true); return send(res,200,result); }
-    if(action==='restart')return send(res,202,restartChannel(id));
+    if(action==='restart')return send(res,202,restartChannel(id, true));
     logLine(`طلب تشغيل القناة ${id}: ${clientInfo(req)}`);
     return send(res,200,startChannel(id, true));
   }
