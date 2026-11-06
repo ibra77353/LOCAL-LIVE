@@ -46,6 +46,8 @@ async function waitFor(predicate, timeoutMs = 8000, stepMs = 100) {
 }
 
 const status = async () => (await api.get(`/api/status?channelId=${state.channelId}`)).json;
+// live وoutputBps يظهران في قائمة القنوات فقط، و/running/pid في /api/status.
+const channelRow = async () => (await api.get('/api/channels')).json.channels.find((c) => c.id === state.channelId);
 const logs = async () => (await api.get('/api/logs')).json.logs;
 const argsLines = (text) => String(text || '').split(/\r?\n/).filter((line) => line.includes('FFmpeg args:'));
 
@@ -65,12 +67,46 @@ function aliveStubPids() {
   });
 }
 
+// عدد مقاطع HLS التي كتبها البديل للقناة: دليل مادي على أن البث يستمر في التوليد.
+function stubSegments() {
+  try {
+    return fs.readdirSync(path.join(srv.dir, 'hls', state.channelId)).filter((name) => name.endsWith('.ts')).length;
+  } catch {
+    return 0;
+  }
+}
+
+const windowLines = (text) => String(text || '').split(/\r?\n/).filter((line) => line.includes('استقرار البِتريت'));
+
 test.before(async () => {
   stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pl-ffmpeg-stub-'));
   pidFile = path.join(stubDir, 'pids.txt');
   const stub = path.join(stubDir, 'ffmpeg-stub.sh');
   // يتجاهل وسائط FFmpeg ويبقى حياً حتى تُوقف القناة — يحاكي التقاطاً مستمراً.
-  fs.writeFileSync(stub, `#!/bin/sh\necho $$ >> "${pidFile}"\ntrap 'exit 0' TERM INT\nwhile :; do sleep 0.2; done\n`, 'utf8');
+  // يكتب أيضاً مقاطع HLS بمعدّل ثابت (50KB كل نصف ثانية = 100KB/s ≈ 800kbps) حتى
+  // يحسب الخادم معدّلاً فعلياً حقيقياً على نافذة القياس 12 ثانية. اسم المقطع يحمل
+  // معرّف العملية حتى تبدأ كل نسخة ملفات جديدة، فلا يُخفي الكتابة فوق ملف قديم نموَّها.
+  fs.writeFileSync(stub, `#!/bin/sh
+echo $$ >> "${pidFile}"
+segment=""
+playlist=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "-hls_segment_filename" ]; then segment="$arg"; fi
+  previous="$arg"
+  playlist="$arg"
+done
+dir=$(dirname "$segment")
+index=1
+trap 'exit 0' TERM INT
+while :; do
+  name=$(printf '%s/seg_%s_%05d.ts' "$dir" "$$" "$index")
+  dd if=/dev/zero of="$name" bs=1000 count=50 2>/dev/null
+  printf '#EXTM3U\\n#EXT-X-VERSION:3\\n#EXT-X-TARGETDURATION:2\\n#EXTINF:2.0,\\n%s\\n' "$(basename "$name")" > "$playlist"
+  index=$((index + 1))
+  sleep 0.5
+done
+`, 'utf8');
   fs.chmodSync(stub, 0o755);
 
   srv = await startTestServer({ port: 3905, ffmpegPath: stub });
@@ -226,4 +262,64 @@ test('تعديل الإعدادات والقناة متوقفة لا يشغّل�
   }, 8000, 150);
   assert.ok(args, 'التشغيل اليدوي يقرأ أحدث إعدادات المصدر');
   await api.post(`/api/channels/${state.channelId}/stop`);
+});
+
+// ------------------------------------- تعديل DirectShow أثناء بث نشط: استمرار واستقرار
+test('تغيير إعدادات DirectShow لقناة نشطة يبقي البث مستمراً والبتريت مستقراً', { skip: SKIP }, async () => {
+  const configured = await api.put(`/api/channels/${state.channelId}`, { bitrate: '800k', fps: 25 });
+  assert.equal(configured.status, 200);
+  await api.post(`/api/channels/${state.channelId}/start`);
+
+  // أول نافذة قياس: لا معدّل فعلي قبل مرور 12 ثانية من عينات المقاطع.
+  const firstWindow = await waitFor(async () => {
+    const row = await channelRow();
+    return row && row.live && row.outputBps > 0 ? row : null;
+  }, 22000, 300);
+  assert.ok(firstWindow, 'يجب أن يظهر معدّل بت فعلي خلال أول نافذة قياس (12 ثانية)');
+  assert.equal(firstWindow.live, true, 'قائمة التشغيل يجب أن تكون حديثة قبل التغيير');
+
+  const before = await status();
+  const windowsBefore = windowLines(await logs()).length;
+
+  // تعديل جهاز الالتقاط وإعداداته على قناة تبث الآن.
+  const updated = await api.put(`/api/sources/${state.sourceId}`, {
+    videoDevice: VIDEO_DEVICE_RENAMED, videoSize: '1920x1080', fps: 30, pixelFormat: 'nv12',
+  });
+  assert.equal(updated.status, 200);
+  assert.deepEqual(updated.json.restartedChannels, [state.channelId], 'القناة النشطة تُعاد تشغيلها بالتعديل');
+
+  // 1) استمرار البث: نسخة FFmpeg جديدة تعمل بالقيم الجديدة، ومقاطع جديدة تُكتب.
+  const restarted = await waitFor(async () => {
+    const s = await status();
+    return s.running && s.pid && s.pid !== before.pid ? s : null;
+  }, 10000, 100);
+  assert.ok(restarted, 'القناة يجب أن تعود للعمل بعد تغيير إعدادات DirectShow');
+
+  const args = argsLines(await logs()).pop() || '';
+  assert.match(args, /-video_size 1920x1080/);
+  assert.match(args, /-framerate 30/);
+  assert.match(args, /-pixel_format nv12/);
+  assert.match(args, new RegExp(`video=${VIDEO_DEVICE_RENAMED}`));
+
+  // مُجلد مقاطع القناة يُفرَّغ عند كل تشغيل، فالمقارنة تبدأ بعد إعادة التشغيل:
+  // المطلوب أن يبدأ البث فوراً بإنتاج مقاطع جديدة من العملية الجديدة.
+  const segmentsAfterRestart = stubSegments();
+  const grew = await waitFor(() => stubSegments() > segmentsAfterRestart, 8000, 150);
+  assert.ok(grew && stubSegments() > 0, 'البث يجب أن يستمر بإنتاج مقاطع جديدة بعد إعادة التشغيل');
+
+  // 2) الاستقرار: نافذة قياس جديدة بعد التغيير، والفعلي داخل ±10% من الهدف 800k.
+  const settled = await waitFor(async () => {
+    const row = await channelRow();
+    if (!row || !row.live || row.outputBps <= 0) return null;
+    const lines = windowLines(await logs());
+    if (lines.length <= windowsBefore) return null;
+    const actualKbps = Math.round((row.outputBps * 8) / 1000);
+    if (Math.abs(actualKbps - 800) / 800 > 0.1) return null;
+    return { row, actualKbps, lastLine: lines[lines.length - 1] };
+  }, 26000, 500);
+  assert.ok(settled, 'البتريت الفعلي يجب أن يبقى ضمن ±10% من الهدف بعد تغيير إعدادات DirectShow');
+  assert.match(settled.lastLine, /مستقر ضمن الهدف/);
+  assert.equal(settled.row.live, true, 'البث يبقى نشطاً (قائمة تشغيل حديثة) بعد التعديل');
+  assert.ok(settled.row.outputBps > 0, 'معدّل البت الفعلي يتجدّد بعد التعديل');
+  assert.equal(aliveStubPids().length, 1, 'إعادة التشغيل بسبب تعديل المصدر يجب ألا تُبقي نسخة FFmpeg مزدوجة');
 });
