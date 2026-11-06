@@ -30,6 +30,7 @@ let srv;
 let api;
 let stubDir = '';
 let pidFile = '';
+let stallFlag = '';
 const state = { sourceId: '', channelId: '' };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -81,6 +82,7 @@ const windowLines = (text) => String(text || '').split(/\r?\n/).filter((line) =>
 test.before(async () => {
   stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pl-ffmpeg-stub-'));
   pidFile = path.join(stubDir, 'pids.txt');
+  stallFlag = path.join(stubDir, 'stall');
   const stub = path.join(stubDir, 'ffmpeg-stub.sh');
   // يتجاهل وسائط FFmpeg ويبقى حياً حتى تُوقف القناة — يحاكي التقاطاً مستمراً.
   // يكتب أيضاً مقاطع HLS بمعدّل ثابت (50KB كل نصف ثانية = 100KB/s ≈ 800kbps) حتى
@@ -100,6 +102,8 @@ dir=$(dirname "$segment")
 index=1
 trap 'exit 0' TERM INT
 while :; do
+  # ملف العلامة يحاكي فقدان إشارة الجهاز: العملية تبقى حيّة لكن لا مقاطع تُكتب.
+  if [ -f "${stallFlag}" ]; then sleep 0.5; continue; fi
   name=$(printf '%s/seg_%s_%05d.ts' "$dir" "$$" "$index")
   dd if=/dev/zero of="$name" bs=1000 count=50 2>/dev/null
   printf '#EXTM3U\\n#EXT-X-VERSION:3\\n#EXT-X-TARGETDURATION:2\\n#EXTINF:2.0,\\n%s\\n' "$(basename "$name")" > "$playlist"
@@ -322,4 +326,40 @@ test('تغيير إعدادات DirectShow لقناة نشطة يبقي البث
   assert.equal(settled.row.live, true, 'البث يبقى نشطاً (قائمة تشغيل حديثة) بعد التعديل');
   assert.ok(settled.row.outputBps > 0, 'معدّل البت الفعلي يتجدّد بعد التعديل');
   assert.equal(aliveStubPids().length, 1, 'إعادة التشغيل بسبب تعديل المصدر يجب ألا تُبقي نسخة FFmpeg مزدوجة');
+});
+
+// ---------------------- فقدان إشارة DirectShow أثناء البث النشط: إعادة محاولة تلقائية
+test('فقدان إشارة مصدر DirectShow أثناء البث يعيد الالتقاط تلقائياً', { skip: SKIP }, async () => {
+  // بيئة الاختبار تعطّل إعادة التشغيل التلقائي لتجنّب ضجيج السجلات؛ نفعّلها هنا.
+  const enabled = await api.put('/api/settings', { autoRestartCrashed: true, maxRestarts: 5, restartBackoffMs: 1000 });
+  assert.equal(enabled.status, 200);
+
+  const before = await status();
+  assert.equal(before.running, true, 'القناة يجب أن تكون عاملة قبل محاكاة فقدان الإشارة');
+  const segmentsBefore = stubSegments();
+  const resumedSegments = await waitFor(() => stubSegments() > segmentsBefore, 6000, 150);
+  assert.ok(resumedSegments, 'الالتقاط يجب أن يولّد مقاطع قبل فقدان الإشارة');
+
+  // محاكاة فقدان الإشارة: العملية تبقى حيّة لكنها تتوقف عن كتابة أي مقاطع.
+  fs.writeFileSync(stallFlag, '1');
+  const lossAt = Date.now();
+  const restarted = await waitFor(async () => {
+    const s = await status();
+    return s.running && s.pid && s.pid !== before.pid ? s : null;
+  }, 45000, 500);
+  assert.ok(restarted, 'الخادم يجب أن ينهي الالتقاط ويعيد المحاولة تلقائياً عند فقدان الإشارة');
+  assert.ok(Date.now() - lossAt >= 15000, 'إعادة المحاولة تُنتظر حتى تتجاوز مهلة كشف انقطاع الإشارة');
+
+  const stallLines = String(await logs()).split(/\r?\n/).filter((line) => line.includes('فقدان إشارة مصدر DirectShow'));
+  assert.ok(stallLines.length >= 1, 'سبب الإعادة يجب أن يُسجَّل بوضوح في سجل الخادم');
+  assert.equal(aliveStubPids().length, 1, 'إعادة المحاولة يجب ألا تُبقي نسخة FFmpeg مزدوجة');
+
+  // زوال العطل: البث يستأنف توليد المقاطع ويعود نشطاً دون تدخل يدوي.
+  const segmentsAtRecovery = stubSegments();
+  fs.rmSync(stallFlag, { force: true });
+  const resumed = await waitFor(async () => {
+    const row = await channelRow();
+    return row && row.live && stubSegments() > segmentsAtRecovery ? row : null;
+  }, 22000, 400);
+  assert.ok(resumed, 'البث يجب أن يعود نشطاً تلقائياً بعد عودة إشارة المصدر');
 });

@@ -81,6 +81,13 @@ const channelServedBytes = new Map(); // channelId -> بايتات /hls المخ
 const channelGenBytes = new Map(); // channelId -> إجمالي بايتات مقاطعها المولَّدة
 const channelGenSnapshot = new Map(); // channelId -> { bytes, at } بداية النافذة الحالية
 const channelOutputBps = new Map(); // channelId -> بايت/ثانية على نافذة القياس
+// فقدان إشارة الالتقاط أثناء بث نشط: كرت/جهاز DirectShow قد يفقد الإشارة دون أن
+// تخرج عملية FFmpeg، فتبقى «تعمل» بلا مقاطع جديدة والمشاهدون على صورة مجمّدة.
+// إن مضت هذه المدة بلا بايتات مولَّدة نُنهي العملية لتعيد المحاولة الاتصال تلقائياً.
+const SOURCE_STALL_MS = 20000;
+// بث مستقر لهذه المدة يصفّر عدّاد المحاولات، فلا تُستهلك المحاولات المحدودة في
+// الإعدادات على فقدان إشارة عابر يتكرر كل ساعات ويترك القناة بلا إعادة محاولة.
+const RESTART_COUNT_RESET_MS = 60000;
 let ingestBps = 0;
 let lastHlsFiles = new Map(); // مسار مقطع -> آخر حجم معروف (لحساب معدل التوليد)
 // باندويث الإنترنت: مجموع البايتات المستقبَلة على واجهات الشبكة الفعلية.
@@ -993,6 +1000,9 @@ function startChannel(channelId, manual = false) {
   if (old?.proc && old.stopping) return {ok:false,message:'القناة ما زالت تغلق؛ انتظر اكتمال الإيقاف ثم أعد التشغيل',channelId};
   if(old?.restartTimer)clearTimeout(old.restartTimer);
   const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:old?.lastExit||null,exits:Array.isArray(old?.exits)?old.exits:[],sourceId:source.id,forceTranscode:!!old?.forceTranscode,lastStderr:'',paramError:false,
+    // آخر لحظة وُلِّدت فيها بايتات HLS: المرجع الذي يكشف فقدان إشارة المصدر
+    // ما دامت العملية حيّة. liveSince يقيس مدة الاستقرار لتصفير عدّاد المحاولات.
+    lastOutputAt: Date.now(), liveSince: null,
     // مؤقّتات التعافي: أول فشل للمصدر وأول ردّ حظر من المزوّد. تُصفَّر عند التشغيل
     // اليدوي وعند نجاح البث، ويقارنها مؤقّت الخادم بحدود sourceFailStopMinutes
     // وblockedStopMinutes لإيقاف القناة بدل حلقة إعادة تشغيل لا تنتهي.
@@ -1839,7 +1849,32 @@ setInterval(() => {
   for (const channel of data.channels) {
     const rt = channelRuntime(channel.id);
     if (!rt || rt.failedStop) continue;
-    if (!rt.stopping && channelIsLive(channel)) { rt.failSince = null; rt.blockedSince = null; continue; }
+    // فقدان إشارة المصدر أثناء البث النشط: العملية ما زالت حيّة لكن لا بايتات HLS
+    // جديدة تُولَّد، فالمشاهدون على صورة مجمّدة. نُنهي FFmpeg فيعيد مؤقّت الإعادة
+    // الاتصال بالجهاز تلقائياً، ويُحتسب العطل في failSince حتى يتوقف الحدّ الزمني
+    // في الإعدادات على جهاز مفصول فعلاً بدل حلقة إعادة تشغيل لا تنتهي.
+    if (!rt.stopping && rt.proc) {
+      const lastOutput = rt.lastOutputAt || now;
+      if (now - lastOutput >= SOURCE_STALL_MS) {
+        const sourceType = String(sourceForChannel(channel)?.type || '').toLowerCase();
+        const reason = sourceType === 'usb' ? 'فقدان إشارة مصدر DirectShow' : 'توقف توليد مقاطع المصدر';
+        rt.lastOutputAt = now;
+        rt.failSince = rt.failSince || now;
+        logLine(`[${channel.name}] ${reason} منذ ${Math.round((now - lastOutput) / 1000)} ثانية — إعادة المحاولة تلقائياً`);
+        appendChannelLog(channel.id, `${reason}: أُعيد تشغيل الالتقاط تلقائياً`);
+        try { rt.proc.kill(); } catch {}
+        continue;
+      }
+    }
+    if (!rt.stopping && channelIsLive(channel)) {
+      rt.failSince = null; rt.blockedSince = null;
+      if (!rt.liveSince) rt.liveSince = now;
+      // بث مستقر دقيقة كاملة يعيد المحاولات المسموحة، ففقدان إشارة عابر كل فترة
+      // لا يستهلك حدّ maxRestarts ويترك القناة بلا إعادة محاولة لاحقاً.
+      if (rt.restartCount && now - rt.liveSince >= RESTART_COUNT_RESET_MS) rt.restartCount = 0;
+      continue;
+    }
+    rt.liveSince = null;
     const failLimitMs = Math.max(1, Number(data.settings.sourceFailStopMinutes) || 3) * 60000;
     const blockLimitMs = Math.max(1, Number(data.settings.blockedStopMinutes) || 1000) * 60000;
     let reason = '';
@@ -1916,6 +1951,9 @@ setInterval(() => {
   // معدّل البت الفعلي لكل قناة: تراكم البايتات + معدّل على نافذة 12 ثانية.
   for (const [channelId, bytes] of generatedByChannel) {
     channelGenBytes.set(channelId, (channelGenBytes.get(channelId) || 0) + bytes);
+    // إشارة حياة المصدر: أي بايت جديد يعني أن الالتقاط ما زال يصل.
+    const rt = channelRuntime(channelId);
+    if (rt && bytes > 0) rt.lastOutputAt = Date.now();
   }
   const sampleAt = Date.now();
   for (const [channelId, total] of channelGenBytes) {
