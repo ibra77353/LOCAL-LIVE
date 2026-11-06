@@ -10,6 +10,8 @@ const crypto = require('crypto');
 // طبقة الالتقاط الموحّدة: الخادم لا يتعامل مع DirectShow مباشرة.
 const capture = require('./lib/capture');
 const { clampNumber } = require('./lib/shared/clamp');
+// عدّادات كارت الشبكة من النظام مباشرةً (PowerShell على ويندوز، /proc/net/dev خارجه).
+const { readReceivedBytes } = require('./lib/shared/net-counters');
 
 const ROOT = __dirname;
 const CONFIG_PATH = path.join(ROOT, 'config.json');
@@ -290,16 +292,6 @@ function readNginxLogs() {
     } catch { /* تبقى القراءة التالية من آخر سطر مكتمل */ } finally { try { fs.closeSync(fd); } catch {} }
     nginxLogOffsets.set(file, end);
   }
-}
-// بايتات الشبكة الواردة على مستوى النظام من netstat -e (ويندوز).
-// التعذّر يعيد null فتظهر القيمة «—».
-function readSystemRx(cb) {
-  execFile('netstat', ['-e'], { encoding: 'utf8', windowsHide: true, timeout: 5000 }, (err, stdout) => {
-    if (err || !stdout) return cb(null, null);
-    // أول سطر رقمي بعد الترويسة هو سطر Bytes (تسميته مترجمة على ويندوز).
-    const row = stdout.match(/^\s*[^\d\s][^\d]*?(\d+)\s+(\d+)\s*$/m);
-    return cb(null, row ? Number(row[1]) : null);
-  });
 }
 function playlistPath(channel) { return path.join(channelHlsDir(channel), 'index.m3u8'); }
 // هل توجد قائمة تشغيل حديثة؟ نفس شرط «live» في publicChannel، ويُستخدم لتصفير
@@ -2002,12 +1994,12 @@ setInterval(() => {
   const elapsed = Math.max(1, (now - lastServedSample.at) / 1000);
   egressBps = Math.max(0, Math.round((servedBytes - lastServedSample.bytes) / elapsed));
   lastServedSample = { bytes: servedBytes, at: now };
-  // netstat على ويندوز يستغرق وقتاً، فنمنع تداخل قراءتين.
+  // قراءة عدّادات الكارت أمر خارجي على ويندوز، فنمنع تداخل قراءتين.
   if (!internetProbeBusy) {
     internetProbeBusy = true;
-    readSystemRx((err, rx) => {
+    readReceivedBytes((rx) => {
       internetProbeBusy = false;
-      if (err || rx == null) { internetBps = null; return; }
+      if (rx == null) { internetBps = null; return; }
       const at = Date.now();
       if (internetRxBase == null || rx < internetRxBase) internetRxBase = rx;
       if (internetRxTotal == null || rx < internetRxTotal) {

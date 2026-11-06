@@ -367,6 +367,17 @@ test('GET /api/stats و /api/metrics يعيدان بيانات صالحة', asyn
   assert.equal(metrics.json.memPercent, Math.round((metrics.json.memUsedBytes / metrics.json.memTotalBytes) * 100));
 });
 
+// باندويث الإنترنت يُقرأ من عدّادات كارت الشبكة في النظام مباشرةً بدل netstat،
+// فتظهر قيمة رقمية بدل «—» بعد أول عيّنة (كل 5 ثوانٍ).
+test('GET /api/metrics يعرض عدّادات كارت الشبكة من النظام', async () => {
+  const m = await waitFor(async () => {
+    const res = await api.get('/api/metrics');
+    return res.json && res.json.internetBandwidthBps !== null ? res.json : null;
+  }, 15000, 500);
+  assert.ok(m, 'لم تُقرأ عدّادات كارت الشبكة خلال المهلة');
+  assert.ok(m.internetRxBytesTotal >= 0);
+});
+
 // إجمالي البيانات يُقرأ من سجلات Nginx لكن العدّ يبدأ من صفر عند كل إقلاع:
 // ما كان في السجل قبل الإقلاع يُتجاهل تماماً، وما يُضاف بعده يُجمع (200/206 فقط،
 // ومقاطع /hls وحدها تدخل باندويث الخروج، و404 لا تدخل).
