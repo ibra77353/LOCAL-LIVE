@@ -1,0 +1,9 @@
+node_modules/
+logs/
+srv/hls/
+run/server.pid
+run/control.token
+nginx/logs/*
+!nginx/logs/.gitkeep
+nginx/temp/*
+!nginx/temp/.gitkeep
