@@ -71,8 +71,8 @@ function probeFileDimensions(filePath) {
 const streams = new Map(); // channelId -> independent FFmpeg runtime
 let ffmpegLog = '';
 let servedBytes = 0;
-// إجمالي كل ما خدّمه Nginx (مقاطع البث وصفحات اللوحة معاً) مقروءاً من سجلاته،
-// ويشمل ما هو موجود في السجلات قبل الإقلاع أيضاً.
+// إجمالي كل ما خدّمه Nginx (مقاطع البث وصفحات اللوحة معاً) مقروءاً من سجلاته
+// منذ إقلاع الخادم الحالي فقط، فيبدأ من صفر مع كل تشغيل.
 let nginxServedBytes = 0;
 const channelServedBytes = new Map(); // channelId -> بايتات /hls المخدومة لتلك القناة
 // معدّل البت الفعلي لكل قناة لمقارنته بالمضبوط في إعداداتها. المقاطع تُكتب كل
@@ -98,6 +98,9 @@ let lastHlsFiles = new Map(); // مسار مقطع -> آخر حجم معروف (
 // null تعني أن النظام لا يوفّر عدّادات شبكة مقروءة (تظهر «—» في اللوحة).
 let internetBps = null;
 let internetRxTotal = null, internetRxAt = 0;
+// قيمة العدّاد عند أول عينة بعد الإقلاع، وتُطرح من المعروض ليبدأ إجمالي الوارد
+// من صفر مع كل تشغيل بدل عرض إجمالي النظام منذ إقلاع ويندوز.
+let internetRxBase = null;
 let internetProbeBusy = false;
 // سجلات Nginx: على ويندوز تُخدَم مقاطع HLS من القرص مباشرةً فلا يراها Node،
 // لذلك نحتسب بايتات /hls من سجلّ الوصول كي تعمل مقاييس البيانات.
@@ -229,10 +232,9 @@ function hlsFileSizes() {
 // يقرأ ما أُضيف إلى سجلات Nginx منذ آخر قراءة ويضيف بايتات /hls إلى عدّادات
 // القنوات والإجمالي. عند وجود سجلّ Nginx يتوقف Node عن العدّ بنفسه (وإلا تكرّرت
 // البايتات) لأن كل المقاطع تمرّ عبر Nginx في هذه الحالة.
-// أول قراءة للسجل تقرأ ما هو موجود بالكامل (بحد أقصى آخر 32MB) حتى يظهر إجمالي
-// البيانات التاريخي، ثم تتابع الإضافات فقط. تُحسب كل استجابة ناجحة 200/206 في
-// إجمالي Nginx، ومقاطع /hls أيضاً في باندويث الخروج وعدّادات القنوات.
-const NGINX_LOG_TAIL_BYTES = 32 * 1024 * 1024;
+// أول قراءة بعد الإقلاع تبدأ من نهاية السجل، فتظهر العدّادات صفراً مع بدء النظام
+// ولا تُجمع حركة تشغيلات سابقة. تُحسب كل استجابة ناجحة 200/206 في إجمالي Nginx،
+// ومقاطع /hls أيضاً في باندويث الخروج وعدّادات القنوات.
 const NGINX_LOG_CHUNK = 1024 * 1024;
 function countNginxLogLine(line) {
   const match = line.match(/"\w+ ([^"\s]+) [^"]*" (\d{3}) (\d+)/);
@@ -258,10 +260,12 @@ function readNginxLogs() {
     if (!stat.isFile()) continue;
     nginxLogActive = true;
     const known = nginxLogOffsets.get(file);
-    let position = known == null ? Math.max(0, stat.size - NGINX_LOG_TAIL_BYTES) : known;
-    // عند بدء القراءة من وسط سجل كبير يكون السطر الأول مبتوراً فنهمله.
-    let skipPartialLine = known == null && position > 0;
+    // أول قراءة بعد الإقلاع تبدأ من نهاية السجل الحالي، ويُثبَّت الموضع فوراً حتى
+    // يُتابع كل ما يُضاف بعده (ولو لم يكن هناك جديد في تلك اللحظة).
+    let position = known == null ? stat.size : known;
+    let skipPartialLine = false;
     if (stat.size < position) { position = 0; skipPartialLine = false; } // تدوير/تفريغ السجل
+    nginxLogOffsets.set(file, position);
     if (stat.size === position) continue;
     let fd;
     try { fd = fs.openSync(file, 'r'); } catch { continue; }
@@ -497,6 +501,9 @@ const CONTROL_TOKEN_FILE = path.join(RUN_DIR, 'control.token');
 // أن العملية التي يوقفها هي خادم PrinceLive نفسه، لا عملية Node.js لبرنامج آخر.
 const PID_FILE = path.join(RUN_DIR, 'server.pid');
 const CONTROL_TOKEN = crypto.randomBytes(24).toString('hex');
+// معرّف إقلاع عشوائي يدخل في توقيع جلسة اللوحة، فتصبح كل جلسة سابقة غير صالحة
+// بمجرد إعادة تشغيل النظام ويُطلب تسجيل الدخول من جديد.
+const BOOT_ID = crypto.randomBytes(9).toString('hex');
 // عدّاد جلسات محفوظ في run/session.epoch: يزداد عند تسجيل الخروج فتُبطل كل الرموز
 // الصادرة قبل ذلك فوراً بدل أن تبقى صالحة حتى انتهاء مدة الـ12 ساعة.
 const SESSION_EPOCH_FILE = path.join(RUN_DIR, 'session.epoch');
@@ -515,14 +522,14 @@ function sessionKey() {
 }
 function issueSessionToken() {
   const exp = String(Date.now() + ADMIN_SESSION_TTL_MS);
-  const payload = `${exp}.${sessionEpoch}`;
+  const payload = `${exp}.${sessionEpoch}.${BOOT_ID}`;
   return `${payload}.${crypto.createHmac('sha256', sessionKey()).update(payload).digest('hex')}`;
 }
 function isValidSessionToken(token) {
-  const [exp, epoch, mac] = String(token || '').split('.');
-  if (!exp || !epoch || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
-  if (Number(epoch) !== sessionEpoch) return false;
-  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(`${exp}.${epoch}`).digest('hex'));
+  const [exp, epoch, boot, mac] = String(token || '').split('.');
+  if (!exp || !epoch || !boot || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
+  if (Number(epoch) !== sessionEpoch || boot !== BOOT_ID) return false;
+  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(`${exp}.${epoch}.${boot}`).digest('hex'));
 }
 function parseCookies(req) {
   const out = {};
@@ -1814,7 +1821,7 @@ const server = http.createServer(async (req, res) => {
       hlsBytesTotal, egressBytesTotal: servedBytes,
       // إجمالي حركة Nginx من السجلات + حصيلة عدّادات الشبكة منذ الإقلاع.
       nginxBytesTotal: nginxServedBytes, nginxLogActive,
-      internetRxBytesTotal: internetRxTotal,
+      internetRxBytesTotal: internetRxTotal == null ? null : Math.max(0, internetRxTotal - (internetRxBase || 0)),
       ingestBandwidthBps: ingestBps, egressBandwidthBps: egressBps, internetBandwidthBps: internetBps
     });
   }
@@ -1984,6 +1991,7 @@ setInterval(() => {
       internetProbeBusy = false;
       if (err || rx == null) { internetBps = null; return; }
       const at = Date.now();
+      if (internetRxBase == null || rx < internetRxBase) internetRxBase = rx;
       if (internetRxTotal == null || rx < internetRxTotal) {
         internetRxTotal = rx; internetRxAt = at; internetBps = 0; return;
       }

@@ -356,26 +356,39 @@ test('GET /api/stats و /api/metrics يعيدان بيانات صالحة', asyn
   assert.equal(metrics.json.memPercent, Math.round((metrics.json.memUsedBytes / metrics.json.memTotalBytes) * 100));
 });
 
-// إجمالي البيانات يُقرأ من سجلات Nginx: كل استجابة 200/206 تدخل الإجمالي،
-// ومقاطع /hls وحدها تدخل باندويث الخروج (404 لا تدخل).
-test('GET /api/metrics يجمع إجمالي البيانات من سجلات Nginx', async () => {
+// إجمالي البيانات يُقرأ من سجلات Nginx لكن العدّ يبدأ من صفر عند كل إقلاع:
+// ما كان في السجل قبل الإقلاع يُتجاهل تماماً، وما يُضاف بعده يُجمع (200/206 فقط،
+// ومقاطع /hls وحدها تدخل باندويث الخروج، و404 لا تدخل).
+test('GET /api/metrics يبدأ عدّاد Nginx من صفر ويجمع ما يُضاف بعد الإقلاع', async () => {
   const logDir = path.join(srv.dir, 'nginx', 'logs');
   fs.mkdirSync(logDir, { recursive: true });
-  const lines = [
+  const file = path.join(logDir, 'stream.log');
+  // سجل «تاريخي» من تشغيل سابق: يجب ألا يظهر في أي عدّاد.
+  fs.writeFileSync(file, [
+    '10.0.0.5 [05/Nov/2026:09:00:00 +0300] "GET /hls/ch_unknown/old.ts HTTP/1.1" 200 5000 rt=0.001',
+    '10.0.0.6 [05/Nov/2026:09:00:01 +0300] "GET /admin HTTP/1.1" 200 7000 rt=0.003'
+  ].join('\n') + '\n', 'utf8');
+  const baseline = await waitFor(async () => {
+    const res = await api.get('/api/metrics');
+    return res.json && res.json.nginxLogActive ? res.json : null;
+  }, 12000, 400);
+  assert.ok(baseline, 'لم تُقرأ سجلات Nginx خلال المهلة');
+  assert.equal(baseline.nginxBytesTotal, 0, 'بايتات السجل القديم يجب أن تُتجاهل بعد الإقلاع');
+  const baseEgress = baseline.egressBytesTotal || 0;
+
+  fs.appendFileSync(file, [
     '10.0.0.5 [05/Nov/2026:10:00:00 +0300] "GET /hls/ch_unknown/index.m3u8 HTTP/1.1" 200 300 rt=0.001',
     '10.0.0.5 [05/Nov/2026:10:00:01 +0300] "GET /hls/ch_unknown/seg00001.ts HTTP/1.1" 206 4096 rt=0.002',
     '10.0.0.6 [05/Nov/2026:10:00:02 +0300] "GET /admin HTTP/1.1" 200 8192 rt=0.003',
     '10.0.0.7 [05/Nov/2026:10:00:03 +0300] "GET /hls/ch_unknown/missing.ts HTTP/1.1" 404 153 rt=0.001'
-  ];
-  fs.writeFileSync(path.join(logDir, 'stream.log'), lines.join('\n') + '\n', 'utf8');
+  ].join('\n') + '\n', 'utf8');
   const m = await waitFor(async () => {
     const res = await api.get('/api/metrics');
     return res.json && res.json.nginxBytesTotal >= 300 + 4096 + 8192 ? res.json : null;
   }, 12000, 400);
-  assert.ok(m, 'لم تُقرأ سجلات Nginx خلال المهلة');
-  assert.equal(m.nginxLogActive, true);
+  assert.ok(m, 'لم تُقرأ السطور المضافة خلال المهلة');
   assert.equal(m.nginxBytesTotal, 300 + 4096 + 8192);
-  assert.equal(m.egressBytesTotal, 300 + 4096);
+  assert.equal(m.egressBytesTotal - baseEgress, 300 + 4096);
 });
 
 test('المسارات غير المعروفة تحت /api تعيد 404 بصيغة JSON', async () => {
@@ -399,6 +412,30 @@ test('POST /api/logout يُبطل الجلسة القديمة (session epoch)', 
   assert.equal(relogin.status, 200);
   const again = await api.get('/api/channels');
   assert.equal(again.status, 200);
+});
+
+// كل إقلاع يحمل معرّفاً عشوائياً في توقيع الجلسة، فجلسة تشغيل سابق لا تصلح بعد
+// إعادة تشغيل النظام ويُطلب تسجيل الدخول من جديد.
+test('جلسة اللوحة لا تصلح بعد إعادة تشغيل النظام (BOOT_ID)', async () => {
+  const login = await api.post('/api/login', { user: srv.user, pass: srv.pass });
+  assert.equal(login.status, 200);
+  assert.equal((await api.get('/api/channels')).status, 200);
+  const staleCookie = api.getCookie();
+  assert.ok(staleCookie, 'يجب أن تكون هناك كوكي جلسة بعد الدخول');
+
+  // خادم آخر بنفس الحساب (نفس مفتاح التوقيع) يمثّل إقلاعاً جديداً.
+  const rebooted = await startTestServer({ port: 3909 });
+  try {
+    const client = createClient(rebooted.baseUrl);
+    client.setCookie(staleCookie);
+    const rejected = await client.get('/api/channels');
+    assert.equal(rejected.status, 401, 'جلسة إقلاع سابق يجب أن تُرفض على إقلاع جديد');
+    const fresh = await client.post('/api/login', { user: rebooted.user, pass: rebooted.pass });
+    assert.equal(fresh.status, 200);
+    assert.equal((await client.get('/api/channels')).status, 200);
+  } finally {
+    await rebooted.stop();
+  }
 });
 
 // ---------------------------------------------------------------- التنظيف

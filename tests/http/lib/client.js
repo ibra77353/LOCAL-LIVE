@@ -35,6 +35,7 @@ function createClient(baseUrl) {
     del: (p, opts) => request('DELETE', p, undefined, opts),
     clearCookie: () => { cookie = ''; },
     hasCookie: () => !!cookie,
+    getCookie: () => cookie,
     setCookie: (value) => { cookie = value; },
   };
 }
