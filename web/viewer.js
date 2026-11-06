@@ -66,8 +66,23 @@ async function init() {
 async function loadChannels() {
   const r = await fetch('/api/public/channels').then(x => x.json());
   CHANNELS = r.channels || [];
+  syncCurrentChannel();
   renderCats();
   renderGrid();
+}
+
+// يحدّث بيانات القناة المعروضة من آخر قائمة عامة، ويعالج تغيّر حالة الإيقاف
+// اليدوي: قناة أُوقفت من اللوحة يتوقف المشغّل عن محاولة التجهيز، وقناة أُعيد
+// تشغيلها يدوياً يستأنف عرضها تلقائياً دون أن يضغط المشاهد «تحديث».
+function syncCurrentChannel() {
+  if (!currentChannel) return;
+  const fresh = CHANNELS.find(c => c.id === currentChannel.id);
+  if (!fresh) return;
+  const resumed = currentChannel.manualStopped && !fresh.manualStopped;
+  const stoppedManually = !currentChannel.manualStopped && fresh.manualStopped;
+  currentChannel = fresh;
+  if (resumed) loadIntoPlayer(fresh);
+  else if (stoppedManually) showManualStopped(fresh);
 }
 
 function renderCats() {
@@ -94,7 +109,8 @@ function renderGrid() {
         <p class="card-name">${esc(c.name)}</p>
         <div class="card-meta">
           <span>${esc(c.category || '')}</span>
-          ${c.live ? '<span class="badge-live">مباشر</span>' : '<span class="badge-off">متوقفة</span>'}
+          ${c.live ? '<span class="badge-live">مباشر</span>'
+            : (c.manualStopped ? '<span class="badge-off">موقوفة يدوياً</span>' : '<span class="badge-off">متوقفة</span>')}
         </div>
       </div>
     </div>`;
@@ -217,6 +233,8 @@ function armPrepWatchdog() {
 // لا نتوقّف نهائياً — المصادر الحيّة المتذبذبة تتعافى لاحقاً — لكن نتمهّل بعد دقيقة
 // (كل 8ث بدل 2ث) لتفادي القصف، ويتكفّل armPrepWatchdog بإظهار رسالة للمستخدم.
 function schedulePrepRetry() {
+  // قناة موقوفة يدوياً لن تجهز أبداً — لا نكرّر المحاولة إلى ما لا نهاية
+  if (isManualStopped(currentChannel)) { showManualStopped(currentChannel); return; }
   showLoading();
   clearTimeout(manifestRetryTimer);
   manifestRetryCount++;
@@ -293,6 +311,7 @@ function loadIntoPlayer(ch) {
   const mode = ensurePlayer();
   const video = $('#video');
   $('#npName').textContent = ch.name;
+  setNpLive(true);
   
   // إيقاف أي تحميل سابق فوراً (لمنع تسريب الذاكرة عند التبديل السريع)
   if (hls) { try { hls.stopLoad(); } catch (e) {} }
@@ -315,19 +334,52 @@ function playChannel(id) {
   const ch = CHANNELS.find(c => c.id === id);
   if (!ch) return;
   currentChannel = ch;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  // قناة موقوفة يدوياً: نفتح المشغّل برسالة صريحة بدل محاولة تشغيل لن تنجح
+  if (isManualStopped(ch)) {
+    ensurePlayer();
+    $('#npName').textContent = ch.name;
+    showManualStopped(ch);
+    return;
+  }
   // التشغيل عند الطلب: يطلب من الخادم تجهيز بث القناة إن كان الخيار مفعّلاً في الإعدادات
   fetch('/api/public/watch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: ch.id })
+  }).then(r => r.json()).then(d => {
+    // أُوقفت القناة يدوياً بعد آخر تحميل للقائمة: نعرض السبب ونوقف المحاولات
+    if (d && d.reason === 'manual') showManualStopped(currentChannel || ch);
   }).catch(() => {});
   loadIntoPlayer(ch);
   heartbeat();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 
 function showMsg(t) { const m = $('#playerMsg'); m.textContent = t; m.classList.remove('hidden'); }
 function hideMsg() { $('#playerMsg').classList.add('hidden'); }
+
+// القناة الموقوفة يدوياً من لوحة التحكم لا تعمل تلقائياً ولا تجهّز بثاً، فبدل
+// دوّارة «جاري تجهيز البث» التي تدور بلا نهاية نوقف كل المحاولات ونعرض السبب.
+function isManualStopped(ch) { return !!(ch && ch.manualStopped); }
+// مؤشّر «مباشر» في شريط المشغّل: لا يبقى أخضر/أحمر على قناة موقوفة يدوياً.
+function setNpLive(live) {
+  const el = $('#npLive');
+  if (el) el.textContent = live ? '● مباشر' : '● موقوفة';
+}
+function stopPlayerAttempts() {
+  clearTimeout(manifestRetryTimer);
+  clearTimeout(prepWatchdog); prepWatchdog = null;
+  manifestRetryCount = 0;
+  if (hls) { try { hls.stopLoad(); } catch (e) {} }
+  hideLoading();
+}
+function showManualStopped(ch) {
+  stopPlayerAttempts();
+  setNpLive(false);
+  const v = $('#video');
+  try { v.pause(); } catch (e) {}
+  showMsg('هذه القناة موقوفة يدوياً من لوحة التحكم. اختر قناة أخرى أو انتظر تشغيلها من المسؤول.');
+}
 
 // controls
 $('#closePlayer').onclick = () => {
@@ -354,6 +406,7 @@ $('#fsBtn').onclick = () => {
 // تحديث القناة: يعيد تحميل البث الحالي من جديد دون مغادرة المشغّل
 $('#refreshBtn').onclick = () => {
   if (!currentChannel) return;
+  if (isManualStopped(currentChannel)) { showManualStopped(currentChannel); return; }
   hideMsg();
   if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
   loadIntoPlayer(currentChannel);
