@@ -171,7 +171,7 @@ async function saveSettings() {
     body[k] = el.type === 'checkbox' ? el.checked : ((el.type === 'number' || el.type === 'range') ? Number(el.value) : el.value);
   }
   try {
-    const r = await api('/settings', { method: 'PUT', body });
+    const r = await api('/settings', { method: 'POST', body });
     // إعدادات الترميز العامة (Preset/Threads/HLS/GOP) يعيد الخادم تشغيل القنوات
     // النشطة بها فوراً، فنخبر المستخدم بعدد القنوات التي طُبّقت عليها.
     const applied = (r.restartedChannels || []).length;

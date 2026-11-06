@@ -64,7 +64,7 @@ const htmlSettingsKeys = [...new Set([...adminHtml.matchAll(/id="s_([A-Za-z0-9_]
 for (const key of htmlSettingsKeys) if (!S_KEYS.includes(key)) failures.push(`حقل في اللوحة لا يُقرأ من data.json: s_${key}`);
 // 4.2) اللوحة تقرأ وتحفظ الإعدادات عبر /api/settings وحدها (لا تخزين محلي ولا ملف آخر)
 if (!/async function loadSettings[\s\S]{0,500}?api\('\/settings'\)/.test(adminJs)) failures.push('web/admin.js لا يقرأ الإعدادات من /api/settings');
-if (!/async function saveSettings[\s\S]{0,900}?api\('\/settings', \{ method: 'PUT'/.test(adminJs)) failures.push('web/admin.js لا يحفظ الإعدادات في /api/settings');
+if (!/async function saveSettings[\s\S]{0,900}?api\('\/settings', \{ method: 'POST'/.test(adminJs)) failures.push('web/admin.js لا يحفظ الإعدادات في /api/settings عبر POST');
 if (/amaan_settings|settings\.json/.test(adminJs)) failures.push('web/admin.js ما زال يستخدم مصدر إعدادات قديماً');
 
 // 5) عناصر لوحة PrinceLive الأساسية
