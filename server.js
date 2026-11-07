@@ -1303,6 +1303,9 @@ function testCapture(body, callback) {
   });
 }
 
+// امتدادات تُخزَّن في المتصفح (صور المشروع): لا تتغيّر إلا بتحديث الملف.
+const CACHED_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.ico']);
+
 function assetType(file) {
   const types = {
     '.html': 'text/html; charset=utf-8',
@@ -1350,18 +1353,43 @@ function serveStatic(req, res) {
   // صفحة اللوحة تُخدَم دائماً لأنها تعرض شاشة الدخول بنفسها؛ حماية البيانات تبقى
   // على كل مسارات /api/* (جلسة موقّعة فقط) ولا يكشف الملف أي بيانات.
 
-  fs.readFile(fullPath, (err, data) => {
-    if (err) {
-      res.writeHead(err.code === 'ENOENT' ? 404 : 500);
-      res.end(err.code === 'ENOENT' ? 'Not found' : 'Internal Server Error');
+  // الصور المحلية (شعارات الأندية) لا تتغيّر مع كل طلب: تُخزَّن في المتصفح يوماً
+  // كاملاً بدل إعادة تنزيلها كلها (~6MB) في كل فتح للصفحة، مع ETag ليعرف
+  // المتصفح متى تغيّر الملف. أما HTML/CSS/JS فتبقى بلا تخزين مؤقت حتى يظهر أي
+  // تعديل فوراً.
+  const ext = path.extname(fullPath).toLowerCase();
+  const cacheable = CACHED_EXT.has(ext);
+
+  fs.stat(fullPath, (statErr, stat) => {
+    if (statErr || !stat.isFile()) {
+      const code = statErr && statErr.code === 'ENOENT' ? 404 : 500;
+      res.writeHead(code);
+      res.end(code === 404 ? 'Not found' : 'Internal Server Error');
       return;
     }
 
-    res.writeHead(200, {
-      'Content-Type': assetType(fullPath),
-      'Cache-Control': 'no-store'
+    const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+    if (cacheable && req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': 'public, max-age=86400' });
+      res.end();
+      return;
+    }
+
+    fs.readFile(fullPath, (err, data) => {
+      if (err) {
+        res.writeHead(err.code === 'ENOENT' ? 404 : 500);
+        res.end(err.code === 'ENOENT' ? 'Not found' : 'Internal Server Error');
+        return;
+      }
+
+      const headers = {
+        'Content-Type': assetType(fullPath),
+        'Cache-Control': cacheable ? 'public, max-age=86400' : 'no-store'
+      };
+      if (cacheable) headers.ETag = etag;
+      res.writeHead(200, headers);
+      res.end(data);
     });
-    res.end(data);
   });
 }
 
