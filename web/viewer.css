@@ -1074,6 +1074,20 @@ html[data-theme="light"] .lg-match {
     min-width: 50px;
     padding: 2px 6px
   }
+
+  /* في الجوال تُكبَّر شعارات جدول الترتيب لتكون أوضح */
+  .lg-table td.team-col {
+    gap: 9px
+  }
+
+  .lg-table td.team-col .lg-logo {
+    width: 28px;
+    height: 28px
+  }
+
+  .lg-table td.team-col .lg-logo.ph {
+    font-size: 11px
+  }
 }
 
 /* على الشاشات الضيقة يبقى من الجدول: المركز، الفريق، فارق الأهداف، النقاط */
