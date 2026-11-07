@@ -1533,7 +1533,7 @@ const server = http.createServer(async (req, res) => {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,60],
       startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], gopSeconds:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
       maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
-      sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000]
+      sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,120]
     };
     for (const [key,[min,max]] of Object.entries(numberRanges)) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const n = Number(body[key]);
@@ -1985,7 +1985,7 @@ setInterval(() => {
     }
     rt.liveSince = null;
     const failLimitMs = Math.max(1, Number(data.settings.sourceFailStopMinutes) || 3) * 60000;
-    const blockLimitMs = Math.max(1, Number(data.settings.blockedStopMinutes) || 1000) * 60000;
+    const blockLimitMs = Math.max(1, Math.min(120, Number(data.settings.blockedStopMinutes) || 120)) * 60000;
     let reason = '';
     if (rt.blockedSince && now - rt.blockedSince >= blockLimitMs) {
       reason = `المصدر يحظر الاتصال (403) منذ ${Math.round((now - rt.blockedSince) / 60000)} دقيقة`;
