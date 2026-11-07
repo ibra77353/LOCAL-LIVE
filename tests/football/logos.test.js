@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const { manifest, normalizeTeamName, localLogo } = require('../../lib/football/logos');
+const { manifest, normalizeTeamName, localLogo, fileName, ensureLogos } = require('../../lib/football/logos');
 
 const WEB_DIR = path.join(__dirname, '..', '..', 'web');
 
@@ -38,4 +38,16 @@ test('localLogo يفضّل النسخة المحلية ويعود للشعار �
   assert.equal(localLogo('Real Madrid', 'https://logo/rm.png'), '/assets/teams/real-madrid.png');
   assert.equal(localLogo('فريق بلا شعار محلي', 'https://logo/x.png'), 'https://logo/x.png');
   assert.equal(localLogo('فريق بلا شعار محلي', ''), '');
+});
+
+test('fileName يبني اسم ملف ثابتاً من اسم الفريق', () => {
+  assert.equal(fileName('real madrid', 'https://a.espncdn.com/i/teamlogos/soccer/500/86.png'), 'real-madrid.png');
+  assert.equal(fileName('real madrid', 'https://example.com/logo'), 'real-madrid.png');
+  assert.equal(fileName('al hilal', 'https://example.com/x.webp'), 'al-hilal.webp');
+});
+
+test('ensureLogos لا ينزّل شيئاً لفرق لها شعار محلي أو بلا رابط خارجي', async () => {
+  assert.equal(await ensureLogos([]), 0);
+  assert.equal(await ensureLogos([{ team: 'Real Madrid', logo: 'https://logo/rm.png' }]), 0);
+  assert.equal(await ensureLogos([{ team: 'فريق بلا رابط', logo: '' }]), 0);
 });
