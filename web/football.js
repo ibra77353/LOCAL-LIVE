@@ -53,9 +53,11 @@
       if (tone) prevTone = tone;
       const cls = [r.rank <= 2 ? 'lg-row-top' : '', tone ? 'zone-' + tone : '', start]
         .filter(Boolean).join(' ');
+      // مؤشر ملوّن بجانب الفريق يوضّح منطقته (تأهل/ملحق/هبوط) بنفس ألوان الواجهة.
+      const mark = tone ? `<i class="lg-zone-mark tone-${esc(tone)}" aria-hidden="true"></i>` : '';
       return `<tr class="${cls}">
             <td class="rank">${esc(r.rank)}</td>
-            <td class="team-col">${logoImg(r.logo, r.teamAr || r.team)}<span>${esc(r.teamAr || r.team)}</span></td>
+            <td class="team-col">${mark}${logoImg(r.logo, r.teamAr || r.team)}<span>${esc(r.teamAr || r.team)}</span></td>
             <td>${esc(r.played)}</td><td>${esc(r.wins)}</td><td>${esc(r.draws)}</td><td>${esc(r.losses)}</td>
             <td>${esc(r.goalsFor)}</td><td>${esc(r.goalsAgainst)}</td>
             <td>${r.diff > 0 ? '+' + esc(r.diff) : esc(r.diff)}</td>

@@ -803,6 +803,23 @@ a {
   background: var(--live)
 }
 
+/* مؤشر منطقة الفريق بجانب اسمه داخل الجدول: نفس ألوان المفتاح */
+.lg-zone-mark {
+  flex: 0 0 auto;
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--muted)
+}
+
+.lg-zone-mark.tone-up {
+  background: var(--accent)
+}
+
+.lg-zone-mark.tone-out {
+  background: var(--live)
+}
+
 .lg-table tbody tr.zone-start:not(:first-child) td {
   border-top: 2px solid var(--muted)
 }
