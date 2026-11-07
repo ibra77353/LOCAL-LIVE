@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "devices": "node server.js --devices",
+    "logos": "node scripts/fetch-team-logos.js",
     "test": "node scripts/verify-v8.js",
     "test:stop": "node scripts/test-stop.js",
     "test:http": "node --test tests/http/",

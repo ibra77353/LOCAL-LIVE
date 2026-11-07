@@ -358,7 +358,7 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 
 ### عامة
 - `GET /api/public/settings`
-- `GET /api/public/football?comp=esp.1|eng.1|ksa.1|uefa.champions` — جداول الترتيب والنتائج (الإسباني والإنجليزي والسعودي من worldcup26.ir، وأبطال أوروبا من ESPN؛ مخزّنة على الخادم دقيقتين). كل صف في `standings` و`top` يحمل `team` بالإنجليزية و`teamAr` بالعربية، وكل فريق في `results` و`upcoming` يحمل `name` و`nameAr` ومعرّف شعاره `logo`. الترجمة من قاموس `lib/football/teams-ar.js`، والاسم الأصلي يبقى كما هو عند غياب الترجمة. وردّ دوري أبطال أوروبا يحمل `zones` لمناطق جدول الدوري السويسري (1–8 تأهل مباشر، 9–24 ملحق، 25–36 خارج التأهل) لترسمها الواجهة فواصل ومفتاح ألوان
+- `GET /api/public/football?comp=esp.1|eng.1|ksa.1|uefa.champions` — جداول الترتيب والنتائج (الإسباني والإنجليزي والسعودي من worldcup26.ir، وأبطال أوروبا من ESPN؛ مخزّنة على الخادم دقيقتين). كل صف في `standings` و`top` يحمل `team` بالإنجليزية و`teamAr` بالعربية، وكل فريق في `results` و`upcoming` يحمل `name` و`nameAr` ومعرّف شعاره `logo`. الترجمة من قاموس `lib/football/teams-ar.js`، والاسم الأصلي يبقى كما هو عند غياب الترجمة. شعارات الأندية محمّلة داخل المشروع في `web/assets/teams` ويشير إليها `logo` بمسار داخلي (`/assets/teams/real-madrid.png`) فتصل من الخادم نفسه بدل الشبكة الخارجية؛ الدليل `lib/football/team-logos.json`، وتحديثه عبر `node scripts/fetch-team-logos.js` (أو `npm run logos`)، وأي فريق غير محمّل يبقى على شعاره الخارجي. وردّ دوري أبطال أوروبا يحمل `zones` لمناطق جدول الدوري السويسري (1–8 تأهل مباشر، 9–24 ملحق، 25–36 خارج التأهل) لترسمها الواجهة فواصل ومفتاح ألوان
 - `GET /api/public/channels`
 - `POST /api/public/watch` مع `{ "id": "channelId" }`
 - `POST /api/public/heartbeat`
