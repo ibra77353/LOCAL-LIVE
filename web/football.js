@@ -10,7 +10,7 @@
     { slug: 'esp.1', name: 'الإسباني' },
     { slug: 'eng.1', name: 'الإنجليزي' },
     { slug: 'ksa.1', name: 'السعودي' },
-    { slug: 'uefa.champions', name: 'أبطال أوروبا', unavailable: true }
+    { slug: 'uefa.champions', name: 'أبطال أوروبا' }
   ];
   const REFRESH_MS = 120000;
   const state = { active: 'esp.1', timer: null, cache: new Map() };
@@ -69,10 +69,6 @@
     const body = $('#leagueBody');
     if (!body) return;
     const comp = COMPETITIONS.find(c => c.slug === state.active) || COMPETITIONS[0];
-    if (comp.unavailable) {
-      body.innerHTML = '<p class="lg-note">واجهة الدوريات المجانية لا توفّر دوري أبطال أوروبا حالياً. الدوريات الإسباني والإنجليزي والسعودي متاحة بالكامل.</p>';
-      return;
-    }
     const cached = state.cache.get(comp.slug);
     if (!force && cached && Date.now() - cached.at < REFRESH_MS) { body.innerHTML = cached.html; return; }
     if (!body.dataset.ready || force) body.innerHTML = '<p class="lg-note">جارٍ تحميل الجداول…</p>';
