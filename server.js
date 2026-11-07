@@ -1253,7 +1253,7 @@ function testCapture(body, callback) {
   const isAudio = body.mode === 'audio';
   let args;
   try {
-    args = isAudio ? capture.testAudioArgs(body.audioDevice) : capture.testVideoArgs(body);
+    args = isAudio ? capture.testAudioArgs(body.audioDevice) : capture.testVideoArgs(body, { qualityMode: !!data.settings.x264QualityMode });
   } catch (err) {
     return callback(err);
   }

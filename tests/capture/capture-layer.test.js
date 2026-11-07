@@ -23,7 +23,7 @@ const winCapture = {
   capabilitiesArgs: (device) => capture.capabilitiesArgs(device),
   parseCapabilities: (output) => capture.parseCapabilities(output),
   usbInputArgs: (source) => capture.usbInputArgs(source),
-  testVideoArgs: (body) => capture.testVideoArgs(body),
+  testVideoArgs: (body, options) => capture.testVideoArgs(body, options),
   testAudioArgs: (device) => capture.testAudioArgs(device),
 };
 
@@ -182,6 +182,20 @@ test('وسائط اختبار التقاط الصوت والفيديو تستخ�
     assert.equal(args.includes('null'), false);
     assert.equal(args[args.lastIndexOf('-f') + 1], 'mpegts');
   }
+});
+
+test('الواجهة الموحّدة تعيد تصدير خطة الإدخال وفحص اسم الكودك', () => {
+  assert.deepEqual(capture.inputPlan({ videoDevice: 'USB Video' }), dshow.inputPlan({ videoDevice: 'USB Video' }));
+  assert.equal(capture.inputPlan({ videoDevice: 'USB Video' }).audioInputIndex, null);
+  assert.equal(capture.isCodecName('MJPEG'), true);
+  assert.equal(capture.isCodecName('yuyv422'), false);
+});
+
+test('اختبار الالتقاط يحترم وضع الجودة العام كما تفعل وسائط القناة', () => {
+  const args = winCapture.testVideoArgs({ videoDevice: 'USB Video' }, { qualityMode: true });
+  assert.equal(args.includes('-tune'), false);
+  assert.ok(args.includes('-preset'));
+  assert.ok(winCapture.testVideoArgs({ videoDevice: 'USB Video' }).includes('-tune'));
 });
 
 test('اختبار الالتقاط يحترم الوضع الآمن كما تفعل وسائط القناة', () => {

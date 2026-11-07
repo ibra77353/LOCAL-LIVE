@@ -20,7 +20,12 @@ const required = [
 for (const file of required) if (!fs.existsSync(filePath(file))) failures.push(`ملف مفقود: ${file}`);
 
 // 2) صيغة JavaScript
-for (const file of ['server.js', 'web/admin.js', 'web/viewer.js']) {
+const syntaxFiles = ['server.js', 'web/admin.js', 'web/viewer.js'];
+for (const dir of ['lib/capture', 'lib/shared']) {
+  if (!fs.existsSync(filePath(dir))) continue;
+  for (const file of fs.readdirSync(filePath(dir))) if (/\.js$/i.test(file)) syntaxFiles.push(`${dir}/${file}`);
+}
+for (const file of syntaxFiles) {
   if (!fs.existsSync(filePath(file))) continue;
   const result = spawnSync(process.execPath, ['--check', filePath(file)], { encoding: 'utf8' });
   if (result.status !== 0) failures.push(`فشل فحص JavaScript: ${file}\n${result.stderr}`);
