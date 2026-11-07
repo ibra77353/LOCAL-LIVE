@@ -303,7 +303,7 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 - `POST/PUT /api/channels` و`PUT/POST /api/settings` ترفضها برمز `400` ورسالة «خاصية غير متوقعة…» بدل تجاهلها بصمت.
 - `PATCH /api/channels/:id` يقبل `enabled` فقط.
 - تُحذف بقايا `outputWidth`/`outputHeight`/`outputFps` من `settings` عند إقلاع الخادم إن وُجدت في `data.json` قديم.
-- `gopSeconds` استثناء مقصود: يبقى إعداداً عاماً في `settings` (`0` أو فارغ = تلقائي = طول مقطع HLS)، ويُرفض على مستوى القناة (`POST/PUT /api/channels`) كبقية حقول الترميز العامة.
+- `gopSeconds` استثناء مقصود: يبقى إعداداً عاماً في `settings` (قيمة صريحة من `1` إلى `10` ثوانٍ، بلا وضع تلقائي، والافتراضي `2`)، ويُرفض على مستوى القناة (`POST/PUT /api/channels`) كبقية حقول الترميز العامة.
 
 ### ترتيب بناء أمر FFmpeg
 

@@ -147,7 +147,7 @@ function defaultData() {
       x264QualityMode: !!cfg.x264QualityMode,
       hlsTime: Number(cfg.hlsTime) || 2,
       // طول الـGOP بالثواني إعداد عام؛ 0 = تلقائي (يساوي طول مقطع HLS).
-      gopSeconds: Number(cfg.gopSeconds) || 0,
+      gopSeconds: Number(cfg.gopSeconds) || 2,
       hlsListSize: Number(cfg.hlsListSize) || 6,
       hlsDeleteThreshold: Number(cfg.hlsDeleteThreshold) || 4,
       port: Number(cfg.port)||3001, nginxPort: Number(cfg.nginxPort)||80,
@@ -975,7 +975,7 @@ function buildArgs(channel, forceTranscode = false) {
   const hlsTime = clampNumber(settings.hlsTime, 1, 10, 2);
   // طول الـGOP: إعداد عام اختياري بالثواني؛ 0 أو فارغ = تلقائي = طول مقطع HLS
   // (إطار مفتاحي واحد عند بداية كل مقطع، فتكون بداية كل مقطع keyframe).
-  const gopSeconds = Number(settings.gopSeconds) > 0 ? Number(settings.gopSeconds) : hlsTime;
+  const gopSeconds = Math.max(1, Number(settings.gopSeconds) || 2);
   const gop = Math.max(1, Math.round(outputFps * gopSeconds));
   const sourceType = String(source.type || 'usb').toLowerCase();
   const isNetwork = ['http-hls','http','hls','network','rtsp'].includes(sourceType);
@@ -1531,7 +1531,7 @@ const server = http.createServer(async (req, res) => {
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,60],
-      startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], gopSeconds:[0,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
+      startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], gopSeconds:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
       maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
       sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000]
     };

@@ -528,8 +528,8 @@ test('bitrate القناة يُطبَّق كسقف صارم في وسائط FFmp
   await api.del(`/api/sources/${src.json.source.id}`);
 });
 
-// gopSeconds إعداد عام: 0 = تلقائي (fps × طول مقطع HLS)، وأي قيمة أخرى = fps × القيمة.
-test('gopSeconds العام يضبط -g في وسائط FFmpeg و0 يعني تلقائياً', async () => {
+// gopSeconds إعداد عام (1..10 ثوانٍ، بلا وضع تلقائي): -g = fps × القيمة.
+test('gopSeconds العام يضبط -g في وسائط FFmpeg', async () => {
   const src = await api.post('/api/sources', { name: 'مصدر GOP', type: 'file', path: 'srv/uploads/quality-test.mp4' });
   assert.equal(src.status, 201);
   const ch = await api.post('/api/channels', { name: 'قناة GOP', sourceId: src.json.source.id, quality: '360p', fps: 25 });
@@ -546,12 +546,13 @@ test('gopSeconds العام يضبط -g في وسائط FFmpeg و0 يعني تل
     return /-g (\d+)/.exec(line || '')?.[1];
   };
 
-  assert.equal(await argsGop(), '50', 'التلقائي = 25 إطاراً × طول المقطع 2 ثانية');
+  assert.equal(await argsGop(), '50', 'الافتراضي 2 ثانية = 25 إطاراً × 2');
   const saved = await api.put('/api/settings', { gopSeconds: 1 });
   assert.equal(saved.status, 200);
   assert.equal(await argsGop(), '25', 'القيمة العامة = 25 إطاراً × 1 ثانية');
+  assert.equal((await api.put('/api/settings', { gopSeconds: 0 })).status, 400, 'لا وضع تلقائي بعد الآن');
 
-  await api.put('/api/settings', { gopSeconds: 0 });
+  await api.put('/api/settings', { gopSeconds: 2 });
   await api.del(`/api/channels/${id}`);
   await api.del(`/api/sources/${src.json.source.id}`);
 });
@@ -607,11 +608,11 @@ test('إعدادات الدقة العامة ألغيت وتُرفض من /api/s
   assert.equal(after.outputWidth, undefined);
   assert.equal(after.outputHeight, undefined);
   assert.equal(after.outputFps, undefined);
-  // gopSeconds ما زال مدعوماً كإعداد عام: 0 = تلقائي (طول مقطع HLS).
+  // gopSeconds ما زال مدعوماً كإعداد عام صريح (1..10 ثوانٍ).
   const savedGop = await api.put('/api/settings', { gopSeconds: 4 });
   assert.equal(savedGop.status, 200);
   assert.equal(savedGop.json.settings.gopSeconds, 4);
-  await api.put('/api/settings', { gopSeconds: 0 });
+  await api.put('/api/settings', { gopSeconds: 2 });
 });
 
 // POST وPUT متكافئان على /api/settings: كلاهما يحفظ ويطبّق الإعدادات فوراً،
