@@ -663,6 +663,10 @@ const COSMETIC_FFMPEG_RE = /deprecated pixel format used|Guessed Channel Layout|
 // «Error submitting packet to decoder» يُعد شكلياً فقط حين يكون نتيجة الإطار المقطوع
 // من بطاقة MJPEG نفسها، لا حين يأتي منفرداً (حينها قد يعني مصدراً تالفاً فعلاً).
 const MJPEG_CONTEXT_RE = /mjpeg|Found EOI|No JPEG data/i;
+// إشعار libswscale عن «تنسيق بكسل قديم» (yuvj*) يصدر لمجرد أن المصدر MJPEG
+// كامل المدى، وقد صار تحويله صريحاً في -vf فلا يعني خللاً في الخرج؛ يُسقط من
+// السجل دائماً حتى لو كانت التحذيرات التجميلية ظاهرة.
+const PIXEL_FORMAT_NOTICE_RE = /deprecated pixel format used/i;
 // ردّ مزوّد IPTV بحظر الوصول (403/451): يُستخدم لعدّ «حظر المصدر» بمؤقّت مستقل
 // عن أعطال الشبكة العادية (blockedStopMinutes مقابل sourceFailStopMinutes).
 const BLOCKED_SOURCE_RE = /Server returned (?:403|451)|403 Forbidden|451 Unavailable|HTTP error 403/i;
@@ -1012,7 +1016,10 @@ function buildArgs(channel, forceTranscode = false) {
     // وضع الجودة يعطّل zerolatency: حينها يستفيد libx264 من B-frames وlookahead
     // فيقلّ حجم البيانات بنفس الجودة ويثبت المشهد الصعب، مقابل تأخير أكبر ثوانٍ.
     const tuneArgs = settings.x264QualityMode ? [] : ['-tune','zerolatency'];
-    args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight},format=yuv420p`,
+    // تحويل التنسيق صريح: القياس مع تحويل المدى إلى محدود (out_range=tv) ثم
+    // yuv420p، فيُعاد ترميز مصادر MJPEG كاملة المدى (yuvj420p) إلى مدى البث
+    // القياسي بدل الاعتماد على الاستنتاج التلقائي للمدى.
+    args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:out_range=tv,format=yuv420p`,
       '-c:v','libx264','-preset',encoder.preset,...tuneArgs,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
     // وضع Bitrate = سقف صارم: مخزن VBV يساوي ثانية واحدة بمعدّل القناة (لا ضعفه)
@@ -1089,6 +1096,7 @@ function startChannel(channelId, manual = false) {
   // («Last m» ثم «essage repeated 1 times»). نجمّع المقاطع حتى نهاية السطر ثم نسجّله.
   let stderrTail='';
   const logStderrLine=raw=>{
+    if (PIXEL_FORMAT_NOTICE_RE.test(raw)) return;
     let m=raw.trim(); if(!m) return;
     if(data.settings.hideCosmeticLogs===true){ m=filterCosmeticFfmpegLines(m); if(!m) return; }
     logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);
