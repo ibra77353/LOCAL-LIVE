@@ -419,3 +419,43 @@ test('حفظ إعدادات الترميز العامة يُعيد تشغيل ا
   const restored = await api.put('/api/settings', { x264Preset: 'veryfast' });
   assert.deepEqual(restored.json.restartedChannels, [state.channelId]);
 });
+
+// ------------------------- وضع الجودة العام: تعطيل zerolatency في وسائط القناة
+test('وضع الجودة يعطّل zerolatency في وسائط القناة ويعيده عند إيقافه', { skip: SKIP }, async () => {
+  const before = await status();
+  assert.equal(before.running, true, 'القناة يجب أن تكون عاملة قبل تبديل وضع الجودة');
+
+  const enabled = await api.put('/api/settings', { x264QualityMode: true });
+  assert.equal(enabled.status, 200);
+  assert.deepEqual(enabled.json.changedSettings, ['x264QualityMode']);
+  assert.deepEqual(enabled.json.restartedChannels, [state.channelId], 'تفعيل وضع الجودة يعيد تشغيل القناة النشطة');
+
+  const qualityRestart = await waitFor(async () => {
+    const s = await status();
+    return s.running && s.pid && s.pid !== before.pid ? s : null;
+  }, 10000, 100);
+  assert.ok(qualityRestart, 'القناة يجب أن تعود للعمل بعد تفعيل وضع الجودة');
+
+  // وسائط القناة الفعلية (من سجل الخادم) بلا -tune zerolatency.
+  const qualityArgs = argsLines(await logs()).pop() || '';
+  assert.match(qualityArgs, /-c:v libx264/);
+  assert.match(qualityArgs, /-preset /);
+  assert.equal(qualityArgs.includes('-tune'), false, 'وضع الجودة يعطّل خيار -tune كلياً');
+  assert.equal(qualityArgs.includes('zerolatency'), false, 'وضع الجودة يعطّل zerolatency');
+  assert.equal(aliveStubPids().length, 1, 'إعادة التشغيل يجب ألا تُبقي نسخة FFmpeg مزدوجة');
+
+  // إيقاف وضع الجودة يعيد zerolatency إلى وسائط القناة.
+  const disabled = await api.put('/api/settings', { x264QualityMode: false });
+  assert.equal(disabled.status, 200);
+  assert.deepEqual(disabled.json.changedSettings, ['x264QualityMode']);
+  assert.deepEqual(disabled.json.restartedChannels, [state.channelId]);
+
+  const normalRestart = await waitFor(async () => {
+    const s = await status();
+    return s.running && s.pid && s.pid !== qualityRestart.pid ? s : null;
+  }, 10000, 100);
+  assert.ok(normalRestart, 'القناة يجب أن تعود للعمل بعد إيقاف وضع الجودة');
+  const normalArgs = argsLines(await logs()).pop() || '';
+  assert.match(normalArgs, /-preset [a-z]+ -tune zerolatency/, 'وضع الجودة المعطّل يبقي -tune zerolatency');
+  assert.equal(aliveStubPids().length, 1, 'إعادة التشغيل يجب ألا تُبقي نسخة FFmpeg مزدوجة');
+});
