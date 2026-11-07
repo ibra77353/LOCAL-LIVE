@@ -7,6 +7,7 @@
     "tickerEnabled": false,
     "logo": "logo.png",
     "theme": "default",
+    "worldCupFullPage": true,
     "autoStartOnDemand": true,
     "playerMaxBufferLength": 20,
     "playerBackBufferLength": 10,

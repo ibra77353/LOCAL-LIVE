@@ -25,6 +25,7 @@
   <a id="sitePhone" class="site-phone" href="#"></a>
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="channels">القنوات</button>
+    <button class="tab hidden" id="standingsTab" data-tab="standings" type="button">الجداول والنتائج</button>
   </nav>
 </header>
 
@@ -66,6 +67,12 @@
   <p id="emptyMsg" class="empty hidden">لا توجد قنوات متاحة حالياً.</p>
 </main>
 
+<!-- ===== Leagues: tables & results ===== -->
+<main id="tab-standings" class="container hidden">
+  <div class="lg-tabs" id="leagueTabs"></div>
+  <div class="lg-body" id="leagueBody"></div>
+</main>
+
 <footer class="site-foot" id="siteFooter">
   <span class="foot-copy">جميع الحقوق محفوظة ©</span>
   <a class="foot-brand" href="https://www.facebook.com/ibra77353" target="_blank" rel="noopener">البرنس تيليكوم للخدمات التقنية</a>
@@ -87,5 +94,6 @@
 })();
 </script>
 <script src="/viewer.js"></script>
+<script src="/football.js" defer></script>
 </body>
 </html>

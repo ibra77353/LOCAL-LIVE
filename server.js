@@ -12,6 +12,8 @@ const capture = require('./lib/capture');
 const { clampNumber } = require('./lib/shared/clamp');
 // عدّادات كارت الشبكة من النظام مباشرةً (PowerShell على ويندوز، /proc/net/dev خارجه).
 const { readReceivedBytes } = require('./lib/shared/net-counters');
+// جداول ونتائج الدوريات: جلب وتنظيم وتخزين مؤقت على الخادم، لا اتصال من المتصفح.
+const football = require('./lib/football');
 
 const ROOT = __dirname;
 const CONFIG_PATH = path.join(ROOT, 'config.json');
@@ -132,6 +134,8 @@ function defaultData() {
       tickerEnabled: cfg.tickerEnabled !== false,
       logo: cfg.logo || 'logo.png',
       theme: cfg.theme || 'default',
+      // تبويب «الجداول والنتائج» في صفحة المشاهدين (الدوريات المحلية الكبرى).
+      worldCupFullPage: cfg.worldCupFullPage !== false,
       autoStartOnDemand: !!cfg.autoStartOnDemand,
       playerMaxBufferLength: Number(cfg.playerMaxBufferLength) || 20,
       playerBackBufferLength: Number(cfg.playerBackBufferLength) || 10,
@@ -356,7 +360,7 @@ const SOURCE_WRITE_FIELDS = ['name','type','videoDevice','videoDeviceLabel','aud
 // حقول الإعدادات المعتمدة = النصوص + المفاتيح المنطقية + النطاقات الرقمية + x264Preset والثيم.
 const SETTINGS_WRITE_FIELDS = [
   'siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent',
-  'tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode',
+  'tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode','worldCupFullPage',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration',
   'startupQueueDelayMs','startupConcurrency','x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold','port','nginxPort',
   'maxRestarts','restartBackoffMs','idleStopMinutes','sourceFailStopMinutes','blockedStopMinutes',
@@ -1453,8 +1457,15 @@ const server = http.createServer(async (req, res) => {
 
   // Public API used by viewer.js. Public endpoints expose no filesystem paths.
   if (url.pathname === '/api/public/settings' && req.method === 'GET') {
-    const {siteName,siteNameLatin,logo,ticker,tickerEnabled,phone,theme,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault}=data.settings;
-    return send(res, 200, { ok: true, settings: {siteName,siteNameLatin,logo:publicAsset(logo),ticker,tickerEnabled,phone,theme,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault} });
+    const {siteName,siteNameLatin,logo,ticker,tickerEnabled,phone,theme,worldCupFullPage,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault}=data.settings;
+    return send(res, 200, { ok: true, settings: {siteName,siteNameLatin,logo:publicAsset(logo),ticker,tickerEnabled,phone,theme,worldCupFullPage:worldCupFullPage !== false,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault} });
+  }
+  // جداول ونتائج الدوريات: تُقدَّم للجمهور من كاش الخادم (لا مسارات ملفات ولا مفاتيح).
+  if (url.pathname === '/api/public/football' && req.method === 'GET') {
+    const comp = String(url.searchParams.get('comp') || 'esp.1');
+    const result = await football.getCompetition(comp);
+    if (!result.ok) return send(res, result.status || 502, { ok: false, error: result.error || 'تعذّر جلب بيانات الدوريات', competitions: football.COMPETITIONS });
+    return send(res, 200, { ...result, competitions: football.COMPETITIONS });
   }
   if (url.pathname === '/api/public/channels' && req.method === 'GET') {
     return send(res, 200, { ok: true, channels: data.channels.filter(c => c.enabled !== false).sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).map(publicChannel) });
@@ -1548,7 +1559,7 @@ const server = http.createServer(async (req, res) => {
       if (value.length > (key === 'ticker' ? 500 : (['ffmpegPath','ffprobePath','nginxPath'].includes(key) ? 1000 : 300))) return apiError(res,400,`قيمة ${key} أطول من المسموح`);
       data.settings[key] = value;
     }
-    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode'];
+    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode','worldCupFullPage'];
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,60],

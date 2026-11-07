@@ -49,7 +49,7 @@ const duplicated = Object.keys(cfg).filter((key) => !bootstrapKeys.includes(key)
 if (duplicated.length) failures.push(`config.json يحمل حقولاً مكررة مع data.settings: ${duplicated.join(', ')}`);
 
 // 4) حقول قسم الإعدادات: S_KEYS في admin.js ↔ id="s_*" في admin.html ↔ بيانات data.json
-const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'theme', 'ticker', 'tickerEnabled', 'x264Preset',
+const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'theme', 'worldCupFullPage', 'ticker', 'tickerEnabled', 'x264Preset',
   'port', 'nginxPort',
   'x264Threads', 'x264QualityMode', 'hlsTime', 'gopSeconds', 'hlsListSize', 'hlsDeleteThreshold', 'startupQueueDelayMs', 'startupConcurrency', 'autoRestartCrashed', 'maxRestarts', 'restartBackoffMs', 'hideCosmeticLogs',
   'playerMaxBufferLength', 'playerBackBufferLength', 'playerLiveSyncDuration', 'capLevelToPlayerSize',

@@ -132,7 +132,7 @@ async function boot() {
 })();
 
 // ---------------- Settings ----------------
-const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tickerEnabled','x264Preset',
+const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','worldCupFullPage','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
   'x264Threads','x264QualityMode','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
