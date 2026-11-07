@@ -134,7 +134,7 @@ async function boot() {
 // ---------------- Settings ----------------
 const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
-  'x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
+  'x264Threads','x264QualityMode','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','autoStartOnDemand','idleStopEnabled','idleStopMinutes',
   'sourceFailStopMinutes','blockedStopMinutes'];

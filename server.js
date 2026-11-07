@@ -143,6 +143,8 @@ function defaultData() {
       startupConcurrency: Number(cfg.startupConcurrency) || 1,
       x264Preset: cfg.preset || 'veryfast',
       x264Threads: Number(cfg.threads) || 2,
+      // وضع الجودة: يعطّل zerolatency فيستفيد libx264 من B-frames وlookahead.
+      x264QualityMode: !!cfg.x264QualityMode,
       hlsTime: Number(cfg.hlsTime) || 2,
       // طول الـGOP بالثواني إعداد عام؛ 0 = تلقائي (يساوي طول مقطع HLS).
       gopSeconds: Number(cfg.gopSeconds) || 0,
@@ -354,7 +356,7 @@ const SOURCE_WRITE_FIELDS = ['name','type','videoDevice','videoDeviceLabel','aud
 // حقول الإعدادات المعتمدة = النصوص + المفاتيح المنطقية + النطاقات الرقمية + x264Preset والثيم.
 const SETTINGS_WRITE_FIELDS = [
   'siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent',
-  'tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs',
+  'tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration',
   'startupQueueDelayMs','startupConcurrency','x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold','port','nginxPort',
   'maxRestarts','restartBackoffMs','idleStopMinutes','sourceFailStopMinutes','blockedStopMinutes',
@@ -362,7 +364,7 @@ const SETTINGS_WRITE_FIELDS = [
 ];
 // إعدادات عامة تظهر في وسائط FFmpeg لكل قناة مُرمَّزة؛ تغييرها أثناء البث
 // يُطبَّق فوراً بإعادة تشغيل القنوات النشطة بدل انتظار إعادة تشغيل يدوية.
-const ENCODING_SETTINGS_KEYS = ['x264Preset','x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold'];
+const ENCODING_SETTINGS_KEYS = ['x264Preset','x264QualityMode','x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold'];
 // يعيد أول خاصية في جسم الطلب غير موجودة في القائمة المسموحة، أو null.
 function unexpectedField(body, fields) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
@@ -1007,8 +1009,11 @@ function buildArgs(channel, forceTranscode = false) {
     // بلا pad: القياس وحده إلى الدقة المختارة يدوياً لقناة، فلا أشرطة سوداء حول الصورة.
     // معدّل الإطارات يُضبط بخيار خرج -r (لا فِلتر fps)، وzerolatency يقلّل الإطارات
     // المحجوزة في المخزن فيقلّ التأخير على حساب ضغط أقل كفاءة يسيراً.
+    // وضع الجودة يعطّل zerolatency: حينها يستفيد libx264 من B-frames وlookahead
+    // فيقلّ حجم البيانات بنفس الجودة ويثبت المشهد الصعب، مقابل تأخير أكبر ثوانٍ.
+    const tuneArgs = settings.x264QualityMode ? [] : ['-tune','zerolatency'];
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight},format=yuv420p`,
-      '-c:v','libx264','-preset',encoder.preset,'-tune','zerolatency','-pix_fmt','yuv420p','-threads',String(encoder.threads),
+      '-c:v','libx264','-preset',encoder.preset,...tuneArgs,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
     // وضع Bitrate = سقف صارم: مخزن VBV يساوي ثانية واحدة بمعدّل القناة (لا ضعفه)
     // فلا يقفز الخرج فوق القيمة المختارة بين المقاطع. لا نستخدم nal-hrd=cbr لأن
@@ -1522,7 +1527,7 @@ const server = http.createServer(async (req, res) => {
       if (value.length > (key === 'ticker' ? 500 : (['ffmpegPath','ffprobePath','nginxPath'].includes(key) ? 1000 : 300))) return apiError(res,400,`قيمة ${key} أطول من المسموح`);
       data.settings[key] = value;
     }
-    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs'];
+    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode'];
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
     const numberRanges = {
       playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],

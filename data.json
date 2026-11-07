@@ -20,6 +20,7 @@
     "startupConcurrency": 1,
     "x264Preset": "superfast",
     "x264Threads": 2,
+    "x264QualityMode": false,
     "hlsTime": 2,
     "gopSeconds": 2,
     "hlsListSize": 6,

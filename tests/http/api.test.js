@@ -632,6 +632,19 @@ test('POST /api/settings يحفظ الإعدادات كـPUT ويطبّقها ع
   assert.equal((await api.get('/api/settings')).json.settings.x264Threads, before.x264Threads);
 });
 
+// وضع الجودة (x264QualityMode) إعداد عام معتمد مثل باقي إعدادات الترميز:
+// يُحفظ منطقياً ويُعاد في استجابة الإعدادات، ويُغيَّر عبر POST كما عبر PUT.
+test('POST /api/settings يحفظ x264QualityMode ويعيده', async () => {
+  const before = (await api.get('/api/settings')).json.settings.x264QualityMode;
+  const saved = await api.post('/api/settings', { x264QualityMode: true });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.json.settings.x264QualityMode, true);
+  assert.ok(saved.json.changedSettings.includes('x264QualityMode'));
+  const restore = await api.put('/api/settings', { x264QualityMode: !!before });
+  assert.equal(restore.status, 200);
+  assert.equal(restore.json.settings.x264QualityMode, !!before);
+});
+
 test('PUT /api/settings يرفض الخصائص غير المتوقعة', async () => {
   const withCrf = await api.put('/api/settings', { siteName: 'اسم مرفوض', crf: 23 });
   assert.equal(withCrf.status, 400);
