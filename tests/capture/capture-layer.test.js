@@ -192,10 +192,21 @@ test('الواجهة الموحّدة تعيد تصدير خطة الإدخال 
 });
 
 test('اختبار الالتقاط يحترم وضع الجودة العام كما تفعل وسائط القناة', () => {
-  const args = winCapture.testVideoArgs({ videoDevice: 'USB Video' }, { qualityMode: true });
-  assert.equal(args.includes('-tune'), false);
-  assert.ok(args.includes('-preset'));
-  assert.ok(winCapture.testVideoArgs({ videoDevice: 'USB Video' }).includes('-tune'));
+  const quality = winCapture.testVideoArgs({ videoDevice: 'USB Video' }, { qualityMode: true });
+  // وضع الجودة يعطّل zerolatency — لا أثر لـ -tune ولا لقيمته في الوسائط.
+  assert.equal(quality.includes('-tune'), false);
+  assert.equal(quality.includes('zerolatency'), false);
+  assert.deepEqual(quality, [
+    '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M',
+    '-framerate', '30', '-video_size', '1280x720',
+    '-i', 'video=USB Video', '-t', '3', '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mpegts', '-',
+  ]);
+  // الافتراضي (وضع الجودة معطّل) يبقى كما هو: zerolatency مفعّل.
+  const normal = winCapture.testVideoArgs({ videoDevice: 'USB Video' });
+  assert.deepEqual(normal.slice(normal.indexOf('-c:v'), normal.indexOf('-c:v') + 6),
+    ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency']);
+  assert.deepEqual(normal, winCapture.testVideoArgs({ videoDevice: 'USB Video' }, { qualityMode: false }));
 });
 
 test('اختبار الالتقاط يحترم الوضع الآمن كما تفعل وسائط القناة', () => {
