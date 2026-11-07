@@ -34,7 +34,7 @@
     "idleStopEnabled": true,
     "idleStopMinutes": 2,
     "sourceFailStopMinutes": 3,
-    "blockedStopMinutes": 1000,
+    "blockedStopMinutes": 120,
     "streamUserAgent": "VLC/3.0.20 LibVLC/3.0.20"
   },
   "sources": [

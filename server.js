@@ -158,7 +158,7 @@ function defaultData() {
       idleStopEnabled: !!cfg.idleStopEnabled,
       idleStopMinutes: Number(cfg.idleStopMinutes) || 2,
       sourceFailStopMinutes: Number(cfg.sourceFailStopMinutes) || 3,
-      blockedStopMinutes: Number(cfg.blockedStopMinutes) || 1000,
+      blockedStopMinutes: Number(cfg.blockedStopMinutes) || 120,
       streamUserAgent: cfg.streamUserAgent || 'VLC/3.0.20 LibVLC/3.0.20',
     },
     sources: [],
@@ -1530,7 +1530,7 @@ const server = http.createServer(async (req, res) => {
     const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode'];
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
     const numberRanges = {
-      playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
+      playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,60],
       startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], gopSeconds:[0,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
       maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
       sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000]

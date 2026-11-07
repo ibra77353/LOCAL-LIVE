@@ -162,7 +162,7 @@
           <div class="fields-grid">
             <label>حجم البفر الأقصى (ث)<input class="input" id="s_playerMaxBufferLength" type="number" min="5" max="120"></label>
             <label>البفر الخلفي (ث)<input class="input" id="s_playerBackBufferLength" type="number" min="0" max="120"></label>
-            <label>تأخير البث المباشر (ث)<input class="input" id="s_playerLiveSyncDuration" type="number" min="2" max="30"></label>
+            <label>تأخير البث المباشر (ث)<input class="input" id="s_playerLiveSyncDuration" type="number" min="2" max="60"></label>
           </div>
           <p class="field-note">الحد الأدنى للتأخير = طول مقطع HLS × 2 + 1.</p>
           <label class="switch-row"><input type="checkbox" id="s_capLevelToPlayerSize"> منع جودة أعلى من حجم المشغّل</label>
@@ -224,7 +224,7 @@
               <h4>التعافي من أعطال المصدر</h4>
               <div class="fields-grid">
                 <label>بعد فشل المصدر (دقائق)<input class="input" id="s_sourceFailStopMinutes" type="number" min="1" max="120"></label>
-                <label>بعد حظر IPTV (دقائق)<input class="input" id="s_blockedStopMinutes" type="number" min="1" max="10000"></label>
+                <label>بعد حظر IPTV (دقائق)<input class="input" id="s_blockedStopMinutes" type="number" min="1" max="120"></label>
               </div>
               <p class="field-note">يتوقف ثم يُعاد التشغيل تلقائياً؛ وعند الرفض (403) يحاول النظام إصلاح المصدر أولاً.</p>
             </div>
