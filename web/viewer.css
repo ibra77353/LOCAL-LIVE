@@ -609,10 +609,18 @@ a {
 .lg-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  align-items: baseline;
+  gap: 6px 12px;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px
+  margin-bottom: 14px;
+  padding: 0 2px
+}
+
+.lg-head-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px
 }
 
 .lg-comp {
@@ -621,9 +629,23 @@ a {
   color: var(--text)
 }
 
+.lg-season {
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 2px 10px;
+  direction: ltr
+}
+
 .lg-updated {
   font-size: 12.5px;
   color: var(--muted)
+}
+
+.lg-updated.stale {
+  color: var(--accent)
 }
 
 .lg-note {
@@ -639,27 +661,52 @@ a {
 
 .lg-top {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
   margin-bottom: 16px
 }
 
 .lg-top-card {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px 16px;
+  border-radius: 14px;
+  padding: 12px 14px;
   display: flex;
-  flex-direction: column;
-  gap: 8px
+  align-items: center;
+  gap: 12px
 }
 
 .lg-top-card.leader {
   border-color: var(--accent)
 }
 
+.lg-top-rank {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 700;
+  background: var(--line);
+  color: var(--text)
+}
+
+.lg-top-card.leader .lg-top-rank {
+  background: var(--accent);
+  color: #13202B
+}
+
+.lg-top-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0
+}
+
 .lg-top-label {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--muted)
 }
 
@@ -671,19 +718,32 @@ a {
 .lg-top-team {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 16px
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  min-width: 0
+}
+
+.lg-top-team .lg-logo {
+  width: 28px;
+  height: 28px
+}
+
+.lg-top-team strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
 }
 
 .lg-top-points {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--muted)
 }
 
 .lg-card {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 14px 16px;
   margin-bottom: 16px
 }
@@ -691,18 +751,33 @@ a {
 .lg-card-title {
   margin: 0 0 12px;
   font-size: 15px;
-  color: var(--text)
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px
+}
+
+.lg-card-title::before {
+  content: "";
+  width: 4px;
+  height: 15px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex: 0 0 auto
 }
 
 .lg-table-wrap {
-  overflow-x: auto
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch
 }
 
 .lg-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13.5px;
-  white-space: nowrap
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums
 }
 
 .lg-table th {
@@ -727,12 +802,14 @@ a {
 
 .lg-table .rank {
   color: var(--muted);
-  width: 34px
+  width: 38px;
+  font-weight: 700
 }
 
 .lg-table .team-col {
   text-align: right;
-  min-width: 170px
+  min-width: 170px;
+  max-width: 260px
 }
 
 .lg-table td.team-col {
@@ -740,6 +817,11 @@ a {
   align-items: center;
   gap: 8px;
   text-align: right
+}
+
+.lg-table td.team-col span {
+  overflow: hidden;
+  text-overflow: ellipsis
 }
 
 .lg-table .pts {
@@ -756,13 +838,31 @@ a {
   width: 22px;
   height: 22px;
   object-fit: contain;
-  flex: 0 0 auto
+  flex: 0 0 auto;
+  display: block
 }
 
 .lg-logo.ph {
-  display: inline-block;
+  display: grid;
+  place-items: center;
   border-radius: 50%;
-  background: var(--line)
+  background: var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700
+}
+
+.lg-split {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
+  align-items: start
+}
+
+@media (min-width:900px) {
+  .lg-split {
+    grid-template-columns: 1fr 1fr
+  }
 }
 
 .lg-matches {
@@ -776,66 +876,167 @@ a {
 
 .lg-match {
   display: grid;
-  grid-template-columns: 92px 1fr 66px 1fr;
+  grid-template-columns: 88px 1fr;
   align-items: center;
   gap: 10px;
-  font-size: 13.5px;
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--line)
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .02)
 }
 
-.lg-match:last-child {
-  border-bottom: 0
+html[data-theme="light"] .lg-match {
+  background: rgba(0, 0, 0, .02)
 }
 
 .lg-when {
-  color: var(--muted);
-  font-size: 12px
-}
-
-.lg-side {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px
+  gap: 2px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  border-inline-end: 1px solid var(--line);
+  padding-inline-end: 8px
 }
 
-.lg-side.home {
-  justify-content: flex-end;
-  text-align: left
-}
-
-.lg-side.away {
-  justify-content: flex-start
-}
-
-.lg-side.won {
-  font-weight: 700;
+.lg-when b {
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text)
 }
 
+.lg-teams {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  min-width: 0
+}
+
+.lg-team {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--muted)
+}
+
+.lg-team.home {
+  justify-content: flex-end
+}
+
+.lg-team.away {
+  justify-content: flex-start
+}
+
+.lg-team .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
+}
+
+.lg-team.won {
+  color: var(--text);
+  font-weight: 700
+}
+
+.lg-match .lg-logo {
+  width: 20px;
+  height: 20px
+}
+
 .lg-score {
+  min-width: 58px;
+  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   text-align: center;
   font-weight: 700;
-  color: var(--accent)
+  font-size: 15px;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums
+}
+
+.lg-score i {
+  font-style: normal;
+  opacity: .55
 }
 
 .lg-score.pending {
   font-weight: 600;
-  color: var(--muted)
+  font-size: 11.5px;
+  color: var(--muted);
+  background: transparent;
+  border-style: dashed
 }
 
-@media (max-width:560px) {
+@media (max-width:640px) {
+  .lg-tabs {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none
+  }
+
+  .lg-tabs::-webkit-scrollbar {
+    display: none
+  }
+
+  .lg-tab {
+    flex: 0 0 auto
+  }
+
+  .lg-card {
+    padding: 12px
+  }
+
   .lg-match {
-    grid-template-columns: 1fr 62px 1fr;
-    row-gap: 4px
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px 12px
   }
 
   .lg-when {
-    grid-column: 1 / -1;
-    text-align: center
+    flex-direction: row;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding-inline-end: 0;
+    padding-bottom: 6px;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--line)
+  }
+
+  .lg-team {
+    font-size: 13px
+  }
+
+  .lg-score {
+    min-width: 50px;
+    padding: 2px 6px
+  }
+}
+
+/* على الشاشات الضيقة يبقى من الجدول: المركز، الفريق، فارق الأهداف، النقاط */
+@media (max-width:760px) {
+  .lg-table th:nth-child(4), .lg-table td:nth-child(4),
+  .lg-table th:nth-child(5), .lg-table td:nth-child(5),
+  .lg-table th:nth-child(6), .lg-table td:nth-child(6),
+  .lg-table th:nth-child(7), .lg-table td:nth-child(7),
+  .lg-table th:nth-child(8), .lg-table td:nth-child(8) {
+    display: none
   }
 
   .lg-table .team-col {
-    min-width: 130px
+    min-width: 140px
   }
 }

@@ -25,9 +25,15 @@
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? '' : timeFmt.format(d);
   }
+
+  // الاسم العربي يأتي من الخادم (teamAr / nameAr)، والإنجليزي يبقى بديلاً.
+  const teamName = (t) => (t && (t.nameAr || t.name)) || '—';
+  const initial = (name) => (String(name || '').replace(/^ال/, '').trim().charAt(0) || '؟');
+
+  // شعار النادي: صورة إن توفّرت، وإلا حرف من اسمه داخل دائرة.
   const logoImg = (logo, name) => logo
-    ? `<img class="lg-logo" src="${esc(logo)}" alt="${esc(name)}" loading="lazy">`
-    : '<span class="lg-logo ph" aria-hidden="true"></span>';
+    ? `<img class="lg-logo" src="${esc(logo)}" alt="" loading="lazy">`
+    : `<span class="lg-logo ph" aria-hidden="true">${esc(initial(name))}</span>`;
 
   // ── تبويبات صفحة المشاهدين ──────────────────────────────────────────────
   function showStandings(on) {
@@ -86,22 +92,37 @@
   function renderComp(data) {
     const rows = data.standings || [];
     const top = data.top || [];
+
     const topCards = top.length ? `<div class="lg-top">
       ${top.map((t, i) => `<div class="lg-top-card${i === 0 ? ' leader' : ''}">
-        <span class="lg-top-label">${i === 0 ? 'المتصدر' : 'الوصيف'}</span>
-        <div class="lg-top-team">${logoImg(t.logo, t.team)}<strong>${esc(t.team)}</strong></div>
-        <span class="lg-top-points">${esc(t.points)} نقطة · ${esc(t.played)} مباراة</span>
+        <span class="lg-top-rank">${i + 1}</span>
+        <div class="lg-top-body">
+          <span class="lg-top-label">${i === 0 ? 'المتصدر' : 'الوصيف'}</span>
+          <div class="lg-top-team">${logoImg(t.logo, t.teamAr || t.team)}<strong>${esc(t.teamAr || t.team)}</strong></div>
+          <span class="lg-top-points">${esc(t.points)} نقطة · ${esc(t.played)} مباراة</span>
+        </div>
       </div>`).join('')}
     </div>` : '';
 
     const table = rows.length ? `<div class="lg-card">
-      <h3 class="lg-card-title">جدول الترتيب${data.season ? ' — ' + esc(data.season) : ''}</h3>
+      <h3 class="lg-card-title">جدول الترتيب</h3>
       <div class="lg-table-wrap">
         <table class="lg-table">
-          <thead><tr><th>#</th><th class="team-col">الفريق</th><th>لعب</th><th>ف</th><th>ت</th><th>خ</th><th>له</th><th>عليه</th><th>+/-</th><th>نقاط</th></tr></thead>
+          <thead><tr>
+            <th>#</th>
+            <th class="team-col">الفريق</th>
+            <th title="المباريات الملعوبة">لعب</th>
+            <th title="فوز">ف</th>
+            <th title="تعادل">ت</th>
+            <th title="خسارة">خ</th>
+            <th title="أهداف له">له</th>
+            <th title="أهداف عليه">عليه</th>
+            <th title="فارق الأهداف">+/-</th>
+            <th title="النقاط">نقاط</th>
+          </tr></thead>
           <tbody>${rows.map(r => `<tr class="${r.rank <= 2 ? 'lg-row-top' : ''}">
             <td class="rank">${esc(r.rank)}</td>
-            <td class="team-col">${logoImg(r.logo, r.team)}<span>${esc(r.team)}</span></td>
+            <td class="team-col">${logoImg(r.logo, r.teamAr || r.team)}<span>${esc(r.teamAr || r.team)}</span></td>
             <td>${esc(r.played)}</td><td>${esc(r.wins)}</td><td>${esc(r.draws)}</td><td>${esc(r.losses)}</td>
             <td>${esc(r.goalsFor)}</td><td>${esc(r.goalsAgainst)}</td>
             <td>${r.diff > 0 ? '+' + esc(r.diff) : esc(r.diff)}</td>
@@ -121,21 +142,32 @@
       <ul class="lg-matches">${data.upcoming.map(m => matchRow(m, false)).join('')}</ul>
     </div>` : '';
 
+    const lists = (results || upcoming) ? `<div class="lg-split">${results}${upcoming}</div>` : '';
+
     return `<div class="lg-head">
-        <span class="lg-comp">${esc(data.competition?.name || '')}</span>
-        <span class="lg-updated">${data.stale ? 'بيانات محفوظة — تعذّر التحديث الآن' : 'آخر تحديث ' + fmtTime(data.updatedAt)}</span>
-      </div>${topCards}${table}${results}${upcoming}`;
+        <div class="lg-head-main">
+          <span class="lg-comp">${esc(data.competition?.name || '')}</span>
+          ${data.season ? `<span class="lg-season">${esc(data.season)}</span>` : ''}
+        </div>
+        <span class="lg-updated${data.stale ? ' stale' : ''}">${data.stale
+          ? 'بيانات محفوظة — تعذّر التحديث الآن'
+          : 'آخر تحديث ' + fmtTime(data.updatedAt)}</span>
+      </div>${topCards}${table}${lists}`;
   }
 
   function matchRow(m, finished) {
+    const home = teamName(m.home);
+    const away = teamName(m.away);
     const score = finished
-      ? `${esc(m.home.score ?? 0)} - ${esc(m.away.score ?? 0)}`
-      : fmtTime(m.date);
+      ? `<span class="lg-score">${esc(m.home.score ?? 0)}<i>-</i>${esc(m.away.score ?? 0)}</span>`
+      : '<span class="lg-score pending">VS</span>';
     return `<li class="lg-match">
-      <span class="lg-when">${fmtDate(m.date)}</span>
-      <span class="lg-side home${m.home.winner ? ' won' : ''}">${esc(m.home.name)}${logoImg(m.home.logo, m.home.name)}</span>
-      <span class="lg-score${finished ? '' : ' pending'}">${score}</span>
-      <span class="lg-side away${m.away.winner ? ' won' : ''}">${logoImg(m.away.logo, m.away.name)}${esc(m.away.name)}</span>
+      <span class="lg-when"><b>${fmtDate(m.date)}</b><span>${finished ? 'انتهت' : fmtTime(m.date)}</span></span>
+      <span class="lg-teams">
+        <span class="lg-team home${m.home.winner ? ' won' : ''}"><span class="nm">${esc(home)}</span>${logoImg(m.home.logo, home)}</span>
+        ${score}
+        <span class="lg-team away${m.away.winner ? ' won' : ''}">${logoImg(m.away.logo, away)}<span class="nm">${esc(away)}</span></span>
+      </span>
     </li>`;
   }
 

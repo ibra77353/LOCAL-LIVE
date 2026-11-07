@@ -358,7 +358,7 @@ DirectShow هو الطريق الوحيد لالتقاط USB في هذا الإ�
 
 ### عامة
 - `GET /api/public/settings`
-- `GET /api/public/football?comp=esp.1|eng.1|ksa.1|uefa.champions` — جداول الترتيب والنتائج (الإسباني والإنجليزي والسعودي من worldcup26.ir، وأبطال أوروبا من ESPN؛ مخزّنة على الخادم دقيقتين)
+- `GET /api/public/football?comp=esp.1|eng.1|ksa.1|uefa.champions` — جداول الترتيب والنتائج (الإسباني والإنجليزي والسعودي من worldcup26.ir، وأبطال أوروبا من ESPN؛ مخزّنة على الخادم دقيقتين). كل صف في `standings` و`top` يحمل `team` بالإنجليزية و`teamAr` بالعربية، وكل فريق في `results` و`upcoming` يحمل `name` و`nameAr` ومعرّف شعاره `logo`. الترجمة من قاموس `lib/football/teams-ar.js`، والاسم الأصلي يبقى كما هو عند غياب الترجمة
 - `GET /api/public/channels`
 - `POST /api/public/watch` مع `{ "id": "channelId" }`
 - `POST /api/public/heartbeat`
