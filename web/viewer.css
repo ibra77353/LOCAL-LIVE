@@ -580,12 +580,20 @@ a {
   }
 }
 /* ===== الجداول والنتائج (الدوريات) ===== */
+/* شريط تبديل الدوريات: يبقى ثابتاً أعلى الشاشة أثناء تمرير الجدول
+   فيتمكن المستخدم من الانتقال بين الدوريات من أي موضع */
 .lg-tabs {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
-  margin-bottom: 18px
+  margin-bottom: 18px;
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: var(--bg);
+  padding: 10px 0;
+  box-shadow: 0 8px 14px -12px rgba(0, 0, 0, .7)
 }
 
 .lg-tab {
