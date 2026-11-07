@@ -35,6 +35,35 @@
     ? `<img class="lg-logo" src="${esc(logo)}" alt="" loading="lazy">`
     : `<span class="lg-logo ph" aria-hidden="true">${esc(initial(name))}</span>`;
 
+  // مناطق الجدول تصل من الخادم (دوري أبطال أوروبا): مفتاح ألوان فوق الجدول
+  // وفاصل رفيع قبل بداية كل منطقة حتى يُقرأ ترتيب الستة والثلاثين فريقاً بسرعة.
+  function zonesLegend(zones) {
+    if (!zones.length) return '';
+    return `<div class="lg-zones">${zones.map(z =>
+      `<span class="lg-zone-chip tone-${esc(z.tone)}"><i></i>${esc(z.label)}</span>`).join('')}</div>`;
+  }
+
+  function zonesRows(rows, zones) {
+    const zoneOf = (rank) => zones.find(z => rank >= z.from && rank <= z.to) || null;
+    let prevTone = '';
+    return rows.map(r => {
+      const zone = zoneOf(r.rank);
+      const tone = zone ? zone.tone : '';
+      const start = tone && tone !== prevTone ? 'zone-start' : '';
+      if (tone) prevTone = tone;
+      const cls = [r.rank <= 2 ? 'lg-row-top' : '', tone ? 'zone-' + tone : '', start]
+        .filter(Boolean).join(' ');
+      return `<tr class="${cls}">
+            <td class="rank">${esc(r.rank)}</td>
+            <td class="team-col">${logoImg(r.logo, r.teamAr || r.team)}<span>${esc(r.teamAr || r.team)}</span></td>
+            <td>${esc(r.played)}</td><td>${esc(r.wins)}</td><td>${esc(r.draws)}</td><td>${esc(r.losses)}</td>
+            <td>${esc(r.goalsFor)}</td><td>${esc(r.goalsAgainst)}</td>
+            <td>${r.diff > 0 ? '+' + esc(r.diff) : esc(r.diff)}</td>
+            <td class="pts">${esc(r.points)}</td>
+          </tr>`;
+    }).join('');
+  }
+
   // ── تبويبات صفحة المشاهدين ──────────────────────────────────────────────
   function showStandings(on) {
     const tabBtn = $('#standingsTab');
@@ -104,8 +133,10 @@
       </div>`).join('')}
     </div>` : '';
 
+    const zones = data.zones || [];
+
     const table = rows.length ? `<div class="lg-card">
-      <h3 class="lg-card-title">جدول الترتيب</h3>
+      <h3 class="lg-card-title">جدول الترتيب</h3>${zonesLegend(zones)}
       <div class="lg-table-wrap">
         <table class="lg-table">
           <thead><tr>
@@ -120,14 +151,7 @@
             <th title="فارق الأهداف">+/-</th>
             <th title="النقاط">نقاط</th>
           </tr></thead>
-          <tbody>${rows.map(r => `<tr class="${r.rank <= 2 ? 'lg-row-top' : ''}">
-            <td class="rank">${esc(r.rank)}</td>
-            <td class="team-col">${logoImg(r.logo, r.teamAr || r.team)}<span>${esc(r.teamAr || r.team)}</span></td>
-            <td>${esc(r.played)}</td><td>${esc(r.wins)}</td><td>${esc(r.draws)}</td><td>${esc(r.losses)}</td>
-            <td>${esc(r.goalsFor)}</td><td>${esc(r.goalsAgainst)}</td>
-            <td>${r.diff > 0 ? '+' + esc(r.diff) : esc(r.diff)}</td>
-            <td class="pts">${esc(r.points)}</td>
-          </tr>`).join('')}</tbody>
+          <tbody>${zonesRows(rows, zones)}</tbody>
         </table>
       </div>
     </div>` : '<p class="lg-note">لم يُخزَّن جدول ترتيب لهذا الدوري بعد.</p>';

@@ -97,6 +97,15 @@ test('normalizeEvents يحوّل مباراة منتهية وقادمة إلى �
   assert.deepEqual(espn.normalizeEvents(undefined), []);
 });
 
+test('مناطق جدول دوري أبطال أوروبا تغطي المراكز 1–36 بلا فراغ', () => {
+  const zones = football.ZONES['uefa.champions'];
+  assert.ok(Array.isArray(zones) && zones.length === 3);
+  assert.equal(zones[0].from, 1);
+  assert.equal(zones[zones.length - 1].to, 36);
+  zones.slice(1).forEach((zone, i) => assert.equal(zone.from, zones[i].to + 1));
+  assert.deepEqual(zones.map(z => z.tone), ['up', 'play', 'out']);
+});
+
 test('دوري أبطال أوروبا مسجّل بمصدر ESPN وغير معلَّم كغير متاح', () => {
   const ucl = football.COMPETITIONS.find(c => c.slug === 'uefa.champions');
   assert.ok(ucl, 'دوري أبطال أوروبا يجب أن يكون ضمن الدوريات');
