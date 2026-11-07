@@ -1085,17 +1085,30 @@ function startChannel(channelId, manual = false) {
   try { runtime.proc=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']}); }
   catch(e) { recordExit(runtime,{reason:'تعذر تشغيل FFmpeg',cause:e.message}); return {ok:false,message:e.message}; }
   const proc=runtime.proc; runtime.startedAt=new Date().toISOString();
-  proc.stderr.on('data',b=>{
-    runtime.lastStderr=(runtime.lastStderr+b.toString()).slice(-4000);
-    // ردّ حظر من مزوّد IPTV (403/451): يُسجَّل أول وقت له فقط، ويوقفه
-    // blockedStopMinutes من مؤقّت الخادم.
-    if (!runtime.blockedSince && BLOCKED_SOURCE_RE.test(b.toString())) runtime.blockedSince = Date.now();
-    let m=b.toString().trim(); if(!m) return;
+  // stderr يصل مقاطعَ عشوائية قد تنتهي في منتصف السطر، فتظهر السطور مقطوعة
+  // («Last m» ثم «essage repeated 1 times»). نجمّع المقاطع حتى نهاية السطر ثم نسجّله.
+  let stderrTail='';
+  const logStderrLine=raw=>{
+    let m=raw.trim(); if(!m) return;
     if(data.settings.hideCosmeticLogs===true){ m=filterCosmeticFfmpegLines(m); if(!m) return; }
     logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);
+  };
+  proc.stderr.on('data',b=>{
+    const text=b.toString();
+    runtime.lastStderr=(runtime.lastStderr+text).slice(-4000);
+    // ردّ حظر من مزوّد IPTV (403/451): يُسجَّل أول وقت له فقط، ويوقفه
+    // blockedStopMinutes من مؤقّت الخادم.
+    if (!runtime.blockedSince && BLOCKED_SOURCE_RE.test(text)) runtime.blockedSince = Date.now();
+    stderrTail+=text;
+    // سطر واحد طويل بلا فاصل: يُسجَّل كما هو بدل ترك الحاجز يتضخم.
+    if (stderrTail.length>4000 && !stderrTail.includes('\n')) { logStderrLine(stderrTail); stderrTail=''; return; }
+    const parts=stderrTail.split(/\r?\n/);
+    stderrTail=parts.pop();
+    for (const line of parts) logStderrLine(line);
   });
   proc.on('error',e=>{recordExit(runtime,{reason:'تعذر تشغيل FFmpeg',cause:e.message});runtime.proc=null;logLine(`[${channel.name}] تعذر تشغيل FFmpeg: ${e.message}`);scheduleChannelRestart(channelId);});
   proc.on('exit',(code,signal)=>{
+    if (stderrTail.trim()) { logStderrLine(stderrTail); stderrTail=''; }
     const exitReason = runtime.stopping ? 'إيقاف يدوي' : (code === 0 ? 'انتهى بنجاح' : 'خروج غير متوقع');
     recordExit(runtime,{code,signal,reason:exitReason});
     runtime.proc=null;
