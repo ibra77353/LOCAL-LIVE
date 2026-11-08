@@ -89,8 +89,8 @@ test.before(async () => {
   slowStopFlag = path.join(stubDir, 'slow-stop');
   const stub = path.join(stubDir, 'ffmpeg-stub.sh');
   // يتجاهل وسائط FFmpeg ويبقى حياً حتى تُوقف القناة — يحاكي التقاطاً مستمراً.
-  // يكتب أيضاً مقاطع HLS بمعدّل ثابت (56KB كل نصف ثانية = 112KB/s ≈ 896kbps، أي
-  // فيديو 800k + صوت 96k كما يفعل الخرج الحقيقي المجمّع في مقاطع HLS) حتى
+  // يكتب أيضاً مقاطع HLS بمعدّل ثابت (43KB كل نصف ثانية = 86KB/s ≈ 688kbps، أي
+  // فيديو 600k (مستوى «أعلى») + صوت 96k كما يفعل الخرج الحقيقي المجمّع في مقاطع HLS) حتى
   // يحسب الخادم معدّلاً فعلياً حقيقياً على نافذة القياس 12 ثانية. اسم المقطع يحمل
   // معرّف العملية حتى تبدأ كل نسخة ملفات جديدة، فلا يُخفي الكتابة فوق ملف قديم نموَّها.
   fs.writeFileSync(stub, `#!/bin/sh
@@ -110,7 +110,7 @@ while :; do
   # ملف العلامة يحاكي فقدان إشارة الجهاز: العملية تبقى حيّة لكن لا مقاطع تُكتب.
   if [ -f "${stallFlag}" ]; then sleep 0.5; continue; fi
   name=$(printf '%s/seg_%s_%05d.ts' "$dir" "$$" "$index")
-  dd if=/dev/zero of="$name" bs=1000 count=56 2>/dev/null
+  dd if=/dev/zero of="$name" bs=1000 count=43 2>/dev/null
   printf '#EXTM3U\\n#EXT-X-VERSION:3\\n#EXT-X-TARGETDURATION:2\\n#EXTINF:2.0,\\n%s\\n' "$(basename "$name")" > "$playlist"
   index=$((index + 1))
   sleep 0.5
@@ -131,7 +131,7 @@ done
   state.sourceId = source.json.source.id;
 
   const channel = await api.post('/api/channels', {
-    name: 'قناة استقرار التشغيل', sourceId: state.sourceId, quality: '360p', fps: 25, bitrate: '800k',
+    name: 'قناة استقرار التشغيل', sourceId: state.sourceId, quality: '360p', fps: 25, bitrate: 'balanced',
   });
   assert.equal(channel.status, 201, `تعذر إنشاء القناة: ${channel.text}`);
   state.channelId = channel.json.channel.id;
@@ -168,7 +168,7 @@ test('تغيير Bitrate وFPS أثناء التشغيل يعيد تشغيل ا�
   const before = await status();
   assert.equal(before.running, true);
 
-  const res = await api.put(`/api/channels/${state.channelId}`, { bitrate: '1200k', fps: 20 });
+  const res = await api.put(`/api/channels/${state.channelId}`, { bitrate: 'highest', fps: 20 });
   assert.equal(res.status, 200);
   assert.deepEqual(res.json.changedEncoding, ['fps', 'bitrate']);
   assert.equal(res.json.restarted, true, 'القناة العاملة يجب أن تُعاد تلقائياً');
@@ -180,7 +180,9 @@ test('تغيير Bitrate وFPS أثناء التشغيل يعيد تشغيل ا�
   assert.ok(after, 'يجب أن تعمل نسخة جديدة من FFmpeg بعد الحفظ');
 
   const args = argsLines(await logs()).pop() || '';
-  assert.match(args, /-b:v 1200k/);
+  assert.match(args, /-b:v 600k /);
+  assert.match(args, /-maxrate 700k /);
+  assert.match(args, /-bufsize 900k /);
   assert.match(args, /-r 20/);
 
   await waitFor(async () => aliveStubPids().length === 1);
@@ -188,7 +190,8 @@ test('تغيير Bitrate وFPS أثناء التشغيل يعيد تشغيل ا�
 });
 
 test('حفظ سريع متتابع لإعدادات القناة لا يُنشئ نسخ FFmpeg مزدوجة', { skip: SKIP }, async () => {
-  const values = ['300k', '500k', '800k', '1000k'];
+  const values = ['economy', 'accepted', 'balanced', 'highest'];
+  const levelsBps = { economy: '300k', accepted: '400k', balanced: '500k', highest: '600k' };
   const responses = await Promise.all(values.map((bitrate) => api.put(`/api/channels/${state.channelId}`, { bitrate })));
   for (const res of responses) assert.equal(res.status, 200);
 
@@ -197,7 +200,7 @@ test('حفظ سريع متتابع لإعدادات القناة لا يُنشئ
     const channel = (await api.get('/api/channels')).json.channels.find((c) => c.id === state.channelId);
     const args = argsLines(await logs()).pop() || '';
     if (!s.running || !channel) return null;
-    return args.includes(`-b:v ${channel.bitrate}`) ? { channel, args } : null;
+    return args.includes(`-b:v ${levelsBps[channel.bitrate]}`) ? { channel, args } : null;
   }, 12000);
   assert.ok(settled, 'آخر حفظ يجب أن ينتهي بقناة تعمل ووسائط تطابق القيمة المحفوظة');
   assert.ok(values.includes(settled.channel.bitrate));
@@ -261,7 +264,7 @@ test('الإيقاف اليدوي يمنع إعادة تشغيل القناة ع
   assert.equal(stopped.status, 200);
 
   // حفظ إعدادات ترميز أثناء إغلاق FFmpeg: كان يفتح القناة الموقوفة يدوياً من جديد.
-  const saved = await api.put(`/api/channels/${state.channelId}`, { bitrate: '400k' });
+  const saved = await api.put(`/api/channels/${state.channelId}`, { bitrate: 'accepted' });
   assert.equal(saved.status, 200);
   assert.deepEqual(saved.json.changedEncoding, ['bitrate']);
   assert.equal(saved.json.restarted, false, 'الحفظ يجب ألا يعيد تشغيل قناة موقوفة يدوياً');
@@ -300,7 +303,7 @@ test('تعديل الإعدادات والقناة متوقفة لا يشغّل�
 
 // ------------------------------------- تعديل DirectShow أثناء بث نشط: استمرار واستقرار
 test('تغيير إعدادات DirectShow لقناة نشطة يبقي البث مستمراً والبتريت مستقراً', { skip: SKIP }, async () => {
-  const configured = await api.put(`/api/channels/${state.channelId}`, { bitrate: '800k', fps: 25 });
+  const configured = await api.put(`/api/channels/${state.channelId}`, { bitrate: 'highest', fps: 25 });
   assert.equal(configured.status, 200);
   await api.post(`/api/channels/${state.channelId}/start`);
 
@@ -342,8 +345,8 @@ test('تغيير إعدادات DirectShow لقناة نشطة يبقي البث
   assert.ok(grew && stubSegments() > 0, 'البث يجب أن يستمر بإنتاج مقاطع جديدة بعد إعادة التشغيل');
 
   // 2) الاستقرار: نافذة قياس جديدة بعد التغيير، والفعلي داخل ±10% من الهدف الكلي
-  // 896k = فيديو 800k (بِتريت القناة) + صوت 96k (لأن المصدر يحمل جهاز صوت).
-  const TARGET_KBPS = 800 + 96;
+  // 696k = فيديو 600k (مستوى «أعلى») + صوت 96k (لأن المصدر يحمل جهاز صوت).
+  const TARGET_KBPS = 600 + 96;
   const settled = await waitFor(async () => {
     const row = await channelRow();
     if (!row || !row.live || row.outputBps <= 0) return null;
@@ -353,7 +356,7 @@ test('تغيير إعدادات DirectShow لقناة نشطة يبقي البث
     if (Math.abs(actualKbps - TARGET_KBPS) / TARGET_KBPS > 0.1) return null;
     return { row, actualKbps, lastLine: lines[lines.length - 1] };
   }, 26000, 500);
-  assert.ok(settled, 'البتريت الفعلي يجب أن يبقى ضمن ±10% من الهدف الكلي (896k) بعد تغيير إعدادات DirectShow');
+  assert.ok(settled, 'البتريت الفعلي يجب أن يبقى ضمن ±10% من الهدف الكلي (696k) بعد تغيير إعدادات DirectShow');
   assert.match(settled.lastLine, /مستقر ضمن الهدف/);
   assert.equal(settled.row.live, true, 'البث يبقى نشطاً (قائمة تشغيل حديثة) بعد التعديل');
   assert.ok(settled.row.outputBps > 0, 'معدّل البت الفعلي يتجدّد بعد التعديل');

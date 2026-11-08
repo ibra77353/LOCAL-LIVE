@@ -22,16 +22,25 @@ const CH_QUALITIES = [
   ['240p', '240p'], ['288p', '288p'], ['320p', '320p'], ['360p', '360p'],
   ['432p', '432p'], ['480p', '480p'], ['720p', '720p']
 ];
-// معدّلات البت المتاحة لكل قناة (CBR) — وضع الترميز الوحيد في اللوحة.
+// مستويات جودة الفيديو: لكل مستوى ثلاث قيم مستقلة تُمرَّر إلى FFmpeg كما هي
+// (-b:v / -maxrate / -bufsize). القيم يجب أن تطابق lib/shared/video-levels.js.
+// «تلقائي» يحسب المستوى المناسب من دقة الخرج ومعدل الإطارات في الخادم.
 const CH_BITRATES = [
-  ['', 'تلقائي حسب جودة الخرج'],
-  ['300k', '300k — استهلاك منخفض جداً'],
-  ['400k', '400k — استهلاك منخفض'],
-  ['500k', '500k — متوسط'],
-  ['600k', '600k — متوسط أعلى'],
-  ['800k', '800k — متوازن'],
-  ['1000k', '1000k — جودة عالية']
+  { id: 'auto', name: 'تلقائي', label: 'تلقائي حسب جودة الخرج (يُحسب من الدقة وFPS)', kbps: null },
+  { id: 'economy', name: 'اقتصادي', label: 'اقتصادي — 300k / سقف 400k / مخزن 600k', kbps: 300 },
+  { id: 'accepted', name: 'مقبول', label: 'مقبول — 400k / سقف 500k / مخزن 700k', kbps: 400 },
+  { id: 'balanced', name: 'متوازن', label: 'متوازن — 500k / سقف 600k / مخزن 800k', kbps: 500 },
+  { id: 'highest', name: 'أعلى', label: 'أعلى — 600k / سقف 700k / مخزن 900k', kbps: 600 }
 ];
+// بِتريت القنوات القديم (300k..600k) يُطابق مستواه الذي يحمل نفس -b:v.
+const LEGACY_BITRATES = { '300k': 'economy', '400k': 'accepted', '500k': 'balanced', '600k': 'highest' };
+// المستوى المقابل لقيمة محفوظة؛ أي قيمة غير معروفة تُعرض كـ«تلقائي».
+function bitrateLevel(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text || text === 'auto') return CH_BITRATES[0];
+  return CH_BITRATES.find((level) => level.id === text)
+    || CH_BITRATES.find((level) => level.id === LEGACY_BITRATES[text]) || CH_BITRATES[0];
+}
 // معدّل الإطارات (FPS) لكل قناة — فارغ = الافتراضي 20 إطاراً.
 const CH_FPS = [
   ['', 'تلقائي (20 إطار)'],
@@ -603,11 +612,8 @@ function deleteChannel(id) {
 function openChannelModal(id) {
   const ch = id ? DATA.channels.find(c => c.id === id) : null;
   const curQ = ch?.quality || 'copy';
-  // معدّل بت القناة الحالي؛ إن كان خارج القائمة المعروضة يُضاف كخيار حتى لا تضيع قيمته عند الحفظ.
-  const curBitrate = String(ch?.bitrate || '').trim();
-  const bitrateOptions = CH_BITRATES.some(([v]) => v === curBitrate)
-    ? CH_BITRATES
-    : CH_BITRATES.concat([[curBitrate, curBitrate + ' — الحالي']]);
+  // مستوى جودة الفيديو الحالي للقناة (القيم القديمة تُحوَّل إلى مستواها).
+  const curBitrate = bitrateLevel(ch?.bitrate).id;
   // معدّل الإطارات الحالي؛ أي قيمة خارج القائمة (مثل 24) تُضاف كخيار حتى لا تُفقد عند الحفظ.
   const curFps = String(ch?.fps || '').trim();
   const fpsOptions = CH_FPS.some(([v]) => v === curFps)
@@ -637,11 +643,11 @@ function openChannelModal(id) {
         ${fpsOptions.map(([v, l]) => `<option value="${v}" ${curFps === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
     <p class="hint">عدد الإطارات في الثانية لخرج هذه القناة وحدها؛ أقل = أستهلك معالجاً وشبكة أقل، وأعلى = حركة أنعم. يُطبَّق في وضع الترميز فقط (يُهمَل عند «نسخ المصدر»).</p>
-    <label>معدّل البت (Bitrate) لهذه القناة
-      <select class="input" id="m_cbitrate" dir="ltr">
-        ${bitrateOptions.map(([v, l]) => `<option value="${v}" ${curBitrate === v ? 'selected' : ''}>${l}</option>`).join('')}
+    <label>مستوى جودة الفيديو (Video Bitrate) لهذه القناة
+      <select class="input" id="m_cbitrate">
+        ${CH_BITRATES.map((level) => `<option value="${level.id}" ${curBitrate === level.id ? 'selected' : ''}>${level.label}</option>`).join('')}
       </select></label>
-    <p class="hint">معدّل البت يُضبط هنا لهذه القناة وحدها ويُطبَّق كسقف صارم: أعلى = جودة أوضح واستهلاك شبكة أكبر، وفارغ = يُحسب تلقائياً حسب دقة الخرج. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ.</p>
+    <p class="hint">كل مستوى يعتمد ثلاث قيم تُمرَّر إلى FFmpeg كما هي: -b:v (المعدّل) و-maxrate (السقف) و-bufsize (المخزن). «تلقائي» يختار المستوى المناسب من دقة الخرج ومعدل الإطارات. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ.</p>
     <label>عدد خيوط الترميز (Threads) لهذه القناة
       <input class="input" id="m_cthreads" type="number" min="1" max="64" dir="ltr" value="${esc(ch?.threads ?? '')}" placeholder="فارغ = الإعداد العام"></label>
     <p class="hint">عدد خيوط libx264 لهذه القناة وحدها (1–64). فارغ = يتبع الإعداد العام x264Threads. قلّله إن كانت قنوات كثيرة تعمل معاً على معالج ضعيف.</p>
@@ -908,23 +914,18 @@ function errCell(c) {
 }
 
 // معدّل البت المضبوط للقناة بالكيلوبت (null حين لا يوجد معدّل ثابت: نسخ المصدر
-// أو بِتريت فارغ يتبع دقة الخرج).
+// أو المستوى التلقائي الذي يُحسب من دقة الخرج).
 function channelTargetKbps(c) {
   const q = String(c.quality || '').trim().toLowerCase();
   if (!q || q === 'copy' || q === 'source') return null;
-  const value = String(c.bitrate || '').trim().toLowerCase();
-  if (!value) return null;
-  const num = Number(value.replace(/[km]$/, ''));
-  if (!Number.isFinite(num) || num <= 0) return null;
-  return /m$/.test(value) ? num * 1000 : num;
+  return bitrateLevel(c.bitrate).kbps;
 }
 // خلية جدول المراقبة: الفعلي مقابل المضبوط في إعدادات القناة، بالأحمر عند تجاوز
 // المضبوط بأكثر من 25%: مقاطع TS تضيف عادةً 7–17% أشغال حاوية فوق معدّل الفيديو،
 // فلا يُعدّ ذلك تجاوزاً، ويظهر بالأحمر التجاوز الحقيقي فقط.
 function bitrateCell(c) {
   const q = String(c.quality || '').trim().toLowerCase();
-  const label = (!q || q === 'copy' || q === 'source') ? 'نسخ المصدر'
-    : (String(c.bitrate || '').trim() || 'تلقائي');
+  const label = (!q || q === 'copy' || q === 'source') ? 'نسخ المصدر' : bitrateLevel(c.bitrate).name;
   const actual = Number(c.outputBps) || 0;
   if (!actual) return `<span class="cell-muted">— / ${esc(label)}</span>`;
   const target = channelTargetKbps(c);

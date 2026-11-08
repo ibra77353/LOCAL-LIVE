@@ -10,6 +10,8 @@ const crypto = require('crypto');
 // طبقة الالتقاط الموحّدة: الخادم لا يتعامل مع DirectShow مباشرة.
 const capture = require('./lib/capture');
 const { clampNumber } = require('./lib/shared/clamp');
+// مستويات جودة الفيديو: قيم -b:v و-maxrate و-bufsize لكل مستوى والحساب التلقائي.
+const { normalizeVideoLevel, resolveVideoLevel, bitrateKbps } = require('./lib/shared/video-levels');
 // عدّادات كارت الشبكة من النظام مباشرةً (PowerShell على ويندوز، /proc/net/dev خارجه).
 const { readReceivedBytes } = require('./lib/shared/net-counters');
 // جداول ونتائج الدوريات: جلب وتنظيم وتخزين مؤقت على الخادم، لا اتصال من المتصفح.
@@ -200,6 +202,10 @@ let normalizedChannelFields = false;
 for (const channel of data.channels) {
   if (channel.manualStopped === undefined) { channel.manualStopped = false; normalizedChannelFields = true; }
   else if (typeof channel.manualStopped !== 'boolean') { channel.manualStopped = !!channel.manualStopped; normalizedChannelFields = true; }
+  // ترحيل بِتريت القنوات القديم ('' أو '300k'…) إلى معرّف مستوى، فيبقى المحفوظ
+  // مقروءاً بعد إعادة التشغيل بصيغة الجدول الجديدة.
+  const level = normalizeVideoLevel(channel.bitrate) || 'auto';
+  if (channel.bitrate !== level) { channel.bitrate = level; normalizedChannelFields = true; }
 }
 if (normalizedChannelFields) writeData(data);
 data.settings = { ...defaultData().settings, ...data.settings };
@@ -741,7 +747,7 @@ function getStatus(channelId) {
     running: !!runtime?.proc, pid: runtime?.proc?.pid || null, startedAt: runtime?.startedAt || null,
     restartCount: runtime?.restartCount || 0, lastExit: runtime?.lastExit || null, exitHistory: runtime?.exits || [], playlistExists, playlistAgeMs,
     streamUrl: `/hls/${channel.id}/index.m3u8`, sourceType: source?.type || '', videoDevice: source?.videoDevice || '', audioDevice: source?.audioDevice || '',
-    audioEnabled: !!source?.audioDevice, videoBitrate: channel.bitrate || '',
+    audioEnabled: !!source?.audioDevice, videoBitrate: channel.bitrate || 'auto',
     channel: { id: channel.id, name: channel.name, enabled: channel.enabled !== false }, channels: data.channels.map(publicChannel) };
 }
 function clearChannelHls(channel) {
@@ -864,18 +870,8 @@ function applySourceFields(source, body) {
 const X264_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'];
 const encoderWarningsLogged = new Set();
 // clampNumber مُستوردة من lib/shared/clamp.js: تطبيق واحد مشترك مع طبقة الالتقاط.
-// يقبل صور البِتريت التي يفهمها FFmpeg مثل 500k أو 2000K أو 2M؛ غير ذلك يعيد الافتراضي.
-function normalizeVideoBitrate(value, fallback) {
-  const text = String(value || '').trim();
-  return /^\d{2,6}[kKmM]?$/.test(text) ? text : fallback;
-}
-// يحوّل بِتريت نصياً (500k أو 2M أو 2000) إلى كيلوبت/ثانية لاشتقاق bufsize؛ 0 لقيمة غير صالحة.
-function bitrateKbps(value) {
-  const text = String(value || '').trim().toLowerCase();
-  const num = Number(text.replace(/[km]$/, ''));
-  if (!Number.isFinite(num) || num <= 0) return 0;
-  return /m$/.test(text) ? num * 1000 : Math.round(num);
-}
+// bitrateKbps مُستوردة من lib/shared/video-levels.js مع جدول مستويات الجودة،
+// فتبقى قيم FFmpeg وحساب الهدف في مكان واحد.
 // عدد خيوط الترميز: خاصية القناة إن حُدّدت، وإلا الإعداد العام x264Threads.
 function channelThreadsChoice(channel, settings) {
   const own = Math.round(Number(channel?.threads));
@@ -922,8 +918,8 @@ function validateChannelEncodingFields(body) {
   // null/'' يعني «استخدم الافتراضي 20» — نموذج القناة يرسل null عند إفراغ الحقل.
   if (has('fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined
     && (!Number.isFinite(Number(body.fps)) || Number(body.fps) < 1 || Number(body.fps) > 60)) return 'FPS يجب أن يكون بين 1 و60';
-  // البِتريت نص من نمط «رقم + k» (مثل 800k)؛ الفارغ يعني «تلقائي حسب دقة الخرج».
-  if (has('bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return 'صيغة Bitrate غير صالحة؛ مثال 1500k';
+  // البِتريت مستوى جودة معتمد (auto/economy/accepted/balanced/highest)؛ الفارغ = تلقائي.
+  if (has('bitrate') && !normalizeVideoLevel(body.bitrate)) return 'مستوى جودة الفيديو غير صالح؛ اختر «تلقائي» أو اقتصادي أو مقبول أو متوازن أو أعلى';
   // null/'' يعني «اتبع الإعداد العام x264Threads».
   if (has('threads') && body.threads !== '' && body.threads !== null && body.threads !== undefined
     && !normalizeThreads(body.threads)) return 'عدد الخيوط يجب أن يكون بين 1 و64، أو اتركه فارغاً لاستخدام الإعداد العام';
@@ -943,10 +939,11 @@ function channelOutputPlan(channel, source) {
   const outputWidth = isCopyQuality(qualityValue) ? (srcW || 1280)
     : Math.max(160, Math.round(((srcW || 1280) * outputHeight) / (srcH || 720) / 2) * 2);
   const outputFps = clampNumber(Number(channel.fps), 1, 60, 20);
-  const tierBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
-  // البِتريت يُضبط لكل قناة؛ وفارغه يعني قيمة تلقائية حسب دقة الخرج.
-  const videoBitrate = normalizeVideoBitrate(channel.bitrate, tierBitrate);
-  return { outputWidth, outputHeight, outputFps, videoBitrate };
+  // الجودة تُضبط لكل قناة كمستوى معتمد؛ «تلقائي» يُحسب من الدقة وFPS بهذه القيم نفسها،
+  // والقيم الثلاث تُمرَّر إلى FFmpeg مستقلة كما في جدول المستويات.
+  const resolved = resolveVideoLevel(channel.bitrate, { outputWidth, outputHeight, outputFps });
+  return { outputWidth, outputHeight, outputFps, videoLevel: resolved.level, autoTargetKbps: resolved.autoTargetKbps,
+    videoBitrate: resolved.level.bitrate, videoMaxrate: resolved.level.maxrate, videoBufsize: resolved.level.bufsize };
 }
 
 // هل يُضمَّن مسار صوت في مخرَج HLS لهذا المصدر؟ شبكة/ملف دائماً، وجهاز
@@ -981,9 +978,10 @@ function buildArgs(channel, forceTranscode = false) {
   if (!channel || channel.enabled === false) throw new Error('القناة غير موجودة أو معطلة');
   if (!source || source.enabled === false) throw new Error('مصدر البث غير موجود أو معطل');
   const settings = data.settings;
-  const { outputWidth, outputHeight, outputFps, videoBitrate } = channelOutputPlan(channel, source);
-  if (String(channel.bitrate || '').trim() && videoBitrate !== String(channel.bitrate).trim()) {
-    logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
+  const { outputWidth, outputHeight, outputFps, videoLevel, autoTargetKbps, videoBitrate, videoMaxrate, videoBufsize } = channelOutputPlan(channel, source);
+  // الوضع التلقائي يُسجّل قرارَه المحسوب عند كل تشغيل، فتُعرف القيم التي وصلت FFmpeg فعلاً.
+  if (autoTargetKbps !== null) {
+    logLine(`جودة الفيديو التلقائية «${channel.name}»: ${outputWidth}×${outputHeight}@${outputFps} → الهدف ${autoTargetKbps}k ⇒ «${videoLevel.label}» (-b:v ${videoBitrate} -maxrate ${videoMaxrate} -bufsize ${videoBufsize})`);
   }
   const hlsTime = clampNumber(settings.hlsTime, 1, 10, 2);
   // طول الـGOP: إعداد عام اختياري بالثواني؛ 0 أو فارغ = تلقائي = طول مقطع HLS
@@ -1031,11 +1029,10 @@ function buildArgs(channel, forceTranscode = false) {
     args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:out_range=tv,format=yuv420p`,
       '-c:v','libx264','-preset',encoder.preset,...tuneArgs,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
-    // وضع Bitrate = سقف صارم: مخزن VBV يساوي ثانية واحدة بمعدّل القناة (لا ضعفه)
-    // فلا يقفز الخرج فوق القيمة المختارة بين المقاطع. لا نستخدم nal-hrd=cbr لأن
-    // حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً بدل توفير البيانات.
-    const cap = bitrateKbps(videoBitrate);
-    args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize',`${cap || 2000}k`);
+    // وضع Bitrate: القيم الثلاث تأتي مستقلة من جدول المستويات (لا اشتقاق من -b:v).
+    // لا نستخدم nal-hrd=cbr لأن حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً
+    // بدل توفير البيانات.
+    args.push('-b:v',videoBitrate,'-maxrate',videoMaxrate,'-bufsize',videoBufsize);
     if (channelMuxesAudio(source)) args.push('-map',audioMap,'-af','aresample=async=1','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
   }
@@ -1681,7 +1678,7 @@ const server = http.createServer(async (req, res) => {
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
     const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
-    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), threads: normalizeThreads(body.threads), manualStopped: false, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
+    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: normalizeVideoLevel(body.bitrate), threads: normalizeThreads(body.threads), manualStopped: false, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
     data.channels.push(channel); writeData(data); return send(res, 201, { ok: true, channel: publicChannel(channel) });
   }
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
@@ -1705,6 +1702,8 @@ const server = http.createServer(async (req, res) => {
     const encodingKeys = ['sourceId','quality','fps','bitrate','threads'];
     const encodingBefore = {}; for (const key of encodingKeys) encodingBefore[key] = channel[key];
     for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    // البِتريت يُخزَّن كمعرّف مستوى معتمد (وتُقبل صورته القديمة 300k..600k فتُحوَّل).
+    channel.bitrate = normalizeVideoLevel(channel.bitrate) || 'auto';
     if (channel.fps === null || channel.fps === undefined) channel.fps = '';
     if (Object.prototype.hasOwnProperty.call(body,'threads')) channel.threads = normalizeThreads(body.threads);
     if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;

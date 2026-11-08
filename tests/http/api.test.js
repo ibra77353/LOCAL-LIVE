@@ -204,7 +204,7 @@ test('POST /api/channels يتحقق من الاسم والمصدر', async () =>
 
 test('POST /api/channels ينشئ قناة مرتبطة بالمصدر', async () => {
   const res = await api.post('/api/channels', {
-    name: 'قناة اختبار', sourceId: state.sourceId, quality: '360p', fps: 25, bitrate: '500k',
+    name: 'قناة اختبار', sourceId: state.sourceId, quality: '360p', fps: 25, bitrate: 'balanced',
   });
   assert.equal(res.status, 201);
   assert.equal(res.json.ok, true);
@@ -483,7 +483,7 @@ test('حذف القناة ثم المصادر يعيد الحالة إلى ال�
 test('PUT /api/channels/:id يقبل إفراغ FPS ويعيده إلى إعدادات الخادم', async () => {
   const src = await api.post('/api/sources', { name: 'مصدر جودة', type: 'file', path: 'srv/uploads/quality-test.mp4' });
   assert.equal(src.status, 201);
-  const ch = await api.post('/api/channels', { name: 'قناة جودة', sourceId: src.json.source.id, quality: '360p', fps: 25, bitrate: '800k' });
+  const ch = await api.post('/api/channels', { name: 'قناة جودة', sourceId: src.json.source.id, quality: '360p', fps: 25, bitrate: 'highest' });
   assert.equal(ch.status, 201);
   const id = ch.json.channel.id;
 
@@ -495,34 +495,108 @@ test('PUT /api/channels/:id يقبل إفراغ FPS ويعيده إلى إعدا
   assert.equal(emptyFps.status, 200);
   assert.equal(emptyFps.json.channel.fps, '');
   // القيمة الفارغة تعني معدل الإطارات الافتراضي (20) عند بناء وسائط FFmpeg.
-  assert.equal(nullFps.json.channel.bitrate, '800k');
+  assert.equal(nullFps.json.channel.bitrate, 'highest');
 
   await api.del(`/api/channels/${id}`);
   await api.del(`/api/sources/${src.json.source.id}`);
 });
 
-// Bitrate القناة يعمل كسقف صارم: مخزن ثانية واحدة بمعدّل القناة (لا الضعف) فلا
-// يقفز الخرج فوق القيمة المختارة، وبلا حشو CBR حتى تبقى المشاهد الهادئة موفّرة.
-test('bitrate القناة يُطبَّق كسقف صارم في وسائط FFmpeg', async () => {
-  const src = await api.post('/api/sources', { name: 'مصدر السقف', type: 'file', path: 'srv/uploads/quality-test.mp4' });
+// كل مستوى جودة يمرّر قيمه الثلاث كما في الجدول: -maxrate و-bufsize لا يُشتقّان
+// من -b:v، ولا يتكرر أي خيار في وسائط FFmpeg ولا يتعارض.
+test('كل مستوى جودة يولّد -b:v و-maxrate و-bufsize الصحيحة في وسائط FFmpeg', async () => {
+  const src = await api.post('/api/sources', { name: 'مصدر المستويات', type: 'file', path: 'srv/uploads/quality-test.mp4' });
   assert.equal(src.status, 201);
-  const ch = await api.post('/api/channels', { name: 'قناة السقف', sourceId: src.json.source.id, quality: '360p', fps: 25, bitrate: '400k' });
+  const ch = await api.post('/api/channels', { name: 'قناة المستويات', sourceId: src.json.source.id, quality: '360p', fps: 25 });
   assert.equal(ch.status, 201);
   const id = ch.json.channel.id;
 
-  await api.post(`/api/channels/${id}/start`);
-  const logs = await waitFor(async () => {
-    const res = await api.get('/api/logs');
-    const hit = res.json.logs.split(/\r?\n/).filter((l) => l.includes('FFmpeg args:')).pop();
-    return hit || null;
-  }, 5000);
-  await api.post(`/api/channels/${id}/stop`);
+  // ننتظر سطر وسائط جديداً يحمل بِتريت المستوى المطلوب، لا أي سطر قديم في السجل.
+  const argsFor = async (bitrate) => {
+    await api.post(`/api/channels/${id}/start`);
+    const line = await waitFor(async () => {
+      const res = await api.get('/api/logs');
+      return res.json.logs.split(/\r?\n/)
+        .filter((l) => l.includes('FFmpeg args:') && l.includes(`-b:v ${bitrate} `)).pop() || null;
+    }, 5000);
+    await api.post(`/api/channels/${id}/stop`);
+    return line || '';
+  };
 
-  assert.match(logs || '', /-b:v 400k/);
-  assert.match(logs || '', /-maxrate 400k/);
-  assert.match(logs || '', /-bufsize 400k/);
-  assert.doesNotMatch(logs || '', /nal-hrd/);
-  assert.doesNotMatch(logs || '', /-crf/);
+  const levels = [
+    ['economy', '300k', '400k', '600k'],
+    ['accepted', '400k', '500k', '700k'],
+    ['balanced', '500k', '600k', '800k'],
+    ['highest', '600k', '700k', '900k'],
+  ];
+  for (const [level, bitrate, maxrate, bufsize] of levels) {
+    const saved = await api.put(`/api/channels/${id}`, { bitrate: level });
+    assert.equal(saved.status, 200, level);
+    assert.equal(saved.json.channel.bitrate, level, 'المستوى يُحفظ كما اختير');
+    const args = await argsFor(bitrate);
+    assert.match(args, new RegExp(`-b:v ${bitrate} `), level);
+    assert.match(args, new RegExp(`-maxrate ${maxrate} `), level);
+    assert.match(args, new RegExp(`-bufsize ${bufsize} `), level);
+    // لا خيارات مكررة أو متعارضة.
+    assert.equal(args.split(' -b:v ').length - 1, 1, `${level}: -b:v مكرر`);
+    assert.equal(args.split(' -maxrate ').length - 1, 1, `${level}: -maxrate مكرر`);
+    assert.equal(args.split(' -bufsize ').length - 1, 1, `${level}: -bufsize مكرر`);
+    assert.doesNotMatch(args, /nal-hrd|-crf/);
+  }
+
+  // القيمة القديمة 300k تُقبل وتُحفظ كمعرّف مستوى.
+  const legacy = await api.put(`/api/channels/${id}`, { bitrate: '300k' });
+  assert.equal(legacy.status, 200);
+  assert.equal(legacy.json.channel.bitrate, 'economy');
+
+  await api.del(`/api/channels/${id}`);
+  await api.del(`/api/sources/${src.json.source.id}`);
+});
+
+// «تلقائي» ليس قيمة ثابتة: الهدف يُحسب من دقة الخرج × FPS، ثم يُختار أصغر مستوى
+// يغطيه؛ فتغيير FPS وحده قد يغيّر المستوى.
+test('الوضع التلقائي يشتق المستوى من دقة الخرج ومعدل الإطارات', async () => {
+  const src = await api.post('/api/sources', { name: 'مصدر التلقائي', type: 'file', path: 'srv/uploads/quality-test.mp4' });
+  assert.equal(src.status, 201);
+  const ch = await api.post('/api/channels', { name: 'قناة التلقائي', sourceId: src.json.source.id, quality: '240p', fps: 15, bitrate: 'auto' });
+  assert.equal(ch.status, 201);
+  const id = ch.json.channel.id;
+
+  // ننتظر تشغيلاً جديداً يحمل الهدف المحسوب المتوقع، فلا يكفي سطر قديم من تشغيل سابق.
+  const runFor = async (expectedTarget, expectedBitrate) => {
+    await api.post(`/api/channels/${id}/start`);
+    const logs = await waitFor(async () => {
+      const res = await api.get('/api/logs');
+      const lines = res.json.logs.split(/\r?\n/);
+      const decision = lines.filter((l) => l.includes('جودة الفيديو التلقائية') && l.includes(`الهدف ${expectedTarget}k`)).pop();
+      const argsLine = lines.filter((l) => l.includes('FFmpeg args:') && l.includes(`-b:v ${expectedBitrate} `)).pop();
+      return decision && argsLine ? { args: argsLine, decision } : null;
+    }, 5000);
+    await api.post(`/api/channels/${id}/stop`);
+    return logs || { args: '', decision: '' };
+  };
+
+  // 426×240@15 → الهدف 153k ⇒ اقتصادي (300k/400k/600k).
+  let run = await runFor(153, '300k');
+  assert.match(run.decision, /«اقتصادي»/);
+  assert.match(run.args, /-b:v 300k /);
+  assert.match(run.args, /-maxrate 400k /);
+  assert.match(run.args, /-bufsize 600k /);
+
+  // نفس الدقة بمعدّل إطارات أعلى: 426×240@30 = 307k ⇒ مقبول (400k/500k/700k).
+  await api.put(`/api/channels/${id}`, { fps: 30 });
+  run = await runFor(307, '400k');
+  assert.match(run.decision, /«مقبول»/);
+  assert.match(run.args, /-b:v 400k /);
+  assert.match(run.args, /-maxrate 500k /);
+  assert.match(run.args, /-bufsize 700k /);
+
+  // دقة 360p@25 = 576k ⇒ أعلى (600k/700k/900k).
+  await api.put(`/api/channels/${id}`, { quality: '360p', fps: 25 });
+  run = await runFor(576, '600k');
+  assert.match(run.decision, /«أعلى»/);
+  assert.match(run.args, /-b:v 600k /);
+  assert.match(run.args, /-maxrate 700k /);
+  assert.match(run.args, /-bufsize 900k /);
 
   await api.del(`/api/channels/${id}`);
   await api.del(`/api/sources/${src.json.source.id}`);
@@ -562,11 +636,11 @@ test('gopSeconds العام يضبط -g في وسائط FFmpeg', async () => {
 test('حفظ إعدادات الترميز يبلّغ عن الحقول المتغيّرة لتطبيقها تلقائياً', async () => {
   const src = await api.post('/api/sources', { name: 'مصدر إعادة التشغيل', type: 'file', path: 'srv/uploads/quality-test.mp4' });
   assert.equal(src.status, 201);
-  const ch = await api.post('/api/channels', { name: 'قناة إعادة التشغيل', sourceId: src.json.source.id, quality: '360p', fps: 25, bitrate: '400k' });
+  const ch = await api.post('/api/channels', { name: 'قناة إعادة التشغيل', sourceId: src.json.source.id, quality: '360p', fps: 25, bitrate: 'accepted' });
   assert.equal(ch.status, 201);
   const id = ch.json.channel.id;
 
-  const changed = await api.put(`/api/channels/${id}`, { bitrate: '800k' });
+  const changed = await api.put(`/api/channels/${id}`, { bitrate: 'highest' });
   assert.equal(changed.status, 200);
   assert.deepEqual(changed.json.changedEncoding, ['bitrate']);
   // القناة متوقفة في هذا الاختبار، فلا إعادة تشغيل.
@@ -681,25 +755,29 @@ test('Bitrate خاص بكل قناة ويُطبَّق في وسائط FFmpeg ب�
     return logs || '';
   };
 
-  // Bitrate صريح بقيمة 600k → -b:v 600k
-  const setBitrate = await api.put(`/api/channels/${id}`, { bitrate: '600k' });
+  // مستوى «أعلى» بقيمه الثلاث: 600k / 700k / 900k
+  const setBitrate = await api.put(`/api/channels/${id}`, { bitrate: 'highest' });
   assert.equal(setBitrate.status, 200);
-  assert.equal(setBitrate.json.channel.bitrate, '600k');
+  assert.equal(setBitrate.json.channel.bitrate, 'highest');
   const channelBitrateArgs = await argsFor();
-  assert.match(channelBitrateArgs, /-b:v 600k/);
+  assert.match(channelBitrateArgs, /-b:v 600k /);
+  assert.match(channelBitrateArgs, /-maxrate 700k /);
+  assert.match(channelBitrateArgs, /-bufsize 900k /);
   assert.doesNotMatch(channelBitrateArgs, /-crf/);
   assert.match(channelBitrateArgs, /scale=640:360/);
   assert.doesNotMatch(channelBitrateArgs, /pad=/);
   assert.match(channelBitrateArgs, /-r 25/);
   assert.match(channelBitrateArgs, /-preset (superfast|veryfast)/);
 
-  await api.put(`/api/channels/${id}`, { bitrate: '1200k' });
-  assert.match(await argsFor(), /-b:v 1200k/);
+  // قيمة خارج جدول المستويات تُرفض بدل تخمين -maxrate/-bufsize لها.
+  const unknownLevel = await api.put(`/api/channels/${id}`, { bitrate: '1200k' });
+  assert.equal(unknownLevel.status, 400);
 
-  // بِتريت فارغ يتبع دقة الخرج (360p → 500k)
+  // «تلقائي» يُحسب من الدقة وFPS (360p@25 = 576k ⇒ أعلى 600k)
   const emptyBitrate = await api.put(`/api/channels/${id}`, { bitrate: '' });
   assert.equal(emptyBitrate.status, 200);
-  assert.match(await argsFor(), /-b:v 500k/);
+  assert.equal(emptyBitrate.json.channel.bitrate, 'auto');
+  assert.match(await argsFor(), /-b:v 600k /);
 
   // حقول CRF القديمة تُرفض صراحةً ولا تُحفظ في القناة
   const legacy = await api.put(`/api/channels/${id}`, { encodingMode: 'crf', crfValue: 18 });

@@ -65,7 +65,7 @@
       "enabled": true,
       "quality": "320p",
       "fps": "20",
-      "bitrate": "300k",
+      "bitrate": "economy",
       "threads": null,
       "manualStopped": false,
       "autoStart": false,
