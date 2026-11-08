@@ -66,7 +66,7 @@
       "quality": "320p",
       "fps": "20",
       "bitrate": "economy",
-      "threads": null,
+      "threads": "",
       "manualStopped": false,
       "autoStart": false,
       "alwaysOn": false,
