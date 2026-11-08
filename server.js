@@ -467,6 +467,20 @@ function getNetworkInterfaces() {
     return rank(a) - rank(b) || a.name.localeCompare(b.name) || a.address.localeCompare(b.address);
   });
 }
+// هل قواعد جدار الحماية التي يضيفها scripts/firewall.bat موجودة؟ (ويندوز فقط)
+// الهاتف لا يصل إلى الكمبيوتر إن غابت هذه القواعد أو كانت شبكة ويندوز مصنّفة «عامة».
+function firewallRuleExists(name) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    execFile('netsh', ['advfirewall', 'firewall', 'show', 'rule', `name=${name}`], { windowsHide: true, timeout: 4000 }, (err) => resolve(!err));
+  });
+}
+async function firewallStatus(port) {
+  if (process.platform !== 'win32') return { checked: false };
+  const viewer = await firewallRuleExists(`PrinceLive HTTP ${port}`);
+  const api = await firewallRuleExists(`PrinceLive API ${Number(data.settings.port) || 3001}`);
+  return { checked: true, viewer, api };
+}
 // حساب الإدارة: كلمة المرور مشفّرة بـ scrypt(salt) داخل cfg.admin،
 // مع السماح بالحقول القديمة adminUsername/adminPassword وبـ defaultPassword.
 function adminAccount() {
@@ -1472,7 +1486,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/network/interfaces') {
     if (!requireAdmin(req, res)) return;
     const interfaces = getNetworkInterfaces();
-    return send(res, 200, { ok: true, port: Number(cfg.nginxPort) || 80, interfaces, message: interfaces.length ? 'تم اكتشاف عناوين IPv4 على واجهات الشبكة.' : 'لم يتم العثور على عنوان IPv4 قابل للوصول.' });
+    // المنفذ المعروض هو منفذ Nginx الفعلي (هو الواجهة التي يفتحها الهاتف)، لا منفذ Node الداخلي.
+    const port = Number(data.settings.nginxPort) || 80;
+    const firewall = await firewallStatus(port);
+    return send(res, 200, { ok: true, port, interfaces, firewall, message: interfaces.length ? 'تم اكتشاف عناوين IPv4 على واجهات الشبكة.' : 'لم يتم العثور على عنوان IPv4 قابل للوصول.' });
   }
 
   // Explicit admin-page routes; both Node direct access and Nginx proxy use these.

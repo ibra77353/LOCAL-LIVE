@@ -154,6 +154,7 @@ async function loadSettings() {
       : '';
     nginxNote.classList.toggle('warn', !!(nginx && !nginx.binaryExists));
   }
+  loadLanLinks();
   for (const k of S_KEYS) {
     const el = $('#s_' + k);
     if (!el) continue;
@@ -214,6 +215,36 @@ async function nginxAction(action) {
     if (r.ok) toast('تم ' + (labels[action] || action) + ' Nginx');
     else toast(r.message || 'فشل أمر Nginx', true);
   } catch (e) { toast(e.message, true); }
+}
+
+// عناوين الوصول من الهاتف: الخادم يعيد عناوين IPv4 الحقيقية للكمبيوتر (بلا محوّلات وهمية)
+// مع منفذ Nginx الفعلي، فيكتب المستخدم العنوان الصحيح بدل تخمينه.
+async function loadLanLinks() {
+  const box = $('#lanLinks');
+  if (!box) return;
+  let info;
+  try { info = await api('/network/interfaces'); }
+  catch (e) { box.innerHTML = '<p class="field-note warn">تعذر اكتشاف عناوين الشبكة.</p>'; return; }
+  const list = Array.isArray(info.interfaces) ? info.interfaces : [];
+  if (!list.length) {
+    box.innerHTML = '<p class="field-note warn">لم يُعثر على عنوان شبكة محلية — تأكد من اتصال الكمبيوتر بالشبكة.</p>';
+    return;
+  }
+  const port = Number(info.port) || 80;
+  const suffix = port === 80 ? '' : ':' + port;
+  const rows = list.map((item) => {
+    const base = `http://${item.address}${suffix}`;
+    const viewer = `<a href="${base}/" target="_blank" rel="noopener">${base}/</a>`;
+    const admin = `<a href="${base}/admin" target="_blank" rel="noopener">${base}/admin</a>`;
+    return `<p>${viewer} للمشاهدة · ${admin} للإدارة <span class="lan-if">(${escHtml(item.name)})</span></p>`;
+  });
+  const fw = info.firewall || {};
+  const fwWarn = fw.checked === true && (fw.viewer === false || fw.api === false)
+    ? '<p class="field-note warn">جدار الحماية لا يسمح بالمنافذ بعد — شغّل scripts\\allow-lan.bat مرة واحدة، وتأكد أن شبكة ويندوز مصنّفة «خاصة».</p>'
+    : '';
+  box.innerHTML = `<div class="lan-links">${rows.join('')}</div>`
+    + '<p class="field-note">اكتب العنوان حرفياً على الهاتف مع نفس المنفذ، وتأكد أن الهاتف على شبكة Wi-Fi نفسها وليست شبكة ضيوف.</p>'
+    + fwWarn;
 }
 
 // ---------------- النسخ الاحتياطي ----------------

@@ -634,6 +634,35 @@ label .input {
   margin-bottom: 0
 }
 
+/* ---- الوصول من الهاتف ---- */
+.lan-block {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px
+}
+
+.lan-block h4 {
+  margin: 0 0 6px;
+  font-size: 13px
+}
+
+.lan-links p {
+  margin: 4px 0;
+  font-size: 12.5px;
+  line-height: 1.7
+}
+
+.lan-links a {
+  direction: ltr;
+  unicode-bidi: isolate;
+  word-break: break-all
+}
+
+.lan-links .lan-if {
+  color: var(--muted);
+  font-size: 12px
+}
+
 /* ---- tables ---- */
 .table-wrap {
   background: var(--panel);
