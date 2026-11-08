@@ -18,6 +18,7 @@ const { execFile } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const capture = require(path.join(ROOT, 'lib', 'capture'));
+const { resolveToolPath } = require(path.join(ROOT, 'lib', 'shared', 'tool-path'));
 
 function readJson(file) {
   try {
@@ -31,20 +32,8 @@ const data = readJson('data.json') || {};
 const cfg = readJson('config.json') || {};
 const settings = data.settings || {};
 
-// نفس قاعدة server.js: المسار النسبي يُبحث عنه بجانب server.js أولاً ثم في PATH،
-// وتُجرَّب اللاحقة .exe كما في إعدادات المستخدم (ويندوز فقط).
-function resolveTool(toolName) {
-  const value = String(toolName || '').trim();
-  if (!value || path.isAbsolute(value)) return value;
-  const names = [value, `${value}.exe`];
-  for (const name of names) {
-    const candidate = path.join(ROOT, name);
-    try { if (fs.statSync(candidate).isFile()) return candidate; } catch {}
-  }
-  return value;
-}
-
-const FFMPEG = resolveTool(process.env.FFMPEG_PATH || settings.ffmpegPath || cfg.ffmpegPath || 'ffmpeg');
+// المسار النسبي يُبحث عنه بجانب server.js أولاً ثم في PATH (قاعدة مشتركة مع الخادم).
+const FFMPEG = resolveToolPath(process.env.FFMPEG_PATH || settings.ffmpegPath || cfg.ffmpegPath || 'ffmpeg', ROOT);
 
 function runFfmpeg(args) {
   return new Promise(resolve => {

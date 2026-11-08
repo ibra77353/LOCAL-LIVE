@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { startTestServer } = require('./lib/harness');
 const { createClient } = require('./lib/client');
+const { sleep, waitFor } = require('./lib/wait');
 
 const SKIP = process.platform === 'win32'
   ? 'يحتاج بديل FFmpeg قابلاً للتنفيذ (POSIX) لتشغيل قناة حية أثناء الاختبار'
@@ -33,19 +34,6 @@ let pidFile = '';
 let stallFlag = '';
 let slowStopFlag = '';
 const state = { sourceId: '', channelId: '' };
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitFor(predicate, timeoutMs = 8000, stepMs = 100) {
-  const deadline = Date.now() + timeoutMs;
-  let last;
-  while (Date.now() < deadline) {
-    last = await predicate();
-    if (last) return last;
-    await sleep(stepMs);
-  }
-  return last;
-}
 
 const status = async () => (await api.get(`/api/status?channelId=${state.channelId}`)).json;
 // live وoutputBps يظهران في قائمة القنوات فقط، و/running/pid في /api/status.

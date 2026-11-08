@@ -11,9 +11,12 @@ const crypto = require('crypto');
 const capture = require('./lib/capture');
 const { clampNumber } = require('./lib/shared/clamp');
 // مستويات جودة الفيديو: قيم -b:v و-maxrate و-bufsize لكل مستوى والحساب التلقائي.
-const { normalizeVideoLevel, resolveVideoLevel, bitrateKbps } = require('./lib/shared/video-levels');
+const { VIDEO_BITRATE_LEVELS, normalizeVideoLevel, resolveVideoLevel, bitrateKbps } = require('./lib/shared/video-levels');
 // عدّادات كارت الشبكة من النظام مباشرةً (PowerShell على ويندوز، /proc/net/dev خارجه).
 const { readReceivedBytes } = require('./lib/shared/net-counters');
+// مسار الأدوات وقاعدة المنافذ: مصدر واحد مشترك مع سكربتات Windows.
+const { resolveToolPath } = require('./lib/shared/tool-path');
+const { resolvePort } = require('./lib/shared/port');
 // جداول ونتائج الدوريات: جلب وتنظيم وتخزين مؤقت على الخادم، لا اتصال من المتصفح.
 const football = require('./lib/football');
 
@@ -47,18 +50,8 @@ if (process.env.FFPROBE_PATH) cfg.ffprobePath = process.env.FFPROBE_PATH;
 // ffmpeg.exe بجانب server.js؛ الاعتماد على PATH كان يفشل بـ ENOENT إذا شُغّل
 // الخادم من مجلد آخر. نحل الاسم إلى الملف المرفق إن وُجد ثم نترك PATH كبديل،
 // وتُجرَّب اللاحقة .exe لأن الإصدار مخصص لويندوز فقط.
-function resolveTool(toolName) {
-  const value = String(toolName || '').trim();
-  if (!value || path.isAbsolute(value)) return value;
-  const names = [value, `${value}.exe`];
-  for (const name of names) {
-    const candidate = path.join(ROOT, name);
-    try { if (fs.statSync(candidate).isFile()) return candidate; } catch {}
-  }
-  return value;
-}
-function ffmpegBin() { return resolveTool(cfg.ffmpegPath); }
-function ffprobeBin() { return resolveTool(data.settings.ffprobePath || cfg.ffprobePath); }
+function ffmpegBin() { return resolveToolPath(cfg.ffmpegPath, ROOT); }
+function ffprobeBin() { return resolveToolPath(data.settings.ffprobePath || cfg.ffprobePath, ROOT); }
 
 // أبعاد ملف مصدر محلي عبر FFprobe (المسار المضبوط في الإعدادات)، حتى تُحسب أبعاد
 // الخرج من نسبة الملف الحقيقية بدل الافتراض 1280x720 الذي يشوّه الدقة عند اختيار
@@ -1571,7 +1564,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/channels' && req.method === 'GET') return send(res, 200, { ok: true, channels: data.channels.map(publicChannel) });
   if (url.pathname === '/api/sources' && req.method === 'GET') return send(res, 200, { ok: true, sources: data.sources.map(s => ({ ...s, url: s.streamUrl || '' })) });
   if (url.pathname === '/api/settings' && req.method === 'GET') {
-    return send(res, 200, { ok: true, settings: data.settings, nginx: { binary: nginxExecutable(), binaryExists: nginxBinaryExists() } });
+    return send(res, 200, { ok: true, settings: data.settings, videoLevels: VIDEO_BITRATE_LEVELS, nginx: { binary: nginxExecutable(), binaryExists: nginxBinaryExists() } });
   }
   // POST وPUT متكافئان: كلاهما يحفظ الإعدادات ويطبّقها فوراً على القنوات النشطة.
   if (url.pathname === '/api/settings' && (req.method === 'PUT' || req.method === 'POST')) {
@@ -1674,7 +1667,7 @@ const server = http.createServer(async (req, res) => {
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
     const newEncodingError = validateChannelEncodingFields(body);
     if (newEncodingError) return apiError(res, 400, newEncodingError);
-    const channelId = 'ch_' + require('crypto').randomBytes(5).toString('hex');
+    const channelId = 'ch_' + crypto.randomBytes(5).toString('hex');
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
     const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
@@ -1747,7 +1740,7 @@ const server = http.createServer(async (req, res) => {
     const type = normalizeSourceType(body.type);
     if (!type) return apiError(res, 400, 'نوع المصدر غير مدعوم');
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم المصدر مطلوب');
-    const source = { id: 'src_' + require('crypto').randomBytes(5).toString('hex'), name: String(body.name).trim().slice(0,100), type, enabled: body.enabled !== false };
+    const source = { id: 'src_' + crypto.randomBytes(5).toString('hex'), name: String(body.name).trim().slice(0,100), type, enabled: body.enabled !== false };
     const invalid = applySourceFields(source, body);
     if (invalid) return apiError(res, 400, invalid);
     // أبعاد الملف الحقيقية عبر FFprobe: تُستخدم في حساب أبعاد الخرج عند تشغيل القناة.
@@ -1997,12 +1990,8 @@ const server = http.createServer(async (req, res) => {
 
 // المنفذ يأتي من settings.port في data.json (مصدر وحيد يتغيّر من اللوحة)،
 // ويبقى متغير البيئة PORT أعلى أولوية للتشغيل في حاوية أو خلف وكيل.
-// نفس القاعدة موجودة في scripts/ports.js الذي تقرأه ملفات BAT، فأي قيمة غير
-// صالحة في data.json أو PORT تُحوَّل إلى 3001 في الطرفين بدل اختلاف المنفذ.
-function resolvePort(value, fallback) {
-  const n = Number(value);
-  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : fallback;
-}
+// نفس القاعدة في lib/shared/port.js يستخدمها الخادم وscripts/ports.js (ملفات BAT)،
+// فأي قيمة غير صالحة في data.json أو PORT تُحوَّل إلى 3001 في الطرفين بدل اختلاف المنفذ.
 const LISTEN_PORT = resolvePort(process.env.PORT || data.settings.port, 3001);
 const LISTEN_HOST = process.env.HOST || cfg.host || '127.0.0.1';
 

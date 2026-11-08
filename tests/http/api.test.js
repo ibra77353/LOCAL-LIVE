@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { startTestServer } = require('./lib/harness');
 const { createClient } = require('./lib/client');
+const { sleep, waitFor } = require('./lib/wait');
 
 let srv;
 let api;
@@ -21,19 +22,6 @@ const state = { sourceId: '', channelId: '', networkSourceId: '' };
 const VIDEO_DEVICE = 'USB Video Test Device';
 const VIDEO_DEVICE_RENAMED = 'USB Video Renamed';
 const AUDIO_DEVICE = 'USB Audio Test Device';
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitFor(predicate, timeoutMs = 5000, stepMs = 100) {
-  const deadline = Date.now() + timeoutMs;
-  let last;
-  while (Date.now() < deadline) {
-    last = await predicate();
-    if (last) return last;
-    await sleep(stepMs);
-  }
-  return last;
-}
 
 test.before(async () => {
   srv = await startTestServer({ port: 3901 });
@@ -718,6 +706,18 @@ test('POST /api/settings يحفظ x264QualityMode ويعيده', async () => {
   const restore = await api.put('/api/settings', { x264QualityMode: !!before });
   assert.equal(restore.status, 200);
   assert.equal(restore.json.settings.x264QualityMode, !!before);
+});
+
+test('GET /api/settings يعيد مستويات جودة الفيديو من المصدر المشترك', async () => {
+  const res = await api.get('/api/settings');
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json.videoLevels.map((level) => [level.id, level.bitrate, level.maxrate, level.bufsize]), [
+    ['auto', '', '', ''],
+    ['economy', '300k', '400k', '600k'],
+    ['accepted', '400k', '500k', '700k'],
+    ['balanced', '500k', '600k', '800k'],
+    ['highest', '600k', '700k', '900k']
+  ]);
 });
 
 test('PUT /api/settings يرفض الخصائص غير المتوقعة', async () => {

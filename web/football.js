@@ -3,8 +3,6 @@
    يعرض ترتيب الدوريات ونتائجها من /api/public/football (الخادم يجلب ويخزّن). */
 (function () {
   const $ = (s) => document.querySelector(s);
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
-    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   const COMPETITIONS = [
     { slug: 'esp.1', name: 'الإسباني' },

@@ -109,22 +109,24 @@ lib/
   football/               جداول ونتائج الدوريات
     index.js              الدوريات، المناطق، الكاش، تنظيم الردّ
     espn.js               مصدر دوري أبطال أوروبا
+    normalize.js          مطبّعات الجدول والمباريات المشتركة بين المصدرين
     http.js               طلبات JSON بترويسة متصفح ومهلة
     teams-ar.js           خريطة الأسماء الإنجليزية → العربية
     logos.js              تنزيل الشعارات وحفظها وتسجيلها في الدليل
     team-logos.json       دليل «اسم موحّد للفريق → مسار الشعار المحلي»
-  shared/                 clamp.js وnet-counters.js (مشتركة بين الخادم والاختبارات)
+  shared/                 clamp وnet-counters وport وtool-path (مشتركة بين الخادم والسكربتات)
 web/
   index.html              صفحة المشاهد (تبويبان)
   viewer.js / viewer.css  منطق المشغّل والتصميم
   admin.html / admin.js / admin.css   لوحة التحكم
+  shared.js               دوال HTML المشتركة بين الصفحتين
   football.js             بناء الجداول والنتائج في المتصفح
   theme.js                تبديل الوضع النهاري/الليلي
   vendor/hls.min.js       hls.js 1.6.16
   assets/teams/           85 شعار نادٍ محلي (6.6MB)
 nginx/                    توزيعة Nginx لويندوز + conf/nginx.conf + مجلدات السجلات
 scripts/                  سكربتات ويندوز (.bat) وأدوات Node مساعدة
-tests/                    اختبارات node:test (95 اختباراً)
+tests/                    اختبارات node:test (102 اختباراً)
 srv/hls/                  مخرجات البث (غير محفوظة في git)
 srv/uploads/              أغلفة القنوات والشعار المرفوع
 run/                      control.token وserver.pid وجلسة اللوحة (تنشأ عند التشغيل)

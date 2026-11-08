@@ -401,12 +401,6 @@ a {
   font-weight: 800
 }
 
-.head-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap
-}
-
 .head-stats {
   display: flex;
   gap: 10px;
@@ -432,11 +426,6 @@ a {
 
 .stat-chip.good b {
   color: var(--ok)
-}
-
-.sec-title {
-  margin: 26px 0 10px;
-  font-size: 17px
 }
 
 .hint {
@@ -493,12 +482,6 @@ a {
   padding: 5px 10px;
   font-size: 13px;
   border-radius: 6px
-}
-
-.file-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center
 }
 
 .input,
@@ -558,41 +541,6 @@ label .input {
   flex: 1
 }
 
-.filter-input {
-  max-width: 340px;
-  margin-bottom: 12px
-}
-
-/* تبويبات فرعية داخل النافذة الواحدة (نافذة IPTV الموحّدة) */
-.subtabs {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 16px
-}
-
-.subtab {
-  background: none;
-  border: 0;
-  color: var(--muted);
-  font-family: var(--font);
-  font-size: 14.5px;
-  padding: 10px 16px;
-  cursor: pointer;
-  border-bottom: 3px solid transparent
-}
-
-.subtab:hover {
-  color: var(--text)
-}
-
-.subtab.active {
-  color: var(--brass);
-  border-bottom-color: var(--brass);
-  font-weight: 700
-}
-
 .form-error {
   color: #FF9C90;
   font-size: 13px;
@@ -625,12 +573,6 @@ label .input {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px
-}
-
-.grid-2 {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-  gap: 16px
 }
 
 /* ---- settings ---- */
@@ -957,14 +899,6 @@ label .input {
   }
 }
 
-.iptv-logo {
-  width: 34px;
-  height: 34px;
-  object-fit: contain;
-  background: var(--field-bg);
-  border-radius: 6px
-}
-
 /* status chips — the ON AIR signature */
 .chip {
   display: inline-flex;
@@ -1167,66 +1101,7 @@ label .input {
   color: var(--text)
 }
 
-.qual-row,
-.slot-row,
-.variant-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
-  flex-wrap: wrap
-}
-
-.qual-checks {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-top: 8px
-}
-
-.qual-checks label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  color: var(--text);
-  margin: 0
-}
-
-.days-checks {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 8px
-}
-
-.days-checks label {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  color: var(--text);
-  margin: 0;
-  font-size: 13px
-}
-
 /* ---- misc ---- */
-.news-list {
-  list-style: none;
-  padding: 0;
-  margin: 12px 0
-}
-
-.news-list li {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 14px
-}
-
-.news-list .src {
-  color: var(--muted);
-  font-size: 12px;
-  margin-inline-start: 8px
-}
-
 .toast {
   position: fixed;
   bottom: 26px;

@@ -7,6 +7,7 @@
 // المخرجات: "<nginxPort> <nodePort>" في سطر واحد تقرأه ملفات BAT بـ tokens=1,2.
 const fs = require('fs');
 const path = require('path');
+const { resolvePort } = require('../lib/shared/port');
 const root = path.resolve(__dirname, '..');
 
 function readJson(file) {
@@ -16,21 +17,16 @@ function readJson(file) {
     return null;
   }
 }
-// نفس قاعدة server.js: أي قيمة غير رقمية أو خارج نطاق المنافذ تُستبدل بالافتراضي.
-function toPort(value, fallback) {
-  const n = Number(value);
-  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : fallback;
-}
 
 const data = readJson('data.json');
 const settings = data && data.settings ? data.settings : null;
 const cfg = readJson('config.json') || {};
 
 // عند تعذّر قراءة data.json يعيد server.js إنشاءه من config.json، فنقرأ config هنا أيضاً.
-const nginxPort = toPort(settings ? settings.nginxPort : cfg.nginxPort, toPort(cfg.nginxPort, 80));
+const nginxPort = resolvePort(settings ? settings.nginxPort : cfg.nginxPort, resolvePort(cfg.nginxPort, 80));
 const envPort = String(process.env.PORT || '').trim();
 const nodePort = envPort
-  ? toPort(envPort, 3001)
-  : toPort(settings ? settings.port : cfg.port, 3001);
+  ? resolvePort(envPort, 3001)
+  : resolvePort(settings ? settings.port : cfg.port, 3001);
 
 process.stdout.write(`${nginxPort} ${nodePort}\n`);

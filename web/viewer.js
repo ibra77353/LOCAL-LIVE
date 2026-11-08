@@ -2,8 +2,6 @@
 /* البرنس لايف — مشغّل المشاهدين */
 
 const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
-  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 let SETTINGS = {};
 let CHANNELS = [];
@@ -13,16 +11,6 @@ let activeCategory = '';
 let cpuSaver = false;
 const clientId = (localStorage.getItem('amaan_cid') ||
   (localStorage.setItem('amaan_cid', 'c' + Math.random().toString(36).slice(2)), localStorage.getItem('amaan_cid')));
-
-// دالة موحدة لمعالجة مسارات الصور (تحل مشكلة الصور المكسورة)
-function getAssetUrl(raw) {
-  if (!raw) return '';
-  const s = String(raw).trim();
-  // يُعيد المسار خاماً: الترميز يتم عند حقنه في HTML، وليس عند إسناده إلى .src
-  if (/^https?:\/\//i.test(s)) return s; // رابط خارجي
-  if (s.startsWith('/')) return s;       // مسار مطلق يبدأ بـ /
-  return '/' + s.replace(/^srv\/uploads\/?/, 'uploads/').replace(/^\.?\/+/, ''); // مسار نسبي
-}
 
 // ---------------- bootstrap ----------------
 async function init() {

@@ -3,17 +3,6 @@
 
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
-  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-// دالة موحدة لمعالجة مسارات الصور (نفس الدالة الموجودة في viewer.js)
-function getAssetUrl(raw) {
-  if (!raw) return '';
-  const s = String(raw).trim();
-  if (/^https?:\/\//i.test(s)) return s; // رابط خارجي
-  if (s.startsWith('/')) return s;       // مسار مطلق
-  return '/' + s.replace(/^srv\/uploads\/?/, 'uploads/').replace(/^\.?\/+/, '');
-}
 
 // جودة القناة الواحدة: نسخ المصدر (copy) ثم جودات الترميز.
 const CH_QUALITIES = [
@@ -22,16 +11,22 @@ const CH_QUALITIES = [
   ['240p', '240p'], ['288p', '288p'], ['320p', '320p'], ['360p', '360p'],
   ['432p', '432p'], ['480p', '480p'], ['720p', '720p']
 ];
-// مستويات جودة الفيديو: لكل مستوى ثلاث قيم مستقلة تُمرَّر إلى FFmpeg كما هي
-// (-b:v / -maxrate / -bufsize). القيم يجب أن تطابق lib/shared/video-levels.js.
+// مستويات جودة الفيديو تصل من الخادم (/api/settings → videoLevels): مصدر واحد
+// لقيم -b:v/-maxrate/-bufsize، فلا تنحرف نسخة ثانية في اللوحة عن قيم FFmpeg.
 // «تلقائي» يحسب المستوى المناسب من دقة الخرج ومعدل الإطارات في الخادم.
-const CH_BITRATES = [
-  { id: 'auto', name: 'تلقائي', label: 'تلقائي حسب جودة الخرج (يُحسب من الدقة وFPS)', kbps: null },
-  { id: 'economy', name: 'اقتصادي', label: 'اقتصادي — 300k / سقف 400k / مخزن 600k', kbps: 300 },
-  { id: 'accepted', name: 'مقبول', label: 'مقبول — 400k / سقف 500k / مخزن 700k', kbps: 400 },
-  { id: 'balanced', name: 'متوازن', label: 'متوازن — 500k / سقف 600k / مخزن 800k', kbps: 500 },
-  { id: 'highest', name: 'أعلى', label: 'أعلى — 600k / سقف 700k / مخزن 900k', kbps: 600 }
-];
+const AUTO_BITRATE_LEVEL = { id: 'auto', name: 'تلقائي', label: 'تلقائي حسب جودة الخرج (يُحسب من الدقة وFPS)', kbps: null };
+let CH_BITRATES = [AUTO_BITRATE_LEVEL];
+function applyVideoLevels(levels) {
+  if (!Array.isArray(levels) || !levels.length) return;
+  CH_BITRATES = levels.map((level) => ({
+    id: level.id,
+    name: level.id === 'auto' ? 'تلقائي' : level.label,
+    label: level.id === 'auto'
+      ? 'تلقائي حسب جودة الخرج (يُحسب من الدقة وFPS)'
+      : `${level.label} — ${level.bitrate} / سقف ${level.maxrate} / مخزن ${level.bufsize}`,
+    kbps: level.bitrate ? Number(String(level.bitrate).replace(/k$/i, '')) : null
+  }));
+}
 // بِتريت القنوات القديم (300k..600k) يُطابق مستواه الذي يحمل نفس -b:v.
 const LEGACY_BITRATES = { '300k': 'economy', '400k': 'accepted', '500k': 'balanced', '600k': 'highest' };
 // المستوى المقابل لقيمة محفوظة؛ أي قيمة غير معروفة تُعرض كـ«تلقائي».
@@ -47,7 +42,6 @@ const CH_FPS = [
   ['15', '15 إطار'], ['20', '20 إطار'], ['25', '25 إطار'],
   ['30', '30 إطار'], ['50', '50 إطار'], ['60', '60 إطار']
 ];
-const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const TYPE_LABELS = {
   usb: 'كرت التقاط (DirectShow)', http: 'HTTP مباشر', hls: 'HLS / M3U8',
 file: 'ملف فيديو محلي', screen: 'التقاط الشاشة'
@@ -149,8 +143,9 @@ const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','worldCupFullP
   'sourceFailStopMinutes','blockedStopMinutes'];
 
 async function loadSettings() {
-  const { settings, nginx } = await api('/settings');
+  const { settings, nginx, videoLevels } = await api('/settings');
   DATA.settings = settings;
+  applyVideoLevels(videoLevels);
   // مسار Nginx المحلول فعلياً من الإعدادات، مع تنبيه إن كان الملف غير موجود.
   const nginxNote = $('#nginxPathNote');
   if (nginxNote) {
@@ -604,7 +599,6 @@ function deleteChannel(id) {
     async () => {
       await api('/channels/' + id, { method: 'DELETE' });
       await loadChannels();
-      await loadSchedules();
       toast('تم الحذف');
     });
 }
@@ -671,152 +665,6 @@ function openChannelModal(id) {
       await loadChannels();
       toast(saved && saved.restarted ? 'تم الحفظ وإعادة تشغيل القناة' : 'تم الحفظ');
     });
-}
-
-// =====================================================================
-// SCHEDULER
-// =====================================================================
-async function loadSchedules() {
-  const tb = $('#schedulesTable tbody');
-  if (!tb) return; // لا يوجد جدول جدولة في هذه الواجهة
-  DATA.schedules = (await api('/schedules')).schedules;
-  const chName = id => DATA.channels.find(c => c.id === id)?.name || '؟';
-  tb.innerHTML = DATA.schedules.map(s => `<tr>
-    <td><b>${esc(chName(s.channelId))}</b></td>
-    <td>${(s.days || []).map(d => DAYS[d]).join('، ') || 'كل الأيام'}</td>
-    <td class="cell-muted" dir="ltr">${(s.slots || []).map(x => x.start + ' → ' + x.end).join(' | ')}</td>
-    <td>${s.enabled !== false ? 'نعم' : 'لا'}</td>
-    <td><div class="row-actions">
-      <button class="btn btn-sm" onclick="openScheduleModal('${s.id}')">تعديل</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteSchedule('${s.id}')">حذف</button>
-    </div></td></tr>`).join('') || '<tr><td colspan="5" class="cell-muted">لا توجد جداول — كل القنوات تعمل كبث مستمر.</td></tr>';
-}
-
-function slotRowHtml(s) {
-  return `<div class="slot-row">
-    <span>من</span><input class="input" style="width:110px" type="time" data-ss value="${esc(s.start)}">
-    <span>إلى</span><input class="input" style="width:110px" type="time" data-se value="${esc(s.end)}">
-    <button class="btn btn-sm btn-danger" type="button" onclick="this.parentElement.remove()">✕</button>
-  </div>`;
-}
-
-function openScheduleModal(id) {
-  const sc = id ? DATA.schedules.find(s => s.id === id) : null;
-  const days = sc?.days || [0, 1, 2, 3, 4, 5, 6];
-  const slots = sc?.slots?.length ? sc.slots : [{ start: '08:00', end: '10:00' }];
-  openModal(id ? 'تعديل جدولة' : 'إضافة جدولة', `
-    <label>القناة
-      <select class="input" id="m_schChannel">
-        ${DATA.channels.map(c => `<option value="${c.id}" ${sc?.channelId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">أضف قناة أولاً</option>'}
-      </select></label>
-    <label>الأيام<span class="days-checks">
-      ${DAYS.map((d, i) => `<label><input type="checkbox" value="${i}" data-day ${days.includes(i) ? 'checked' : ''}>${d}</label>`).join('')}
-    </span></label>
-    <label>الفترات الزمنية (يمكن إضافة أكثر من فترة لنفس اليوم)</label>
-    <div id="slotRows">${slots.map(slotRowHtml).join('')}</div>
-    <button class="btn btn-sm" type="button" onclick="addSlotRow()">+ إضافة فترة</button>
-    <label class="switch-row" style="margin-top:14px"><input type="checkbox" id="m_schEnabled" ${sc?.enabled !== false ? 'checked' : ''}> الجدولة مفعّلة</label>`,
-    async () => {
-      const body = {
-        channelId: $('#m_schChannel').value,
-        days: $$('input[data-day]:checked').map(i => Number(i.value)),
-        slots: $$('#slotRows .slot-row').map(r => ({ start: $('[data-ss]', r).value, end: $('[data-se]', r).value }))
-          .filter(s => s.start && s.end),
-        enabled: $('#m_schEnabled').checked
-      };
-      if (id) await api('/schedules/' + id, { method: 'PUT', body });
-      else await api('/schedules', { method: 'POST', body });
-      await loadSchedules();
-      toast('تم الحفظ');
-    });
-}
-function addSlotRow() { $('#slotRows').insertAdjacentHTML('beforeend', slotRowHtml({ start: '', end: '' })); }
-
-async function deleteSchedule(id) {
-  try { await api('/schedules/' + id, { method: 'DELETE' }); loadSchedules(); }
-  catch (e) { toast(e.message, true); }
-}
-
-// =====================================================================
-// ADS (الإعلانات)
-// =====================================================================
-let _ads = [];
-async function loadAds() {
-  try { _ads = (await api('/ads')).ads || []; } catch (e) { return; }
-  const placeLabel = a => a.type === 'text' ? '—' : (a.placement === 'underChannels' ? 'أسفل القنوات' : 'تحت الهاتف');
-  const content = a => a.type === 'text'
-    ? esc((a.text || '').slice(0, 60))
-    : `<img src="${esc(getAssetUrl(a.image))}" style="height:34px;border-radius:4px">`;
-  const rows = _ads.map(a => `<tr>
-    <td>${a.type === 'text' ? 'نصّي' : 'صورة'}</td>
-    <td>${content(a)}</td>
-    <td>${placeLabel(a)}</td>
-    <td><input type="checkbox" ${a.enabled !== false ? 'checked' : ''} onchange="toggleAd('${a.id}', this.checked)"></td>
-    <td>
-      <button class="btn btn-sm" onclick="openAdModal('${a.id}')">تعديل</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteAd('${a.id}')">حذف</button>
-    </td></tr>`).join('');
-  $('#adsTable').querySelector('tbody').innerHTML = rows || '<tr><td colspan="5" class="muted">لا توجد إعلانات بعد.</td></tr>';
-}
-
-function openAdModal(id) {
-  const ad = id ? _ads.find(a => a.id === id) : null;
-  const type = ad?.type || 'text';
-  const body = `
-    <label>نوع الإعلان
-      <select class="input" id="ad_type" onchange="adTypeChanged()">
-        <option value="text" ${type === 'text' ? 'selected' : ''}>نصّي (شريط متحرك تحت الهاتف)</option>
-        <option value="image" ${type === 'image' ? 'selected' : ''}>صورة (سلايدر)</option>
-      </select>
-    </label>
-    <div id="ad_textWrap">
-      <label>نص الإعلان<input class="input" id="ad_text" value="${esc(ad?.text)}" placeholder="اكتب نص الإعلان هنا..."></label>
-    </div>
-    <div id="ad_imageWrap" class="hidden">
-      <label>صورة الإعلان
-        <div style="display:flex;gap:8px">
-          <input class="input" id="ad_image" value="${esc(ad?.image)}" placeholder="srv/uploads/ad.jpg" style="flex:1">
-          <button type="button" class="btn" onclick="browseUpload('ad_image','image/*')">استعراض</button>
-        </div>
-      </label>
-      <label>مكان عرض السلايدر
-        <select class="input" id="ad_placement">
-          <option value="underPhone" ${ad?.placement !== 'underChannels' ? 'selected' : ''}>تحت رقم الهاتف</option>
-          <option value="underChannels" ${ad?.placement === 'underChannels' ? 'selected' : ''}>أسفل أزرار القنوات</option>
-        </select>
-      </label>
-    </div>
-    <label>رابط عند الضغط (اختياري)<input class="input" id="ad_link" value="${esc(ad?.link)}" placeholder="https://..."></label>
-    <label class="switch-row"><input type="checkbox" id="ad_enabled" ${ad?.enabled !== false ? 'checked' : ''}> مفعّل</label>`;
-  openModal(id ? 'تعديل إعلان' : 'إضافة إعلان', body, async () => {
-    const payload = {
-      type: $('#ad_type').value,
-      text: $('#ad_text').value.trim(),
-      image: $('#ad_image').value.trim(),
-      placement: $('#ad_placement').value,
-      link: $('#ad_link').value.trim(),
-      enabled: $('#ad_enabled').checked
-    };
-    if (id) await api('/ads/' + id, { method: 'PUT', body: payload });
-    else await api('/ads', { method: 'POST', body: payload });
-    await loadAds();
-    toast('تم الحفظ');
-  });
-  adTypeChanged();
-}
-function adTypeChanged() {
-  const t = $('#ad_type').value;
-  $('#ad_textWrap').classList.toggle('hidden', t !== 'text');
-  $('#ad_imageWrap').classList.toggle('hidden', t !== 'image');
-}
-async function toggleAd(id, enabled) {
-  try { await api('/ads/' + id, { method: 'PUT', body: { enabled } }); }
-  catch (e) { toast(e.message, true); loadAds(); }
-}
-async function deleteAd(id) {
-  if (!confirm('حذف هذا الإعلان؟')) return;
-  try { await api('/ads/' + id, { method: 'DELETE' }); loadAds(); toast('تم الحذف'); }
-  catch (e) { toast(e.message, true); }
 }
 
 // =====================================================================
