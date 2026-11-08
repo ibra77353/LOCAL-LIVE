@@ -116,6 +116,9 @@ let previousCpu = os.cpus().map(c => ({ idle: c.times.idle, total: Object.values
 let cpuPercent = null;
 let egressBps = 0;
 let totalViewerCount = 0;
+// مشاهدون فريدون منذ الإقلاع. منفصلة عن viewerSessions لأن الجلسة تُحذف بعد 45 ثانية
+// من الانقطاع (أو عند الخروج)، فيعود المشاهد نفسه بعدها ويُحتسب مشاهداً جديداً.
+const seenViewerIds = new Set();
 let lastServedSample = { bytes: 0, at: Date.now() };
 
 // API model: persisted locally in data.json. This release runs one capture pipeline
@@ -1567,7 +1570,7 @@ const server = http.createServer(async (req, res) => {
     const channelId = String(body.channelId || activeChannel()?.id || '');
     if (!safeId(id)) return apiError(res, 400, 'معرّف المشاهد غير صالح');
     if (!data.channels.some(c => c.id === channelId && c.enabled !== false)) return apiError(res, 404, 'القناة غير موجودة');
-    if (!viewerSessions.has(id)) totalViewerCount++;
+    if (!seenViewerIds.has(id)) { seenViewerIds.add(id); totalViewerCount++; }
     viewerSessions.set(id, { channelId, lastSeen: Date.now() });
     return send(res, 200, { ok: true });
   }
