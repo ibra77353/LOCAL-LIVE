@@ -511,10 +511,10 @@ test('كل مستوى جودة يولّد -b:v و-maxrate و-bufsize الصحي�
   };
 
   const levels = [
-    ['economy', '300k', '400k', '600k'],
-    ['accepted', '400k', '500k', '700k'],
-    ['balanced', '500k', '600k', '800k'],
-    ['highest', '600k', '700k', '900k'],
+    ['economy', '300k', '300k', '600k'],
+    ['accepted', '400k', '400k', '800k'],
+    ['balanced', '500k', '500k', '1000k'],
+    ['highest', '600k', '600k', '1200k'],
   ];
   for (const [level, bitrate, maxrate, bufsize] of levels) {
     const saved = await api.put(`/api/channels/${id}`, { bitrate: level });
@@ -563,28 +563,28 @@ test('الوضع التلقائي يشتق المستوى من دقة الخرج
     return logs || { args: '', decision: '' };
   };
 
-  // 426×240@15 → الهدف 153k ⇒ اقتصادي (300k/400k/600k).
+  // 426×240@15 → الهدف 153k ⇒ اقتصادي (300k/300k/600k).
   let run = await runFor(153, '300k');
   assert.match(run.decision, /«اقتصادي»/);
   assert.match(run.args, /-b:v 300k /);
-  assert.match(run.args, /-maxrate 400k /);
+  assert.match(run.args, /-maxrate 300k /);
   assert.match(run.args, /-bufsize 600k /);
 
-  // نفس الدقة بمعدّل إطارات أعلى: 426×240@30 = 307k ⇒ مقبول (400k/500k/700k).
+  // نفس الدقة بمعدّل إطارات أعلى: 426×240@30 = 307k ⇒ مقبول (400k/400k/800k).
   await api.put(`/api/channels/${id}`, { fps: 30 });
   run = await runFor(307, '400k');
   assert.match(run.decision, /«مقبول»/);
   assert.match(run.args, /-b:v 400k /);
-  assert.match(run.args, /-maxrate 500k /);
-  assert.match(run.args, /-bufsize 700k /);
+  assert.match(run.args, /-maxrate 400k /);
+  assert.match(run.args, /-bufsize 800k /);
 
-  // دقة 360p@25 = 576k ⇒ أعلى (600k/700k/900k).
+  // دقة 360p@25 = 576k ⇒ أعلى (600k/600k/1200k).
   await api.put(`/api/channels/${id}`, { quality: '360p', fps: 25 });
   run = await runFor(576, '600k');
   assert.match(run.decision, /«أعلى»/);
   assert.match(run.args, /-b:v 600k /);
-  assert.match(run.args, /-maxrate 700k /);
-  assert.match(run.args, /-bufsize 900k /);
+  assert.match(run.args, /-maxrate 600k /);
+  assert.match(run.args, /-bufsize 1200k /);
 
   await api.del(`/api/channels/${id}`);
   await api.del(`/api/sources/${src.json.source.id}`);
@@ -713,10 +713,10 @@ test('GET /api/settings يعيد مستويات جودة الفيديو من ا�
   assert.equal(res.status, 200);
   assert.deepEqual(res.json.videoLevels.map((level) => [level.id, level.bitrate, level.maxrate, level.bufsize]), [
     ['auto', '', '', ''],
-    ['economy', '300k', '400k', '600k'],
-    ['accepted', '400k', '500k', '700k'],
-    ['balanced', '500k', '600k', '800k'],
-    ['highest', '600k', '700k', '900k']
+    ['economy', '300k', '300k', '600k'],
+    ['accepted', '400k', '400k', '800k'],
+    ['balanced', '500k', '500k', '1000k'],
+    ['highest', '600k', '600k', '1200k']
   ]);
 });
 
@@ -755,14 +755,14 @@ test('Bitrate خاص بكل قناة ويُطبَّق في وسائط FFmpeg ب�
     return logs || '';
   };
 
-  // مستوى «أعلى» بقيمه الثلاث: 600k / 700k / 900k
+  // مستوى «أعلى» بقيمه الثلاث: 600k / 600k / 1200k
   const setBitrate = await api.put(`/api/channels/${id}`, { bitrate: 'highest' });
   assert.equal(setBitrate.status, 200);
   assert.equal(setBitrate.json.channel.bitrate, 'highest');
   const channelBitrateArgs = await argsFor();
   assert.match(channelBitrateArgs, /-b:v 600k /);
-  assert.match(channelBitrateArgs, /-maxrate 700k /);
-  assert.match(channelBitrateArgs, /-bufsize 900k /);
+  assert.match(channelBitrateArgs, /-maxrate 600k /);
+  assert.match(channelBitrateArgs, /-bufsize 1200k /);
   assert.doesNotMatch(channelBitrateArgs, /-crf/);
   assert.match(channelBitrateArgs, /scale=640:360/);
   assert.doesNotMatch(channelBitrateArgs, /pad=/);

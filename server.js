@@ -968,8 +968,11 @@ function logBitrateWindow(channel, source, bytesPerSecond, seconds) {
   const deviation = Math.round(((actualKbps - targetKbps) / targetKbps) * 100);
   const verdict = actualKbps > Math.round(ceilingKbps * (1 + BITRATE_CEILING_SLACK)) ? 'أعلى من السقف المسموح'
     : (actualKbps < Math.round(targetKbps * 0.9) ? 'أقل من الهدف' : 'داخل النطاق المسموح');
-  const breakdown = audioKbps ? ` (فيديو ${videoKbps}k–${videoMaxKbps}k + صوت ${audioKbps}k)` : ` (فيديو ${videoKbps}k–${videoMaxKbps}k)`;
-  const line = `استقرار البِتريت «${channel.name}»: الفعلي ${actualKbps}k من نطاق ${targetKbps}k–${ceilingKbps}k${breakdown} `
+  // عندما يساوي السقف الهدف (‎-maxrate = -b:v) يُعرض رقم واحد بدل نطاق من قيمة واحدة.
+  const videoText = videoMaxKbps > videoKbps ? `فيديو ${videoKbps}k–${videoMaxKbps}k` : `فيديو ${videoKbps}k`;
+  const breakdown = audioKbps ? ` (${videoText} + صوت ${audioKbps}k)` : ` (${videoText})`;
+  const rangeText = ceilingKbps > targetKbps ? `${targetKbps}k–${ceilingKbps}k` : `${targetKbps}k`;
+  const line = `استقرار البِتريت «${channel.name}»: الفعلي ${actualKbps}k مقابل ${rangeText}${breakdown} `
     + `(${deviation > 0 ? '+' : ''}${deviation}% عن الهدف، ${verdict}) على نافذة ${Math.round(seconds)} ثانية`;
   logLine(line);
   appendChannelLog(channel.id, line);

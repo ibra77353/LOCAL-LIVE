@@ -22,13 +22,13 @@ const SKIP = process.platform === 'win32'
 
 // القيم المتوقعة لكل مستوى، مأخوذة نصاً من جدول VIDEO_BITRATE_LEVELS.
 // خرج القناة هنا 360p من مصدر 1280x720 أي 640×360 عند 20 إطاراً، فالوضع التلقائي
-// يحسب 640×360×20×0.1 = 461k فيختار «متوازن» (500k/600k/800k).
+// يحسب 640×360×20×0.1 = 461k فيختار «متوازن» (500k/500k/1000k).
 const LEVELS = [
-  { id: 'economy', bv: '300k', maxrate: '400k', bufsize: '600k' },
-  { id: 'accepted', bv: '400k', maxrate: '500k', bufsize: '700k' },
-  { id: 'balanced', bv: '500k', maxrate: '600k', bufsize: '800k' },
-  { id: 'highest', bv: '600k', maxrate: '700k', bufsize: '900k' },
-  { id: 'auto', bv: '500k', maxrate: '600k', bufsize: '800k', autoTarget: '461k' }
+  { id: 'economy', bv: '300k', maxrate: '300k', bufsize: '600k' },
+  { id: 'accepted', bv: '400k', maxrate: '400k', bufsize: '800k' },
+  { id: 'balanced', bv: '500k', maxrate: '500k', bufsize: '1000k' },
+  { id: 'highest', bv: '600k', maxrate: '600k', bufsize: '1200k' },
+  { id: 'auto', bv: '500k', maxrate: '500k', bufsize: '1000k', autoTarget: '461k' }
 ];
 
 let srv;

@@ -245,10 +245,10 @@ node -e "const c=require('crypto');const salt=c.randomBytes(16).toString('hex');
   | المستوى | `-b:v` | `-maxrate` | `-bufsize` |
   | --- | --- | --- | --- |
   | تلقائي حسب جودة الخرج (`auto`) | محسوب | محسوب | محسوب |
-  | اقتصادي (`economy`) | 300k | 400k | 600k |
-  | مقبول (`accepted`) | 400k | 500k | 700k |
-  | متوازن (`balanced`) | 500k | 600k | 800k |
-  | أعلى (`highest`) | 600k | 700k | 900k |
+  | اقتصادي (`economy`) | 300k | 300k | 600k |
+  | مقبول (`accepted`) | 400k | 400k | 800k |
+  | متوازن (`balanced`) | 500k | 500k | 1000k |
+  | أعلى (`highest`) | 600k | 600k | 1200k |
 
 - «تلقائي» ليس قيمة ثابتة: الهدف = العرض × الارتفاع × FPS × 0.1 بت/بكسل، ثم يُختار
   أصغر مستوى يغطيه (وإن تجاوزه الجميع يُستخدم `highest` كسقف). الجدول والحساب في
@@ -267,8 +267,8 @@ node -e "const c=require('crypto');const salt=c.randomBytes(16).toString('hex');
    + `-pix_fmt yuv420p` + `-r` + `-g` و`-keyint_min` (FPS × `gopSeconds`)
    + `-sc_threshold 0`.
 4. **مستوى البِتريت**: `-b:v` و`-maxrate` و`-bufsize` تُمرَّر من جدول المستويات كما
-   هي (بلا اشتقاق من `-b:v`)، فلا يقفز الخرج فوق سقف المستوى، ولا حشو CBR إجباري
-   فتظل المشاهد الهادئة موفّرة للبيانات.
+   هي (بلا اشتقاق من `-b:v`)، و`-maxrate` يساوي `-b:v` فلا يقفز الخرج فوق سقف
+   المستوى المختار، ولا حشو CBR إجباري فتظل المشاهد الهادئة موفّرة للبيانات.
 5. **الصوت**: AAC بـ `96k` (من `audioBitrate` في config إن وُجد) و`aresample=async=1`،
    أو `-an` حين لا صوت للمصدر.
 6. **HLS**: `-hls_time`، `-hls_list_size`، `-hls_delete_threshold`،

@@ -169,8 +169,8 @@ test('تغيير Bitrate وFPS أثناء التشغيل يعيد تشغيل ا�
 
   const args = argsLines(await logs()).pop() || '';
   assert.match(args, /-b:v 600k /);
-  assert.match(args, /-maxrate 700k /);
-  assert.match(args, /-bufsize 900k /);
+  assert.match(args, /-maxrate 600k /);
+  assert.match(args, /-bufsize 1200k /);
   assert.match(args, /-r 20/);
 
   await waitFor(async () => aliveStubPids().length === 1);
