@@ -126,7 +126,7 @@ web/
   assets/teams/           85 شعار نادٍ محلي (6.6MB)
 nginx/                    توزيعة Nginx لويندوز + conf/nginx.conf + مجلدات السجلات
 scripts/                  سكربتات ويندوز (.bat) وأدوات Node مساعدة
-tests/                    اختبارات node:test (102 اختباراً)
+tests/                    اختبارات node:test (107 اختباراً)
 srv/hls/                  مخرجات البث (غير محفوظة في git)
 srv/uploads/              أغلفة القنوات والشعار المرفوع
 run/                      control.token وserver.pid وجلسة اللوحة (تنشأ عند التشغيل)
@@ -429,12 +429,14 @@ node -e "const c=require('crypto');const salt=c.randomBytes(16).toString('hex');
 | `npm test` | `scripts/verify-v8.js`: الملفات المطلوبة، صلاحية JSON، تطابق حقول الإعدادات بين اللوحة والبيانات، عناصر اللوحة، وعقد نقاط النهاية |
 | `npm run test:http` | اختبارات API تكاملية على نسخة معزولة من المشروع (مجلد مؤقت ومنفذ خاص، فلا تُمسّ بياناتك) |
 | `npm run test:capture` | اختبارات طبقة الالتقاط (DirectShow/الشاشة/القدرات) بلا أجهزة حقيقية |
-| `npm run test:all` | كل ما سبق عبر `node --test tests/` — الحصيلة الحالية **95 اختباراً ناجحاً** |
+| `npm run test:tiers` | اختبار تكاملي لمستويات البِتريت الخمسة: يتحقق من وصول `-b:v` و`-maxrate` و`-bufsize` الصحيحة لكل مستوى إلى FFmpeg |
+| `npm run test:all` | كل ما سبق عبر `node --test tests/ tests/ffmpeg-tiers.js` — الحصيلة الحالية **107 اختباراً ناجحاً** |
 | `npm run test:stop` | محاكاة `stop.bat`: يتحقق أن `/api/stop` يعمل برمز التحكّم ويُرفض بدونه |
 | `npm run logos` | تنزيل أي شعار فريق ناقص وتحديث `team-logos.json` |
 | `node --check server.js` | فحص سريع للصياغة |
 
-تغطية مفيدة للقراءة: `tests/http/runtime-config.test.js` (إعدادات الترميز وإعادة
+تغطية مفيدة للقراءة: `tests/ffmpeg-tiers.js` (معاملات كل مستوى بِتريت الثلاثة)،
+`tests/http/runtime-config.test.js` (إعدادات الترميز وإعادة
 التشغيل والمنافذ)، `tests/http/api.test.js` (العقد الكامل للـAPI والأمان)،
 `tests/http/directshow-sources.test.js` (حقول المصادر)،
 `tests/football/*` (التعريب والشعارات ومصدر ESPN).

@@ -12,7 +12,8 @@
     "test:stop": "node scripts/test-stop.js",
     "test:http": "node --test tests/http/",
     "test:capture": "node --test tests/capture/",
-    "test:all": "node --test tests/"
+    "test:tiers": "node --test tests/ffmpeg-tiers.js",
+    "test:all": "node --test tests/ tests/ffmpeg-tiers.js"
   },
   "engines": {
     "node": ">=18"
