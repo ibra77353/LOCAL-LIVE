@@ -345,7 +345,7 @@ test('تغيير إعدادات DirectShow لقناة نشطة يبقي البث
     return { row, actualKbps, lastLine: lines[lines.length - 1] };
   }, 26000, 500);
   assert.ok(settled, 'البتريت الفعلي يجب أن يبقى ضمن ±10% من الهدف الكلي (696k) بعد تغيير إعدادات DirectShow');
-  assert.match(settled.lastLine, /مستقر ضمن الهدف/);
+  assert.match(settled.lastLine, /داخل النطاق المسموح/);
   assert.equal(settled.row.live, true, 'البث يبقى نشطاً (قائمة تشغيل حديثة) بعد التعديل');
   assert.ok(settled.row.outputBps > 0, 'معدّل البت الفعلي يتجدّد بعد التعديل');
   assert.equal(aliveStubPids().length, 1, 'إعادة التشغيل بسبب تعديل المصدر يجب ألا تُبقي نسخة FFmpeg مزدوجة');

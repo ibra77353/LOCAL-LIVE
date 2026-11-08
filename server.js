@@ -947,21 +947,30 @@ function channelMuxesAudio(source) {
   return !!String(source?.audioDevice || '').trim();
 }
 
-// سطر سجل استقرار البِتريت: المعدّل الفعلي للخرج مقابل الهدف المحسوب على
+// سطر سجل استقرار البِتريت: المعدّل الفعلي للخرج مقابل النطاق المسموح على
 // نافذة القياس (12 ثانية). يظهر في سجل الخادم وفي سجل القناة معاً.
 // أحجام مقاطع HLS تشمل الصوت والـ muxing مع الفيديو، فهدف الصوت يُضاف إلى هدف
 // الفيديو، وإلا ظهر انحراف ثابت (+96k دائماً) وليس عيباً في الترميز.
+// المستوى يُترمَّز VBR: -b:v متوسط مستهدف و-maxrate سقف مسموح، فالمعدّل الفعلي
+// يتنقّل بينهما حسب حركة المشهد (وكلفة الإطار المفتاحي كل ثانيتين). لذلك يُقارَن
+// الفعلي بالنطاق كاملاً لا بنقطة واحدة، ولا يُعدّ تجاوزاً إلا ما خرج فوق السقف
+// مع هامش أطراف النقل (TS) والصوت الفعلي.
+const BITRATE_CEILING_SLACK = 0.05;
 function logBitrateWindow(channel, source, bytesPerSecond, seconds) {
-  const videoKbps = bitrateKbps(channelOutputPlan(channel, source).videoBitrate);
+  const plan = channelOutputPlan(channel, source);
+  const videoKbps = bitrateKbps(plan.videoBitrate);
   if (!videoKbps) return;
+  const videoMaxKbps = Math.max(videoKbps, bitrateKbps(plan.videoMaxrate) || videoKbps);
   const audioKbps = channelMuxesAudio(source) ? bitrateKbps(cfg.audioBitrate || '96k') : 0;
   const targetKbps = videoKbps + audioKbps;
+  const ceilingKbps = videoMaxKbps + audioKbps;
   const actualKbps = Math.round((bytesPerSecond * 8) / 1000);
   const deviation = Math.round(((actualKbps - targetKbps) / targetKbps) * 100);
-  const verdict = Math.abs(deviation) <= 10 ? 'مستقر ضمن الهدف' : (deviation > 0 ? 'أعلى من الهدف' : 'أقل من الهدف');
-  const breakdown = audioKbps ? ` (فيديو ${videoKbps}k + صوت ${audioKbps}k)` : '';
-  const line = `استقرار البِتريت «${channel.name}»: الفعلي ${actualKbps}k مقابل الهدف ${targetKbps}k${breakdown} `
-    + `(${deviation > 0 ? '+' : ''}${deviation}%، ${verdict}) على نافذة ${Math.round(seconds)} ثانية`;
+  const verdict = actualKbps > Math.round(ceilingKbps * (1 + BITRATE_CEILING_SLACK)) ? 'أعلى من السقف المسموح'
+    : (actualKbps < Math.round(targetKbps * 0.9) ? 'أقل من الهدف' : 'داخل النطاق المسموح');
+  const breakdown = audioKbps ? ` (فيديو ${videoKbps}k–${videoMaxKbps}k + صوت ${audioKbps}k)` : ` (فيديو ${videoKbps}k–${videoMaxKbps}k)`;
+  const line = `استقرار البِتريت «${channel.name}»: الفعلي ${actualKbps}k من نطاق ${targetKbps}k–${ceilingKbps}k${breakdown} `
+    + `(${deviation > 0 ? '+' : ''}${deviation}% عن الهدف، ${verdict}) على نافذة ${Math.round(seconds)} ثانية`;
   logLine(line);
   appendChannelLog(channel.id, line);
 }
