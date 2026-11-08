@@ -1919,10 +1919,10 @@ const server = http.createServer(async (req, res) => {
     return send(res,200,{ok:true,message:'تم إرسال أوامر تشغيل القنوات المحددة للتشغيل التلقائي',results:started});
   }
   if (req.method === 'POST' && url.pathname === '/api/stop') {
-    // إيقاف كل القنوات من لوحة التحكم = إيقاف يدوي: يمنع كل مسار تلقائي من تشغيلها.
-    const result = stopStream(clientInfo(req));
-    data.channels.forEach(c => setManualStopped(c.id, true));
-    return send(res,200,result);
+    // إيقاف كل القنوات إيقافاً مؤقتاً فقط: نفس المسار يستخدمه scripts/stop.bat عند
+    // إغلاق البرنامج، فلو ثبّت إيقافاً يدوياً بقيت كل القنوات «موقوفة يدوياً» بعد
+    // كل تشغيل. التثبيت اليدوي يبقى لزر «إيقاف» الخاص بقناة واحدة.
+    return send(res,200,stopStream(clientInfo(req)));
   }
 
   if (req.method === 'GET' && url.pathname === '/api/logs') {

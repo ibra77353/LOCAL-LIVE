@@ -315,6 +315,17 @@ test('POST /api/start و /api/stop يعملان على مستوى كل القن�
   assert.equal(stop.json.ok, true);
 });
 
+// scripts/stop.bat يغلق البرنامج عبر /api/stop، فلو ثبّت هذا المسار إيقافاً يدوياً
+// بقيت كل القنوات «موقوفة يدوياً» بعد كل تشغيل ولم تُعد التشغيل التلقائي.
+test('POST /api/stop لا يثبّت إيقافاً يدوياً على القنوات', async () => {
+  const channelRow = async () =>
+    (await api.get('/api/channels')).json.channels.find((c) => c.id === state.channelId);
+  await api.post(`/api/channels/${state.channelId}/start`);
+  assert.equal((await channelRow()).manualStopped, false, 'التشغيل اليدوي يلغي تثبيت الإيقاف');
+  await api.post('/api/stop');
+  assert.equal((await channelRow()).manualStopped, false, 'إيقاف الكل يجب ألا يثبّت إيقافاً يدوياً');
+});
+
 // ---------------------------------------------------------------- الأجهزة
 test('GET /api/devices يعيد قوائم فيديو/صوت بنية ثابتة', async () => {
   const res = await api.get('/api/devices');
