@@ -663,6 +663,13 @@ label .input {
   font-size: 12px
 }
 
+.lan-links .lan-alt {
+  margin: -8px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.9;
+  text-align: left
+}
+
 /* ---- tables ---- */
 .table-wrap {
   background: var(--panel);

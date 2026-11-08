@@ -232,12 +232,19 @@ async function loadLanLinks() {
   }
   const port = Number(info.port) || 80;
   const suffix = port === 80 ? '' : ':' + port;
-  const rows = list.map((item) => {
-    const base = `http://${item.address}${suffix}`;
-    const viewer = `<a href="${base}/" target="_blank" rel="noopener">${base}/</a>`;
-    const admin = `<a href="${base}/admin" target="_blank" rel="noopener">${base}/admin</a>`;
-    return `<p>${viewer} للمشاهدة · ${admin} للإدارة <span class="lan-if">(${escHtml(item.name)})</span></p>`;
-  });
+  const link = (item, path) => {
+    const url = `http://${item.address}${suffix}${path}`;
+    return `<a href="${url}" target="_blank" rel="noopener">${url}</a>`;
+  };
+  // الخادم يحدد العنوان الذي يخرج منه الجهاز فعلاً؛ نعرضه وحده أولاً بدل قائمة يجرّبها المستخدم كلها.
+  const primary = list.find((item) => item.primary) || list[0];
+  const others = list.filter((item) => item !== primary);
+  const rows = [`<p>${link(primary, '/')} للمشاهدة · ${link(primary, '/admin')} للإدارة <span class="lan-if">(${escHtml(primary.name)})</span></p>`];
+  if (others.length) {
+    // سطر مستقل باتجاه LTR حتى تبقى العناوين بترتيبها ولا يقلبها اتجاه الصفحة العربي.
+    rows.push('<p class="field-note">عناوين أخرى على الجهاز (لا تستخدمها إلا إذا لم يعمل العنوان أعلاه):</p>'
+      + `<p class="lan-alt" dir="ltr">${others.map((item) => link(item, '/')).join(' · ')}</p>`);
+  }
   const fw = info.firewall || {};
   const fwWarn = fw.checked === true && (fw.viewer === false || fw.api === false)
     ? '<p class="field-note warn">جدار الحماية لا يسمح بالمنافذ بعد — شغّل scripts\\allow-lan.bat مرة واحدة، وتأكد أن شبكة ويندوز مصنّفة «خاصة».</p>'

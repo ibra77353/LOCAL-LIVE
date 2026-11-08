@@ -467,6 +467,24 @@ function getNetworkInterfaces() {
     return rank(a) - rank(b) || a.name.localeCompare(b.name) || a.address.localeCompare(b.address);
   });
 }
+// عنوان الواجهة التي يخرج منها الجهاز فعلاً إلى الشبكة (المسار الافتراضي).
+// جهاز واحد قد يملك عدة عناوين (Wi-Fi، Ethernet، محوّلات وهمية)، وهذا هو العنوان
+// الذي يستخدمه الهاتف عادةً؛ لا تُرسل حزمة فعلية — مجرد ربط مقبس UDP لقراءة العنوان.
+function primaryLanAddress() {
+  return new Promise((resolve) => {
+    const socket = require('dgram').createSocket('udp4');
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      try { socket.close(); } catch {}
+      resolve(value);
+    };
+    setTimeout(() => finish(''), 1500).unref();
+    socket.once('error', () => finish(''));
+    socket.connect(53, '8.8.8.8', () => { try { finish(socket.address().address); } catch { finish(''); } });
+  });
+}
 // هل قواعد جدار الحماية التي يضيفها scripts/firewall.bat موجودة؟ (ويندوز فقط)
 // الهاتف لا يصل إلى الكمبيوتر إن غابت هذه القواعد أو كانت شبكة ويندوز مصنّفة «عامة».
 function firewallRuleExists(name) {
@@ -1485,11 +1503,15 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   if (req.method === 'GET' && url.pathname === '/api/network/interfaces') {
     if (!requireAdmin(req, res)) return;
-    const interfaces = getNetworkInterfaces();
     // المنفذ المعروض هو منفذ Nginx الفعلي (هو الواجهة التي يفتحها الهاتف)، لا منفذ Node الداخلي.
     const port = Number(data.settings.nginxPort) || 80;
+    const primary = await primaryLanAddress();
+    // العنوان الخارج فعلاً أولاً، فتعرض اللوحة عنواناً واحداً صحيحاً بدل قائمة يجرّبها المستخدم كلها.
+    const interfaces = getNetworkInterfaces()
+      .map((item) => ({ ...item, primary: !!primary && item.address === primary }))
+      .sort((a, b) => Number(b.primary) - Number(a.primary));
     const firewall = await firewallStatus(port);
-    return send(res, 200, { ok: true, port, interfaces, firewall, message: interfaces.length ? 'تم اكتشاف عناوين IPv4 على واجهات الشبكة.' : 'لم يتم العثور على عنوان IPv4 قابل للوصول.' });
+    return send(res, 200, { ok: true, port, interfaces, primary, firewall, message: interfaces.length ? 'تم اكتشاف عناوين IPv4 على واجهات الشبكة.' : 'لم يتم العثور على عنوان IPv4 قابل للوصول.' });
   }
 
   // Explicit admin-page routes; both Node direct access and Nginx proxy use these.
@@ -2184,7 +2206,11 @@ probeNginxPort();
 
 server.listen(LISTEN_PORT, LISTEN_HOST, () => {
   logLine(`الخادم يعمل على http://${LISTEN_HOST}:${LISTEN_PORT} (منفذ Nginx: ${Number(data.settings.nginxPort) || 80})`);
-  for (const item of getNetworkInterfaces()) logLine(`رابط المشاهدة: ${item.url} | الواجهة: ${item.name}`);
+  // العنوان الذي يخرج منه الجهاز فعلاً يُسجَّل أولاً ومعلَّماً، فالهاتف يستخدمه هو.
+  primaryLanAddress().then((primary) => {
+    const nets = getNetworkInterfaces().sort((a, b) => Number(b.address === primary) - Number(a.address === primary));
+    for (const item of nets) logLine(`رابط المشاهدة: ${item.url} | الواجهة: ${item.name}${item.address === primary ? ' (الأنسب للهاتف)' : ''}`);
+  });
   if (process.argv.includes('--devices')) listDevices();
   const bootChannels=data.channels.filter(c=>c.enabled!==false && !c.manualStopped && (c.autoStart||c.alwaysOn));
   // كل دورة تُشغّل startupConcurrency قناة معاً: 1 = تسلسلي كما كان، وأكثر = دفعات متزامنة بفاصل ثانية بين الدفعات.
