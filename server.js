@@ -1838,6 +1838,19 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // حلّ «تلقائي» لنموذج القناة قبل الحفظ: نفس دالة الترميز (channelOutputPlan) حتى
+  // يرى المستخدم المستوى المحسوب من الدقة وFPS دون تكرار المعادلة في الواجهة.
+  if (req.method === 'POST' && url.pathname === '/api/channels/plan') {
+    let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const invalid = validateChannelEncodingFields(body);
+    if (invalid) return apiError(res, 400, invalid);
+    const source = data.sources.find(s => s.id === String(body.sourceId || ''));
+    if (!source) return apiError(res, 404, 'مصدر البث غير موجود');
+    const plan = channelOutputPlan({ quality: String(body.quality || ''), fps: body.fps, bitrate: 'auto' }, source);
+    return send(res, 200, { ok: true, outputWidth: plan.outputWidth, outputHeight: plan.outputHeight,
+      outputFps: plan.outputFps, autoTargetKbps: plan.autoTargetKbps, level: plan.videoLevel });
+  }
+
   const channelAction = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)\/(start|stop|restart)$/);
   if (channelAction && req.method === 'POST') {
     const [,id,action]=channelAction;

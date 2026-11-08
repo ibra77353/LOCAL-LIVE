@@ -603,6 +603,29 @@ function deleteChannel(id) {
     });
 }
 
+// «تلقائي» يُحلّ في الخادم بنفس دالة الترميز؛ نعرض المستوى المحسوب بجانب الخيار
+// ليتحقق المستخدم من الحساب قبل الحفظ. يتحدّث فور تغيير الجودة أو FPS أو المصدر.
+async function refreshAutoLevelHint() {
+  const sel = $('#m_cbitrate');
+  if (!sel) return;
+  const autoOpt = [...sel.options].find((o) => o.value === 'auto');
+  if (!autoOpt) return;
+  const base = bitrateLevel('auto').label;
+  const note = $('#m_cautoHint');
+  const quality = $('#m_cquality').value;
+  if (quality === 'copy' || quality === 'source') { autoOpt.textContent = base; if (note) { note.textContent = ''; note.hidden = true; } return; }
+  try {
+    const plan = await api('/channels/plan', {
+      method: 'POST',
+      body: { sourceId: $('#m_csource').value, quality, fps: $('#m_cfps').value || null }
+    });
+    const lv = plan.level;
+    autoOpt.textContent = `تلقائي — «${lv.label}» (${lv.bitrate} / سقف ${lv.maxrate} / مخزن ${lv.bufsize})`;
+    // الأبعاد داخل عزل LTR حتى لا يعكسها اتجاه النص العربي (320×568 بدل 568×320).
+    if (note) { note.textContent = `الحساب التلقائي لهذه القناة: \u2066${plan.outputWidth}×${plan.outputHeight}\u2069 عند ${plan.outputFps} إطاراً ← الهدف ${plan.autoTargetKbps}k ⇒ «${lv.label}».`; note.hidden = false; }
+  } catch (e) { autoOpt.textContent = base; if (note) note.textContent = ''; }
+}
+
 function openChannelModal(id) {
   const ch = id ? DATA.channels.find(c => c.id === id) : null;
   const curQ = ch?.quality || 'copy';
@@ -641,6 +664,7 @@ function openChannelModal(id) {
       <select class="input" id="m_cbitrate">
         ${CH_BITRATES.map((level) => `<option value="${level.id}" ${curBitrate === level.id ? 'selected' : ''}>${level.label}</option>`).join('')}
       </select></label>
+    <p class="hint" id="m_cautoHint"></p>
     <p class="hint">كل مستوى يعتمد ثلاث قيم تُمرَّر إلى FFmpeg كما هي: -b:v (المعدّل) و-maxrate (السقف) و-bufsize (المخزن). «تلقائي» يختار المستوى المناسب من دقة الخرج ومعدل الإطارات. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ.</p>
     <label>عدد خيوط الترميز (Threads) لهذه القناة
       <input class="input" id="m_cthreads" type="number" min="1" max="64" dir="ltr" value="${esc(ch?.threads ?? '')}" placeholder="فارغ = الإعداد العام"></label>
@@ -665,6 +689,9 @@ function openChannelModal(id) {
       await loadChannels();
       toast(saved && saved.restarted ? 'تم الحفظ وإعادة تشغيل القناة' : 'تم الحفظ');
     });
+  // الجودة وFPS والمصدر تؤثر في حلّ «تلقائي»، فنعيد الحساب عند تغيير أي منها.
+  ['#m_cquality', '#m_cfps', '#m_csource'].forEach((sel) => $(sel).addEventListener('change', refreshAutoLevelHint));
+  refreshAutoLevelHint();
 }
 
 // =====================================================================
