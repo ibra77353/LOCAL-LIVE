@@ -17,6 +17,11 @@ const football = require('./lib/football');
 
 const ROOT = __dirname;
 const CONFIG_PATH = path.join(ROOT, 'config.json');
+// إصدار التطبيق من package.json (مصدر واحد) بدل رقم مكتوب في الكود يتخلّف عنه.
+const APP_VERSION = (() => {
+  try { return String(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || '0.0.0'); }
+  catch { return '0.0.0'; }
+})();
 
 let cfg;
 try {
@@ -1981,7 +1986,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, message: 'تم استرجاع الإعدادات. أعد تشغيل النظام لتطبيق تغييرات المنافذ.' });
   }
   if (req.method === 'GET' && url.pathname === '/api/update/status') {
-    return send(res, 200, { ok: true, available: false, currentVersion: '8.0.0', latestVersion: '8.0.0' });
+    return send(res, 200, { ok: true, available: false, currentVersion: APP_VERSION, latestVersion: APP_VERSION });
   }
 
   if (url.pathname.startsWith('/api/')) {
