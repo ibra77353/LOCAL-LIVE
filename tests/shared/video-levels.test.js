@@ -10,10 +10,11 @@ test('جدول المستويات يحمل قيم -b:v و-maxrate و-bufsize ا�
   const table = VIDEO_BITRATE_LEVELS.map((level) => [level.id, level.bitrate, level.maxrate, level.bufsize]);
   assert.deepEqual(table, [
     ['auto', '', '', ''],
-    ['economy', '300k', '400k', '600k'],
-    ['accepted', '400k', '500k', '700k'],
-    ['balanced', '500k', '600k', '800k'],
-    ['highest', '600k', '700k', '900k']
+    // -maxrate يساوي -b:v، و-bufsize ضعفه.
+    ['economy', '300k', '300k', '600k'],
+    ['accepted', '400k', '400k', '800k'],
+    ['balanced', '500k', '500k', '1000k'],
+    ['highest', '600k', '600k', '1200k']
   ]);
 });
 
@@ -48,7 +49,7 @@ test('autoVideoLevel يحسب الهدف من الدقة وFPS ويختار أص
 
 test('resolveVideoLevel يمرّر قيم المستوى المختار كما هي ويحسب التلقائي', () => {
   const balanced = resolveVideoLevel('balanced', { outputWidth: 640, outputHeight: 360, outputFps: 20 });
-  assert.deepEqual([balanced.level.bitrate, balanced.level.maxrate, balanced.level.bufsize], ['500k', '600k', '800k']);
+  assert.deepEqual([balanced.level.bitrate, balanced.level.maxrate, balanced.level.bufsize], ['500k', '500k', '1000k']);
   assert.equal(balanced.autoTargetKbps, null);
 
   const auto = resolveVideoLevel('', { outputWidth: 640, outputHeight: 360, outputFps: 20 });
