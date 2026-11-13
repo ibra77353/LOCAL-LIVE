@@ -1,28 +1,49 @@
 'use strict';
-/* أمان لايف — منطق لوحة التحكم */
+/* البرنس لايف — منطق لوحة التحكم */
 
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
-  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-// دالة موحدة لمعالجة مسارات الصور (نفس الدالة الموجودة في viewer.js)
-function getAssetUrl(raw) {
-  if (!raw) return '';
-  const s = String(raw).trim();
-  if (/^https?:\/\//i.test(s)) return s; // رابط خارجي
-  if (s.startsWith('/')) return s;       // مسار مطلق
-  return '/' + s.replace(/^srv\/uploads\/?/, 'uploads/').replace(/^\.?\/+/, '');
-}
 
 // جودة القناة الواحدة: نسخ المصدر (copy) ثم جودات الترميز.
 const CH_QUALITIES = [
   ['copy', 'نسخ المصدر (بلا ترميز — الأخف والأعلى جودة)'],
-  ['240p', '240p'], ['360p', '360p'], ['480p', '480p'], ['720p', '720p']
+  ['auto', 'تلقائي (الأبعاد الافتراضية)'],
+  ['240p', '240p'], ['288p', '288p'], ['320p', '320p'], ['360p', '360p'],
+  ['432p', '432p'], ['480p', '480p'], ['720p', '720p']
 ];
-const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+// مستويات جودة الفيديو تصل من الخادم (/api/settings → videoLevels): مصدر واحد
+// لقيم -b:v/-maxrate/-bufsize، فلا تنحرف نسخة ثانية في اللوحة عن قيم FFmpeg.
+// «تلقائي» يحسب المستوى المناسب من دقة الخرج ومعدل الإطارات في الخادم.
+const AUTO_BITRATE_LEVEL = { id: 'auto', name: 'تلقائي', label: 'تلقائي حسب جودة الخرج (يُحسب من الدقة وFPS)', kbps: null };
+let CH_BITRATES = [AUTO_BITRATE_LEVEL];
+function applyVideoLevels(levels) {
+  if (!Array.isArray(levels) || !levels.length) return;
+  CH_BITRATES = levels.map((level) => ({
+    id: level.id,
+    name: level.id === 'auto' ? 'تلقائي' : level.label,
+    label: level.id === 'auto'
+      ? 'تلقائي حسب جودة الخرج (يُحسب من الدقة وFPS)'
+      : `${level.label} — ${level.bitrate} / سقف ${level.maxrate} / مخزن ${level.bufsize}`,
+    kbps: level.bitrate ? Number(String(level.bitrate).replace(/k$/i, '')) : null
+  }));
+}
+// بِتريت القنوات القديم (300k..600k) يُطابق مستواه الذي يحمل نفس -b:v.
+const LEGACY_BITRATES = { '300k': 'economy', '400k': 'accepted', '500k': 'balanced', '600k': 'highest' };
+// المستوى المقابل لقيمة محفوظة؛ أي قيمة غير معروفة تُعرض كـ«تلقائي».
+function bitrateLevel(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text || text === 'auto') return CH_BITRATES[0];
+  return CH_BITRATES.find((level) => level.id === text)
+    || CH_BITRATES.find((level) => level.id === LEGACY_BITRATES[text]) || CH_BITRATES[0];
+}
+// معدّل الإطارات (FPS) لكل قناة — فارغ = الافتراضي 20 إطاراً.
+const CH_FPS = [
+  ['', 'تلقائي (20 إطار)'],
+  ['15', '15 إطار'], ['20', '20 إطار'], ['25', '25 إطار'],
+  ['30', '30 إطار'], ['50', '50 إطار'], ['60', '60 إطار']
+];
 const TYPE_LABELS = {
-  usb: 'كرت التقاط USB / DirectShow', http: 'HTTP مباشر', hls: 'HLS / M3U8',
+  usb: 'كرت التقاط (DirectShow)', http: 'HTTP مباشر', hls: 'HLS / M3U8',
 file: 'ملف فيديو محلي', screen: 'التقاط الشاشة'
 };
 const STATUS_LABELS = { running: 'تعمل ON AIR', stopped: 'متوقفة', starting: 'جارٍ التشغيل', stopping: 'جارٍ الإيقاف', restarting: 'إعادة تشغيل', error: 'خطأ', blocked: 'محظورة من المزوّد' };
@@ -96,11 +117,13 @@ function switchView(name) {
 
 // ---------------- Boot ----------------
 async function boot() {
-  await Promise.all([loadSettings(), loadSources(), loadChannels()]);
+  // المصادر أولاً: جدول القنوات يطابق sourceId بأسماء المصادر، والتحميل المتوازي
+  // كان يعرض «—» في عمود المصدر حتى إعادة تحميل القنوات.
+  await Promise.all([loadSettings(), loadSources()]);
+  await loadChannels();
   refreshStatus();
   clearInterval(statusTimer);
   statusTimer = setInterval(refreshStatus, 5000);
-  setTimeout(updateBanner, 4000); // إشعار التحديث بعد الدخول
 }
 
 (async function init() {
@@ -112,27 +135,34 @@ async function boot() {
 })();
 
 // ---------------- Settings ----------------
-const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','ticker','tickerEnabled','x264Preset',
+const S_KEYS = ['siteName','siteNameLatin','logo','phone','theme','worldCupFullPage','ticker','tickerEnabled','x264Preset',
   'port','nginxPort',
-  'x264Threads','x264QualityMode','hlsTime','hlsListSize','hlsDeleteThreshold','gopSeconds','outputWidth','outputHeight','outputFps','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
+  'x264Threads','x264QualityMode','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold','startupQueueDelayMs','startupConcurrency','autoRestartCrashed','maxRestarts','restartBackoffMs','hideCosmeticLogs',
   'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration','capLevelToPlayerSize',
   'cpuSaverDefault','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','autoStartOnDemand','idleStopEnabled','idleStopMinutes',
-  'sourceFailStopMinutes','blockedStopMinutes','logoImage','logoPosition','logoSizePct','logoOpacityPct'];
+  'sourceFailStopMinutes','blockedStopMinutes'];
 
 async function loadSettings() {
-  const { settings } = await api('/settings');
+  const { settings, nginx, videoLevels } = await api('/settings');
   DATA.settings = settings;
+  applyVideoLevels(videoLevels);
+  // مسار Nginx المحلول فعلياً من الإعدادات، مع تنبيه إن كان الملف غير موجود.
+  const nginxNote = $('#nginxPathNote');
+  if (nginxNote) {
+    nginxNote.textContent = nginx && nginx.binary
+      ? (nginx.binaryExists ? 'مسار Nginx المستخدم: ' : 'لم يُعثر على ملف Nginx في: ') + nginx.binary
+      : '';
+    nginxNote.classList.toggle('warn', !!(nginx && !nginx.binaryExists));
+  }
+  loadLanLinks();
   for (const k of S_KEYS) {
     const el = $('#s_' + k);
     if (!el) continue;
     if (el.type === 'checkbox') el.checked = !!settings[k]; else el.value = settings[k] ?? '';
   }
-  // حدّث تسميات نسب الشعار بجانب الأشرطة
-  if ($('#logoSizeVal')) $('#logoSizeVal').textContent = (settings.logoSizePct ?? 10) + '٪';
-  if ($('#logoOpacityVal')) $('#logoOpacityVal').textContent = (settings.logoOpacityPct ?? 50) + '٪';
   document.body.classList.toggle('worldcup', settings.theme === 'worldcup');
-  $('#brandName').textContent = settings.siteName || 'أمان لايف';
-  $('#adminFooter').textContent = 'جميع الحقوق محفوظة © أمان لايف';
+  $('#brandName').textContent = settings.siteName || 'البرنس لايف';
+  $('#adminFooter').textContent = 'جميع الحقوق محفوظة © البرنس لايف';
   const logo = $('#brandLogo');
   if (settings.logo) { logo.src = getAssetUrl(settings.logo); logo.classList.remove('hidden'); }
   else logo.classList.add('hidden');
@@ -146,10 +176,14 @@ async function saveSettings() {
     body[k] = el.type === 'checkbox' ? el.checked : ((el.type === 'number' || el.type === 'range') ? Number(el.value) : el.value);
   }
   try {
-    const r = await api('/settings', { method: 'PUT', body });
-    toast('تم حفظ الإعدادات');
+    const r = await api('/settings', { method: 'POST', body });
+    // إعدادات الترميز العامة (Preset/Threads/HLS/GOP) يعيد الخادم تشغيل القنوات
+    // النشطة بها فوراً، فنخبر المستخدم بعدد القنوات التي طُبّقت عليها.
+    const applied = (r.restartedChannels || []).length;
+    toast(applied ? `تم حفظ الإعدادات وتطبيقها على ${applied} قناة نشطة` : 'تم حفظ الإعدادات');
     loadSettings();
-    if (r.restartRequired) {
+    refreshStatus();
+    if (r.restartRequired || r.nginxRestartRequired) {
       alert('تم تغيير المنفذ. لتطبيق التغيير:\n1) اضغط «تحديث ملف nginx.conf بالمنافذ الحالية».\n2) أعد تشغيل النظام (أغلق نافذة الأوامر وشغّل start.bat).\n3) أعد تشغيل Nginx.');
     }
   } catch (e) { toast(e.message, true); }
@@ -171,8 +205,54 @@ async function regenerateNginx() {
   } catch (e) { toast(e.message, true); }
 }
 
+// أوامر Nginx تُنفَّذ على المسار المحفوظ في «مسار Nginx» (settings.nginxPath).
+async function nginxAction(action) {
+  const labels = { test: 'اختبار', restart: 'إعادة تشغيل' };
+  if (action === 'restart' && !confirm('إعادة تشغيل Nginx بالمسار المحفوظ في الإعدادات؟')) return;
+  try {
+    const r = await api('/nginx/action', { method: 'POST', body: { action } });
+    alert((r.message || '') + (r.output ? '\n\n' + r.output : ''));
+    if (r.ok) toast('تم ' + (labels[action] || action) + ' Nginx');
+    else toast(r.message || 'فشل أمر Nginx', true);
+  } catch (e) { toast(e.message, true); }
+}
 
-
+// عناوين الوصول من الهاتف: الخادم يعيد عناوين IPv4 الحقيقية للكمبيوتر (بلا محوّلات وهمية)
+// مع منفذ Nginx الفعلي، فيكتب المستخدم العنوان الصحيح بدل تخمينه.
+async function loadLanLinks() {
+  const box = $('#lanLinks');
+  if (!box) return;
+  let info;
+  try { info = await api('/network/interfaces'); }
+  catch (e) { box.innerHTML = '<p class="field-note warn">تعذر اكتشاف عناوين الشبكة.</p>'; return; }
+  const list = Array.isArray(info.interfaces) ? info.interfaces : [];
+  if (!list.length) {
+    box.innerHTML = '<p class="field-note warn">لم يُعثر على عنوان شبكة محلية — تأكد من اتصال الكمبيوتر بالشبكة.</p>';
+    return;
+  }
+  const port = Number(info.port) || 80;
+  const suffix = port === 80 ? '' : ':' + port;
+  const link = (item, path) => {
+    const url = `http://${item.address}${suffix}${path}`;
+    return `<a href="${url}" target="_blank" rel="noopener">${url}</a>`;
+  };
+  // الخادم يحدد العنوان الذي يخرج منه الجهاز فعلاً؛ نعرضه وحده أولاً بدل قائمة يجرّبها المستخدم كلها.
+  const primary = list.find((item) => item.primary) || list[0];
+  const others = list.filter((item) => item !== primary);
+  const rows = [`<p>${link(primary, '/')} للمشاهدة · ${link(primary, '/admin')} للإدارة <span class="lan-if">(${escHtml(primary.name)})</span></p>`];
+  if (others.length) {
+    // سطر مستقل باتجاه LTR حتى تبقى العناوين بترتيبها ولا يقلبها اتجاه الصفحة العربي.
+    rows.push('<p class="field-note">عناوين أخرى على الجهاز (لا تستخدمها إلا إذا لم يعمل العنوان أعلاه):</p>'
+      + `<p class="lan-alt" dir="ltr">${others.map((item) => link(item, '/')).join(' · ')}</p>`);
+  }
+  const fw = info.firewall || {};
+  const fwWarn = fw.checked === true && (fw.viewer === false || fw.api === false)
+    ? '<p class="field-note warn">جدار الحماية لا يسمح بالمنافذ بعد — شغّل scripts\\allow-lan.bat مرة واحدة، وتأكد أن شبكة ويندوز مصنّفة «خاصة».</p>'
+    : '';
+  box.innerHTML = `<div class="lan-links">${rows.join('')}</div>`
+    + '<p class="field-note">اكتب العنوان حرفياً على الهاتف مع نفس المنفذ، وتأكد أن الهاتف على شبكة Wi-Fi نفسها وليست شبكة ضيوف.</p>'
+    + fwWarn;
+}
 
 // ---------------- النسخ الاحتياطي ----------------
 function downloadBackup() {
@@ -229,14 +309,27 @@ function openModal(title, bodyHtml, onSave) {
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = bodyHtml;
   $('#modalError').textContent = '';
+  const save = $('#modalSave');
+  save.textContent = 'حفظ';
+  save.classList.add('btn-primary');
+  save.classList.remove('btn-danger');
   $('#modalOverlay').classList.remove('hidden');
-  $('#modalSave').onclick = async () => {
+  save.onclick = async () => {
     $('#modalError').textContent = '';
     try { await onSave(); closeModal(); }
     catch (e) { $('#modalError').textContent = e.message; }
   };
 }
 function closeModal() { $('#modalOverlay').classList.add('hidden'); }
+
+// نافذة تأكيد قبل الإجراءات الحساسة (بدل confirm الخاص بالمتصفح)
+function confirmAction(title, message, onConfirm) {
+  openModal(title, `<p class="confirm-text">${message}</p>`, onConfirm);
+  const save = $('#modalSave');
+  save.textContent = 'تأكيد الحذف';
+  save.classList.remove('btn-primary');
+  save.classList.add('btn-danger');
+}
 $('#modalOverlay').addEventListener('click', (e) => { if (e.target.id === 'modalOverlay') closeModal(); });
 
 // =====================================================================
@@ -262,10 +355,15 @@ function sourceDetail(s) {
   return s.url || '';
 }
 
-async function deleteSource(id) {
-  if (!confirm('حذف هذا المصدر؟')) return;
-  try { await api('/sources/' + id, { method: 'DELETE' }); loadSources(); toast('تم الحذف'); }
-  catch (e) { toast(e.message, true); }
+function deleteSource(id) {
+  const src = DATA.sources.find(s => s.id === id);
+  confirmAction('حذف المصدر',
+    `سيتم حذف المصدر «${esc(src ? src.name : '')}» نهائياً. لا يمكن التراجع عن هذا الإجراء.`,
+    async () => {
+      await api('/sources/' + id, { method: 'DELETE' });
+      await loadSources();
+      toast('تم الحذف');
+    });
 }
 
 function openSourceModal(id) {
@@ -281,26 +379,28 @@ function openSourceModal(id) {
     ${id ? '' : `<label class="switch-row" style="margin-top:10px"><input type="checkbox" id="m_autoChannel" checked> إضافة قناة تلقائياً لهذا المصدر بعد الحفظ</label>`}`;
   openModal(id ? 'تعديل مصدر' : 'إضافة مصدر', body, async () => {
     const payload = collectSourceForm();
+    let created = null;
     if (id) { await api('/sources/' + id, { method: 'PUT', body: payload }); }
-    else {
-      const created = await api('/sources', { method: 'POST', body: payload });
-      // إضافة قناة تلقائياً إن طُلب
-      if ($('#m_autoChannel') && $('#m_autoChannel').checked && created && created.source) {
-        try {
-          await api('/channels', { method: 'POST', body: { name: created.source.name, sourceId: created.source.id, enabled: true } });
-        } catch (e) {}
-        await loadChannels();
-      }
-    }
+    else { created = await api('/sources', { method: 'POST', body: payload }); }
+    // تحديث المصادر أولاً حتى يظهر اسم المصدر في جدول القنوات مباشرة
     await loadSources();
+    // إضافة قناة تلقائياً إن طُلب
+    if (created && $('#m_autoChannel') && $('#m_autoChannel').checked && created.source) {
+      try {
+        await api('/channels', { method: 'POST', body: { name: created.source.name, sourceId: created.source.id, enabled: true } });
+      } catch (e) {}
+      await loadChannels();
+    }
     toast('تم الحفظ');
   });
   window._editSrc = src;
   renderSourceFields();
 }
 
+let _srcFieldsSeq = 0;
 async function renderSourceFields() {
   const type = $('#m_type').value;
+  const seq = ++_srcFieldsSeq;
   const src = window._editSrc && window._editSrc.type === type ? window._editSrc : null;
   const box = $('#srcFields');
 
@@ -308,6 +408,8 @@ async function renderSourceFields() {
     box.innerHTML = `<p class="hint">جارٍ قراءة الأجهزة المتصلة...</p>`;
     try {
       const d = await api('/devices');
+      // تغيّر النوع أثناء جلب الأجهزة: تجاهل نتيجة هذا الطلب القديم
+      if (seq !== _srcFieldsSeq) return;
       box.innerHTML = `
         <label>جهاز الفيديو
           <select class="input" id="m_videoDevice" onchange="loadSizeOptions()">
@@ -332,10 +434,17 @@ async function renderSourceFields() {
           <select class="input" id="m_audioDevice">
             <option value="">بدون صوت منفصل</option>
             ${d.audio.map(a => `<option value="${esc(a.value)}" ${src?.audioDevice === a.value ? 'selected' : ''}>${esc(a.label)}</option>`).join('')}
-          </select></label>`;
+          </select></label>
+        ${(!d.video.length || !d.audio.length) ? `<p class="hint">${esc(d.note || '')}</p>` : ''}
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0">
+          <button class="btn btn-sm" type="button" onclick="testCaptureDevice('video')">📷 اختبار الفيديو (3 ثوانٍ)</button>
+          <button class="btn btn-sm" type="button" onclick="testCaptureDevice('audio')">🎤 اختبار الصوت (3 ثوانٍ)</button>
+          <span id="m_capTestResult" class="hint" style="margin:0"></span>
+        </div>`;
       await loadSizeOptions(src);
     } catch (e) {
-      box.innerHTML = `<p class="form-error">${esc(e.message)} — على ويندوز يلزم دعم DirectShow، وعلى أندرويد/لينكس يظهر الجهاز كـ /dev/video* (كرت UVC مع صلاحية وصول).</p>`;
+      if (seq !== _srcFieldsSeq) return;
+      box.innerHTML = `<p class="form-error">${esc(e.message)} — يلزم دعم DirectShow في ويندوز، وأن يظهر كرت UVC في «إدارة الأجهزة ← Cameras».</p>`;
     }
   } else if (type === 'file') {
     box.innerHTML = `
@@ -413,6 +522,30 @@ async function autoRecommendCapture() {
   }
 }
 
+// اختبار جهاز الالتقاط قبل الحفظ: يشغّل الجهاز 3 ثوانٍ على الخادم بنفس إعدادات النموذج،
+// فيتأكد المستخدم أن الجهاز المتصل يعمل فعلاً قبل ربطه بقناة.
+async function testCaptureDevice(mode) {
+  const result = $('#m_capTestResult');
+  if (!result) return;
+  const form = collectSourceForm();
+  if (mode === 'video' && !form.videoDevice) { result.textContent = 'اختر جهاز الفيديو أولاً'; result.style.color = 'var(--accent)'; return; }
+  if (mode === 'audio' && !form.audioDevice) { result.textContent = 'اختر جهاز الصوت أولاً'; result.style.color = 'var(--accent)'; return; }
+  result.textContent = 'جارٍ الاختبار (3 ثوانٍ)...';
+  result.style.color = '';
+  try {
+    const r = mode === 'audio'
+      ? await api('/devices/test-audio', { method: 'POST', body: { audioDevice: form.audioDevice } })
+      : await api('/devices/test', { method: 'POST', body: {
+          videoDevice: form.videoDevice, audioDevice: form.audioDevice,
+          videoSize: form.videoSize || '1280x720', fps: form.fps || 30,
+          pixelFormat: form.pixelFormat, vcodec: form.vcodec, captureSafeMode: form.captureSafeMode
+        } });
+    result.innerHTML = `<span style="color:var(--ok,#3a7)">✓ ${esc((r.result && r.result.output) || 'نجح الاختبار')}</span>`;
+  } catch (e) {
+    result.innerHTML = `<span style="color:var(--accent)">✗ ${esc(e.message)}</span>`;
+  }
+}
+
 async function loadSizeOptions(src) {
   const sel = $('#m_videoDevice');
   if (!sel || !sel.value) return;
@@ -469,7 +602,7 @@ async function loadChannels() {
       <td>${esc(srcName(c.sourceId))}</td>
       <td class="cell-muted">${qualityLabel(c.quality)}</td>
       <td>${c.autoStart ? 'نعم' : 'لا'}</td>
-      <td><span class="chip" data-chip="${c.id}">…</span></td>
+      <td><span class="chip" data-chip="${c.id}">…</span>${c.manualStopped ? '<span class="cell-muted" title="أُوقفت يدوياً: لا تعمل تلقائياً حتى تشغيلها"> · يدوي</span>' : ''}</td>
       <td><div class="row-actions">
         <label class="ch-enable" title="إلغاء التفعيل يوقف القناة نهائياً ويُخفيها عن المشاهدين حتى إعادة تفعيلها">
           <input type="checkbox" ${c.enabled !== false ? 'checked' : ''} onchange="toggleChannelEnabled('${c.id}', this.checked)"> مفعّلة</label>
@@ -497,15 +630,50 @@ async function toggleChannelEnabled(id, enabled) {
   } catch (e) { toast(e.message, true); loadChannels(); }
 }
 
-async function deleteChannel(id) {
-  if (!confirm('حذف القناة وجدولتها؟')) return;
-  try { await api('/channels/' + id, { method: 'DELETE' }); loadChannels(); loadSchedules(); toast('تم الحذف'); }
-  catch (e) { toast(e.message, true); }
+function deleteChannel(id) {
+  const ch = DATA.channels.find(c => c.id === id);
+  confirmAction('حذف القناة',
+    `سيتم حذف القناة «${esc(ch ? ch.name : '')}» وجدولتها نهائياً. لا يمكن التراجع عن هذا الإجراء.`,
+    async () => {
+      await api('/channels/' + id, { method: 'DELETE' });
+      await loadChannels();
+      toast('تم الحذف');
+    });
+}
+
+// «تلقائي» يُحلّ في الخادم بنفس دالة الترميز؛ نعرض المستوى المحسوب بجانب الخيار
+// ليتحقق المستخدم من الحساب قبل الحفظ. يتحدّث فور تغيير الجودة أو FPS أو المصدر.
+async function refreshAutoLevelHint() {
+  const sel = $('#m_cbitrate');
+  if (!sel) return;
+  const autoOpt = [...sel.options].find((o) => o.value === 'auto');
+  if (!autoOpt) return;
+  const base = bitrateLevel('auto').label;
+  const note = $('#m_cautoHint');
+  const quality = $('#m_cquality').value;
+  if (quality === 'copy' || quality === 'source') { autoOpt.textContent = base; if (note) { note.textContent = ''; note.hidden = true; } return; }
+  try {
+    const plan = await api('/channels/plan', {
+      method: 'POST',
+      body: { sourceId: $('#m_csource').value, quality, fps: $('#m_cfps').value || null }
+    });
+    const lv = plan.level;
+    autoOpt.textContent = `تلقائي — «${lv.label}» (${lv.bitrate} / سقف ${lv.maxrate} / مخزن ${lv.bufsize})`;
+    // الأبعاد داخل عزل LTR حتى لا يعكسها اتجاه النص العربي (320×568 بدل 568×320).
+    if (note) { note.textContent = `الحساب التلقائي لهذه القناة: \u2066${plan.outputWidth}×${plan.outputHeight}\u2069 عند ${plan.outputFps} إطاراً ← الهدف ${plan.autoTargetKbps}k ⇒ «${lv.label}».`; note.hidden = false; }
+  } catch (e) { autoOpt.textContent = base; if (note) note.textContent = ''; }
 }
 
 function openChannelModal(id) {
   const ch = id ? DATA.channels.find(c => c.id === id) : null;
-  const curQ = ch?.quality || (ch?.qualities && ch.qualities[0]) || 'copy';
+  const curQ = ch?.quality || 'copy';
+  // مستوى جودة الفيديو الحالي للقناة (القيم القديمة تُحوَّل إلى مستواها).
+  const curBitrate = bitrateLevel(ch?.bitrate).id;
+  // معدّل الإطارات الحالي؛ أي قيمة خارج القائمة (مثل 24) تُضاف كخيار حتى لا تُفقد عند الحفظ.
+  const curFps = String(ch?.fps || '').trim();
+  const fpsOptions = CH_FPS.some(([v]) => v === curFps)
+    ? CH_FPS
+    : CH_FPS.concat([[curFps, curFps + ' — الحالي']]);
   openModal(id ? 'تعديل قناة' : 'إضافة قناة', `
     <label>اسم القناة<input class="input" id="m_cname" value="${esc(ch?.name)}"></label>
     <label>معرّف القناة (إنجليزي، يستخدم في الروابط)<input class="input" id="m_cid" dir="ltr" value="${esc(ch?.chanId)}" placeholder="sport1"></label>
@@ -520,20 +688,25 @@ function openChannelModal(id) {
         <input class="input" id="m_ccover" value="${esc(ch?.cover)}" placeholder="srv/uploads/cover.jpg">
         <button class="btn" type="button" onclick="browseUpload('m_ccover','image/*')">استعراض / رفع</button>
       </span></label>
-    <!-- خاصية الشعار معطَّلة مؤقتاً بالكامل من الخادم (ffmpeg.js: LOGO_FEATURE_ENABLED)
-         لضمان أفضل أداء بث دون مشاكل — أُخفي عنصر التحكّم هنا لتطابق سلوك الخادم. -->
-    <div style="display:none">
-      <label class="switch-row"><input type="checkbox" id="m_clogoen" ${(ch?.logoEnabled != null ? ch.logoEnabled : !!ch?.logoOverlay) ? 'checked' : ''}> تفعيل الشعار فوق البث</label>
-      <p class="hint">صورة الشعار وموقعه وحجمه وشفافيته تُضبط من «الإعدادات ← شعار القنوات» (شعار موحّد لكل القنوات). يعمل مع كل الجودات بما فيها «نسخ المصدر».</p>
-    </div>
     <label>الجودة
       <select class="input" id="m_cquality">
         ${CH_QUALITIES.map(([v, l]) => `<option value="${v}" ${curQ === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
     <p class="hint">«نسخ المصدر» يبثّ القناة كما هي بلا إعادة ترميز (الأخف على المعالج والأعلى جودة). اختر جودة محددة فقط إن أردت تصغير الحجم/الدقة (يستهلك معالجاً أكثر).</p>
-    <label>FPS الإخراج (اختياري — يُطبَّق عند الترميز فقط، تقليله يخفض استهلاك المعالج)<input class="input" id="m_cfps" type="number" min="10" max="60" value="${esc(ch?.fps)}"></label>
-    <label>معدّل البت Bitrate (اختياري — مثل 1500k أو 2000k، فارغ = افتراضي الجودة)<input class="input" id="m_cbitrate" dir="ltr" value="${esc(ch?.bitrate)}" placeholder="مثال: 1500k"></label>
-    <p class="hint">معدّل بت أعلى = جودة أوضح لكن استهلاك شبكة أكبر. اتركه فارغاً لاستخدام الافتراضي المناسب لكل جودة.</p>
+    <label>معدّل الإطارات (FPS) لهذه القناة
+      <select class="input" id="m_cfps" dir="ltr">
+        ${fpsOptions.map(([v, l]) => `<option value="${v}" ${curFps === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>
+    <p class="hint">عدد الإطارات في الثانية لخرج هذه القناة وحدها؛ أقل = أستهلك معالجاً وشبكة أقل، وأعلى = حركة أنعم. يُطبَّق في وضع الترميز فقط (يُهمَل عند «نسخ المصدر»).</p>
+    <label>مستوى جودة الفيديو (Video Bitrate) لهذه القناة
+      <select class="input" id="m_cbitrate">
+        ${CH_BITRATES.map((level) => `<option value="${level.id}" ${curBitrate === level.id ? 'selected' : ''}>${level.label}</option>`).join('')}
+      </select></label>
+    <p class="hint" id="m_cautoHint"></p>
+    <p class="hint">كل مستوى يعتمد ثلاث قيم تُمرَّر إلى FFmpeg كما هي: -b:v (المعدّل) و-maxrate (السقف) و-bufsize (المخزن). «تلقائي» يختار المستوى المناسب من دقة الخرج ومعدل الإطارات. تُطبَّق الإعدادات فوراً: إن كانت القناة تعمل تُعاد للتشغيل تلقائياً بعد الحفظ.</p>
+    <label>عدد خيوط الترميز (Threads) لهذه القناة
+      <input class="input" id="m_cthreads" type="number" min="1" max="64" dir="ltr" value="${esc(ch?.threads ?? '')}" placeholder="فارغ = الإعداد العام"></label>
+    <p class="hint">عدد خيوط libx264 لهذه القناة وحدها (1–64). فارغ = يتبع الإعداد العام x264Threads. قلّله إن كانت قنوات كثيرة تعمل معاً على معالج ضعيف.</p>
     <label class="switch-row"><input type="checkbox" id="m_cauto" ${ch?.autoStart ? 'checked' : ''}> تشغيل تلقائي عند إقلاع النظام</label>
     <label class="switch-row"><input type="checkbox" id="m_calwayson" ${ch?.alwaysOn ? 'checked' : ''}> تشغيل دائم 24/7 (لا يتوقف عند غياب المشاهدين)</label>
     <p class="hint">للتفعيل/التعطيل استخدم مربع «مفعّلة» في قائمة القنوات بجانب أزرار الإجراءات.</p>`,
@@ -542,161 +715,21 @@ function openChannelModal(id) {
         name: $('#m_cname').value.trim(), chanId: $('#m_cid').value.trim(),
         sourceId: $('#m_csource').value, category: $('#m_ccat').value.trim(),
         sort: Number($('#m_csort').value || 0), cover: $('#m_ccover').value.trim(),
-        logoEnabled: $('#m_clogoen').checked,
         quality: $('#m_cquality').value,
         fps: $('#m_cfps').value || null,
-        bitrate: $('#m_cbitrate').value.trim() || null,
+        bitrate: $('#m_cbitrate').value || null,
+        threads: $('#m_cthreads').value ? Number($('#m_cthreads').value) : null,
         autoStart: $('#m_cauto').checked, alwaysOn: $('#m_calwayson').checked
       };
-      if (id) await api('/channels/' + id, { method: 'PUT', body });
-      else await api('/channels', { method: 'POST', body });
+      const saved = id
+        ? await api('/channels/' + id, { method: 'PUT', body })
+        : await api('/channels', { method: 'POST', body });
       await loadChannels();
-      toast('تم الحفظ');
+      toast(saved && saved.restarted ? 'تم الحفظ وإعادة تشغيل القناة' : 'تم الحفظ');
     });
-}
-
-// =====================================================================
-// SCHEDULER
-// =====================================================================
-async function loadSchedules() {
-  DATA.schedules = (await api('/schedules')).schedules;
-  const chName = id => DATA.channels.find(c => c.id === id)?.name || '؟';
-  $('#schedulesTable tbody').innerHTML = DATA.schedules.map(s => `<tr>
-    <td><b>${esc(chName(s.channelId))}</b></td>
-    <td>${(s.days || []).map(d => DAYS[d]).join('، ') || 'كل الأيام'}</td>
-    <td class="cell-muted" dir="ltr">${(s.slots || []).map(x => x.start + ' → ' + x.end).join(' | ')}</td>
-    <td>${s.enabled !== false ? 'نعم' : 'لا'}</td>
-    <td><div class="row-actions">
-      <button class="btn btn-sm" onclick="openScheduleModal('${s.id}')">تعديل</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteSchedule('${s.id}')">حذف</button>
-    </div></td></tr>`).join('') || '<tr><td colspan="5" class="cell-muted">لا توجد جداول — كل القنوات تعمل كبث مستمر.</td></tr>';
-}
-
-function slotRowHtml(s) {
-  return `<div class="slot-row">
-    <span>من</span><input class="input" style="width:110px" type="time" data-ss value="${esc(s.start)}">
-    <span>إلى</span><input class="input" style="width:110px" type="time" data-se value="${esc(s.end)}">
-    <button class="btn btn-sm btn-danger" type="button" onclick="this.parentElement.remove()">✕</button>
-  </div>`;
-}
-
-function openScheduleModal(id) {
-  const sc = id ? DATA.schedules.find(s => s.id === id) : null;
-  const days = sc?.days || [0, 1, 2, 3, 4, 5, 6];
-  const slots = sc?.slots?.length ? sc.slots : [{ start: '08:00', end: '10:00' }];
-  openModal(id ? 'تعديل جدولة' : 'إضافة جدولة', `
-    <label>القناة
-      <select class="input" id="m_schChannel">
-        ${DATA.channels.map(c => `<option value="${c.id}" ${sc?.channelId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">أضف قناة أولاً</option>'}
-      </select></label>
-    <label>الأيام<span class="days-checks">
-      ${DAYS.map((d, i) => `<label><input type="checkbox" value="${i}" data-day ${days.includes(i) ? 'checked' : ''}>${d}</label>`).join('')}
-    </span></label>
-    <label>الفترات الزمنية (يمكن إضافة أكثر من فترة لنفس اليوم)</label>
-    <div id="slotRows">${slots.map(slotRowHtml).join('')}</div>
-    <button class="btn btn-sm" type="button" onclick="addSlotRow()">+ إضافة فترة</button>
-    <label class="switch-row" style="margin-top:14px"><input type="checkbox" id="m_schEnabled" ${sc?.enabled !== false ? 'checked' : ''}> الجدولة مفعّلة</label>`,
-    async () => {
-      const body = {
-        channelId: $('#m_schChannel').value,
-        days: $$('input[data-day]:checked').map(i => Number(i.value)),
-        slots: $$('#slotRows .slot-row').map(r => ({ start: $('[data-ss]', r).value, end: $('[data-se]', r).value }))
-          .filter(s => s.start && s.end),
-        enabled: $('#m_schEnabled').checked
-      };
-      if (id) await api('/schedules/' + id, { method: 'PUT', body });
-      else await api('/schedules', { method: 'POST', body });
-      await loadSchedules();
-      toast('تم الحفظ');
-    });
-}
-function addSlotRow() { $('#slotRows').insertAdjacentHTML('beforeend', slotRowHtml({ start: '', end: '' })); }
-
-async function deleteSchedule(id) {
-  try { await api('/schedules/' + id, { method: 'DELETE' }); loadSchedules(); }
-  catch (e) { toast(e.message, true); }
-}
-
-// =====================================================================
-// ADS (الإعلانات)
-// =====================================================================
-let _ads = [];
-async function loadAds() {
-  try { _ads = (await api('/ads')).ads || []; } catch (e) { return; }
-  const placeLabel = a => a.type === 'text' ? '—' : (a.placement === 'underChannels' ? 'أسفل القنوات' : 'تحت الهاتف');
-  const content = a => a.type === 'text'
-    ? esc((a.text || '').slice(0, 60))
-    : `<img src="${esc(getAssetUrl(a.image))}" style="height:34px;border-radius:4px">`;
-  const rows = _ads.map(a => `<tr>
-    <td>${a.type === 'text' ? 'نصّي' : 'صورة'}</td>
-    <td>${content(a)}</td>
-    <td>${placeLabel(a)}</td>
-    <td><input type="checkbox" ${a.enabled !== false ? 'checked' : ''} onchange="toggleAd('${a.id}', this.checked)"></td>
-    <td>
-      <button class="btn btn-sm" onclick="openAdModal('${a.id}')">تعديل</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteAd('${a.id}')">حذف</button>
-    </td></tr>`).join('');
-  $('#adsTable').querySelector('tbody').innerHTML = rows || '<tr><td colspan="5" class="muted">لا توجد إعلانات بعد.</td></tr>';
-}
-
-function openAdModal(id) {
-  const ad = id ? _ads.find(a => a.id === id) : null;
-  const type = ad?.type || 'text';
-  const body = `
-    <label>نوع الإعلان
-      <select class="input" id="ad_type" onchange="adTypeChanged()">
-        <option value="text" ${type === 'text' ? 'selected' : ''}>نصّي (شريط متحرك تحت الهاتف)</option>
-        <option value="image" ${type === 'image' ? 'selected' : ''}>صورة (سلايدر)</option>
-      </select>
-    </label>
-    <div id="ad_textWrap">
-      <label>نص الإعلان<input class="input" id="ad_text" value="${esc(ad?.text)}" placeholder="اكتب نص الإعلان هنا..."></label>
-    </div>
-    <div id="ad_imageWrap" class="hidden">
-      <label>صورة الإعلان
-        <div style="display:flex;gap:8px">
-          <input class="input" id="ad_image" value="${esc(ad?.image)}" placeholder="srv/uploads/ad.jpg" style="flex:1">
-          <button type="button" class="btn" onclick="browseUpload('ad_image','image/*')">استعراض</button>
-        </div>
-      </label>
-      <label>مكان عرض السلايدر
-        <select class="input" id="ad_placement">
-          <option value="underPhone" ${ad?.placement !== 'underChannels' ? 'selected' : ''}>تحت رقم الهاتف</option>
-          <option value="underChannels" ${ad?.placement === 'underChannels' ? 'selected' : ''}>أسفل أزرار القنوات</option>
-        </select>
-      </label>
-    </div>
-    <label>رابط عند الضغط (اختياري)<input class="input" id="ad_link" value="${esc(ad?.link)}" placeholder="https://..."></label>
-    <label class="switch-row"><input type="checkbox" id="ad_enabled" ${ad?.enabled !== false ? 'checked' : ''}> مفعّل</label>`;
-  openModal(id ? 'تعديل إعلان' : 'إضافة إعلان', body, async () => {
-    const payload = {
-      type: $('#ad_type').value,
-      text: $('#ad_text').value.trim(),
-      image: $('#ad_image').value.trim(),
-      placement: $('#ad_placement').value,
-      link: $('#ad_link').value.trim(),
-      enabled: $('#ad_enabled').checked
-    };
-    if (id) await api('/ads/' + id, { method: 'PUT', body: payload });
-    else await api('/ads', { method: 'POST', body: payload });
-    await loadAds();
-    toast('تم الحفظ');
-  });
-  adTypeChanged();
-}
-function adTypeChanged() {
-  const t = $('#ad_type').value;
-  $('#ad_textWrap').classList.toggle('hidden', t !== 'text');
-  $('#ad_imageWrap').classList.toggle('hidden', t !== 'image');
-}
-async function toggleAd(id, enabled) {
-  try { await api('/ads/' + id, { method: 'PUT', body: { enabled } }); }
-  catch (e) { toast(e.message, true); loadAds(); }
-}
-async function deleteAd(id) {
-  if (!confirm('حذف هذا الإعلان؟')) return;
-  try { await api('/ads/' + id, { method: 'DELETE' }); loadAds(); toast('تم الحذف'); }
-  catch (e) { toast(e.message, true); }
+  // الجودة وFPS والمصدر تؤثر في حلّ «تلقائي»، فنعيد الحساب عند تغيير أي منها.
+  ['#m_cquality', '#m_cfps', '#m_csource'].forEach((sel) => $(sel).addEventListener('change', refreshAutoLevelHint));
+  refreshAutoLevelHint();
 }
 
 // =====================================================================
@@ -717,7 +750,8 @@ async function refreshStatus() {
   $('#sysStats').innerHTML = `
     <span class="stat-chip ${st.nginx ? 'good' : 'bad'}">Nginx: <b>${st.nginx ? 'يعمل' : 'متوقف'}</b></span>
     <span class="stat-chip good">الخادم: <b>${Math.floor(st.uptime / 60)} دقيقة</b></span>
-    <span class="stat-chip">الذاكرة: <b>${st.memoryMB} MB</b></span>
+    <span class="stat-chip">المعالج: <b>${Number.isFinite(st.cpuPercent) ? st.cpuPercent + '%' : '—'}</b></span>
+    <span class="stat-chip">الذاكرة: <b>${Number.isFinite(st.memPercent) ? st.memPercent + '%' : st.memoryMB + ' MB'}</b></span>
     <span class="stat-chip ${st.license.valid ? 'good' : 'bad'}">الاشتراك: <b>${st.license.valid ? 'فعّال' : 'غير فعّال'}</b></span>`;
 
   $('#statusTable tbody').innerHTML = st.channels.map(c => `<tr>
@@ -725,6 +759,7 @@ async function refreshStatus() {
     <td><span class="chip ${c.status}">${STATUS_LABELS[c.status] || c.status}</span></td>
     <td>${c.viewers}</td>
     <td>${fmtBytes(c.bytesOut)}</td>
+    <td>${bitrateCell(c)}</td>
     <td>${c.restarts}</td>
     <td>${errCell(c)}</td>
     <td><div class="row-actions">
@@ -791,8 +826,27 @@ function errCell(c) {
   return `<div class="err-lines ${cls}" title="${esc((c.lastErrors || []).join('\n'))}">${esc(e.text)}</div>`;
 }
 
+// معدّل البت المضبوط للقناة بالكيلوبت (null حين لا يوجد معدّل ثابت: نسخ المصدر
+// أو المستوى التلقائي الذي يُحسب من دقة الخرج).
+function channelTargetKbps(c) {
+  const q = String(c.quality || '').trim().toLowerCase();
+  if (!q || q === 'copy' || q === 'source') return null;
+  return bitrateLevel(c.bitrate).kbps;
+}
+// خلية جدول المراقبة: الفعلي مقابل المضبوط في إعدادات القناة، بالأحمر عند تجاوز
+// المضبوط بأكثر من 25%: مقاطع TS تضيف عادةً 7–17% أشغال حاوية فوق معدّل الفيديو،
+// فلا يُعدّ ذلك تجاوزاً، ويظهر بالأحمر التجاوز الحقيقي فقط.
+function bitrateCell(c) {
+  const q = String(c.quality || '').trim().toLowerCase();
+  const label = (!q || q === 'copy' || q === 'source') ? 'نسخ المصدر' : bitrateLevel(c.bitrate).name;
+  const actual = Number(c.outputBps) || 0;
+  if (!actual) return `<span class="cell-muted">— / ${esc(label)}</span>`;
+  const target = channelTargetKbps(c);
+  const over = target ? actual * 8 > target * 1000 * 1.25 : false;
+  return `<span class="bw-cell${over ? ' bw-over' : ''}" title="${over ? 'الفعلي يتجاوز المعدّل المضبوط بأكثر من 25%' : 'ضمن المعدّل المضبوط (يشمل أشغال الحاوية)'}">${fmtBps(actual)} <span class="cell-muted">/ ${esc(label)}</span></span>`;
+}
 // تسمية جودة القناة للعرض (copy = نسخ المصدر)
-function qualityLabel(q) { return (!q || q === 'copy') ? 'نسخ المصدر' : q; }
+function qualityLabel(q) { return (!q || q === 'copy') ? 'نسخ المصدر' : (q === 'auto' ? 'تلقائي' : q); }
 // تنسيق حجم البيانات بشكل مقروء
 function fmtBytes(n) {
   n = Number(n) || 0;
@@ -831,64 +885,29 @@ async function refreshDashboard() {
   if (!grid) return;
   let m;
   try { m = await api('/metrics'); } catch (e) { return; }
-  const cpuPct = m.cpuCount ? Math.min(100, Math.round((m.cpuLoad / m.cpuCount) * 100)) : 0;
+  // نسبة المعالج من عدّادات النظام الحقيقية (os.cpus)؛ معدل الحِمل loadavg ليس
+  // نسبة استهلاك، وهو صفر دائماً على ويندوز فلا يصلح لهذه البطاقة.
+  const cpuPct = Number.isFinite(m.cpuPercent) ? m.cpuPercent : 0;
+  // ذاكرة النظام الحقيقية (إجمالي/مستخدم) من عدّادات نظام التشغيل عبر /metrics.
+  const memTotal = Number(m.memTotalBytes) || 0;
+  const memUsed = Number(m.memUsedBytes) || 0;
+  const memPct = Number.isFinite(m.memPercent) ? m.memPercent : (memTotal ? Math.round((memUsed / memTotal) * 100) : 0);
+  const memSub = memTotal
+    ? `${m.cpuCount} نواة · الذاكرة ${fmtBytes(memUsed)} من ${fmtBytes(memTotal)} (${memPct}%)`
+    : `${m.cpuCount} نواة · ذاكرة ${m.memoryMB} MB`;
   grid.innerHTML = [
     dashCard('green-accent', '⏱️', fmtDuration(m.uptimeSec), '', 'مدة التشغيل', 'منذ آخر إقلاع', false),
-    dashCard('amber-accent', '🖥️', cpuPct, '%', 'استهلاك المعالج', `${m.cpuCount} نواة · ${m.memoryMB} MB ذاكرة`, false),
+    dashCard('amber-accent', '🖥️', cpuPct, '%', 'استهلاك المعالج', memSub, false),
     dashCard('live-accent', '👁️', m.currentViewers, '', 'المشاهدون الآن', `يشاهدون ${m.watchedChannels} قناة`, m.currentViewers > 0),
     dashCard('blue-accent', '📊', m.totalViewers, '', 'إجمالي المشاهدين', 'منذ بدء التشغيل', false),
     dashCard('purple-accent', '📺', m.runningChannels, ` / ${m.totalChannels}`, 'قنوات تبثّ الآن', `${m.watchedChannels} منها مُشاهَدة`, m.runningChannels > 0),
     dashCard('green-accent', '⬇️', fmtBytes(m.hlsBytesTotal), '', 'بيانات HLS المُولّدة', 'إجمالي مقاطع m3u8', false),
-    dashCard('live-accent', '⬆️', fmtBytes(m.egressBytesTotal), '', 'البيانات الخارجة للمشتركين', 'تقدير حسب المشاهدين', false),
-    dashCard('blue-accent', '📡', fmtBps(m.ingestBandwidthBps), '', 'باندويث البث الحالي', 'وارد من المصادر', m.ingestBandwidthBps > 0),
+    dashCard('live-accent', '⬆️', fmtBytes(m.egressBytesTotal), '', 'البيانات الخارجة للمشتركين', m.nginxLogActive ? 'مقاطع البث من سجلات Nginx' : 'من داخل الخادم', false),
+    dashCard('green-accent', '🧮', fmtBytes(m.nginxBytesTotal), '', 'إجمالي البيانات عبر Nginx', m.nginxLogActive ? 'كل الاستجابات من السجل' : 'لا توجد سجلات Nginx', false),
+    dashCard('blue-accent', '📡', fmtBps(m.ingestBandwidthBps), '', 'باندويث البث الحالي', 'مقاطع HLS المولّدة الآن', m.ingestBandwidthBps > 0),
     dashCard('amber-accent', '🌐', fmtBps(m.egressBandwidthBps), '', 'باندويث الخروج للمشاهدين', 'تقدير فعلي حالي', m.egressBandwidthBps > 0),
-    dashCard('purple-accent', '🔌', fmtBps(m.internetBandwidthBps), '', 'باندويث الإنترنت المستهلك', 'حالياً (وارد)', m.internetBandwidthBps > 0)
+    dashCard('purple-accent', '🔌', m.internetBandwidthBps == null ? '—' : fmtBps(m.internetBandwidthBps), '', 'باندويث الإنترنت المستهلك', m.internetBandwidthBps == null ? 'غير متاح على هذا النظام' : ('وارد حالياً · الإجمالي ' + fmtBytes(m.internetRxBytesTotal)), m.internetBandwidthBps > 0)
   ].join('');
-}
-
-// =====================================================================
-// LICENSE
-// =====================================================================
-async function loadLicense() {
-  const res = await api('/license');
-  const license = res.license;
-  const contact = res.contact || {};
-  _lastMsgs = res.messages || []; showSysMsg(_lastMsgs);
-  const fmt = ts => ts ? new Date(ts).toLocaleString('ar-SA') : '—';
-  let statusText, statusColor;
-  if (license.valid && license.isTrial) {
-    statusText = `فترة تجريبية — متبقٍّ ${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'}`;
-    statusColor = '#E0A82E';
-  } else if (license.valid) {
-    statusText = 'الاشتراك فعّال'; statusColor = 'var(--ok)';
-  } else if (license.activated) {
-    statusText = license.isTrial ? 'انتهت الفترة التجريبية — يرجى شراء ترخيص' : 'الاشتراك منتهي';
-    statusColor = 'var(--live)';
-  } else {
-    statusText = 'غير مفعّل'; statusColor = 'var(--live)';
-  }
-  // أزرار التواصل للشراء
-  const contactBtns = () => {
-    let h = '';
-    if (contact.whatsapp) h += `<a class="buy-btn wa" href="https://wa.me/${esc(contact.whatsapp.replace(/[^0-9]/g, ''))}" target="_blank">📱 واتساب للاشتراك</a>`;
-    if (contact.phone) h += `<a class="buy-btn" href="tel:${esc(contact.phone)}">📞 ${esc(contact.phone)}</a>`;
-    return h;
-  };
-  // لافتة حسب الحالة
-  let banner = '';
-  if (license.isTrial && license.valid) {
-    banner = `<div class="trial-banner">أنت تستخدم النسخة التجريبية (${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'} متبقية). للاستمرار بعد انتهائها، احصل على اشتراك.${contact.note ? '<br>' + esc(contact.note) : ''}<div class="buy-row">${contactBtns()}</div></div>`;
-  } else if (!license.valid && license.activated) {
-    banner = `<div class="trial-banner ended"><b>${license.isTrial ? 'انتهت فترتك التجريبية' : 'انتهى اشتراكك'}.</b> للاستمرار في استخدام النظام، يرجى تجديد الاشتراك.${contact.note ? '<br>' + esc(contact.note) : ''}<div class="buy-row">${contactBtns()}</div></div>`;
-  } else if (license.valid && !license.isTrial && license.daysLeft != null && license.daysLeft <= 3) {
-    banner = `<div class="trial-banner">⏳ اشتراكك ينتهي بعد ${license.daysLeft} ${license.daysLeft === 1 ? 'يوم' : 'أيام'}. جدّد الآن لتجنّب انقطاع الخدمة.<div class="buy-row">${contactBtns()}</div></div>`;
-  }
-  $('#licenseStatus').innerHTML = banner + `
-    <div><span class="lbl">الحالة: </span><b style="color:${statusColor}">${statusText}</b></div>
-    <div><span class="lbl">معرّف هذا الجهاز (أرسله لمزوّد الخدمة): </span><div class="val">${esc(license.deviceId)}</div></div>
-    <div><span class="lbl">المفتاح: </span><span class="val">${esc(license.key || '—')}</span></div>
-    <div><span class="lbl">ينتهي في: </span>${fmt(license.expiresAt)}</div>
-    <div><span class="lbl">آخر تحقق: </span>${fmt(license.lastCheck)}</div>`;
 }
 
 let _dismissedMsgs = JSON.parse(localStorage.getItem('amaan_msg_dismiss') || '[]');
@@ -925,59 +944,3 @@ function dismissSysMsg(id) {
   showSysMsg(_lastMsgs);
 }
 let _lastMsgs = [];
-
-async function activateLicense() {
-  $('#licMsg').textContent = '';
-  try {
-    await api('/license/activate', { method: 'POST', body: { key: $('#lic_key').value.trim() } });
-    toast('تم تفعيل الاشتراك');
-    loadLicense();
-  } catch (e) { $('#licMsg').textContent = e.message; }
-}
-
-// =====================================================================
-// SYSTEM UPDATE
-// =====================================================================
-async function checkUpdate(force) {
-  try {
-    const u = await api('/update/status' + (force ? '?force=1' : ''));
-    const box = $('#updateStatus');
-    if (u.available) {
-      box.innerHTML = `
-        <div><span class="lbl">الإصدار الحالي: </span><span class="val">${esc(u.currentVersion)}</span></div>
-        <div><b style="color:var(--brass)">يتوفر تحديث جديد: الإصدار ${esc(u.latestVersion)}${u.mandatory ? ' (إجباري)' : ''}</b></div>
-        ${u.changelog ? `<div><span class="lbl">ما الجديد: </span>${esc(u.changelog)}</div>` : ''}`;
-      $('#applyUpdateBtn').classList.remove('hidden');
-    } else {
-      box.innerHTML = `
-        <div><span class="lbl">الإصدار الحالي: </span><span class="val">${esc(u.currentVersion)}</span></div>
-        <div><b style="color:var(--ok)">النظام محدَّث ✓</b></div>`;
-      $('#applyUpdateBtn').classList.add('hidden');
-    }
-    return u;
-  } catch (e) { return null; }
-}
-
-async function applyUpdate() {
-  if (!confirm('سيتم إيقاف البث مؤقتاً وتنزيل التحديث ثم إعادة تشغيل النظام تلقائياً. متابعة؟')) return;
-  $('#updMsg').textContent = '';
-  const btn = $('#applyUpdateBtn');
-  btn.disabled = true; btn.textContent = 'جارٍ التحديث...';
-  try {
-    const r = await api('/update/apply', { method: 'POST', body: {} });
-    toast(r.message || 'تم التحديث');
-    $('#updateStatus').innerHTML = '<div><b style="color:var(--ok)">تم التحديث إلى ' + esc(r.to) + ' — يُعاد تشغيل النظام، حدّث الصفحة بعد لحظات.</b></div>';
-    setTimeout(() => location.reload(), 12000);
-  } catch (e) {
-    $('#updMsg').textContent = e.message;
-    btn.disabled = false; btn.textContent = 'تحديث الآن';
-  }
-}
-
-/** إشعار عام عند توفر تحديث (يظهر بعد الدخول) */
-async function updateBanner() {
-  const u = await checkUpdate(false);
-  if (u && u.available) {
-    toast('🔔 يتوفر تحديث جديد للنظام (الإصدار ' + u.latestVersion + ') — من قائمة الاشتراك والترخيص');
-  }
-}

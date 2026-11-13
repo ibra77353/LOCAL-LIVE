@@ -4,21 +4,34 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0E141B">
-<title>أمان لايف — البث المباشر</title>
+<script>try{document.documentElement.setAttribute('data-theme',localStorage.getItem('pl_theme')==='light'?'light':'dark')}catch(e){document.documentElement.setAttribute('data-theme','dark')}</script>
+<title>البرنس لايف — البث المباشر</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/viewer.css">
+<script src="/theme.js" defer></script>
 </head>
 <body>
 
 <header class="site-head">
-  <img id="siteLogo" class="site-logo" src="/logo.png" alt="أمان لايف">
-  <h1 id="siteTitle">أمان لايف</h1>
+  <button class="theme-btn" id="themeBtn" type="button" data-theme-toggle aria-label="الوضع النهاري" title="الوضع النهاري">
+    <svg class="ico-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>
+    <svg class="ico-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.5 14.2A8.6 8.6 0 0 1 9.8 3.5a8.6 8.6 0 1 0 10.7 10.7z"/></svg>
+    <span class="theme-label">الوضع النهاري</span>
+  </button>
+  <img id="siteLogo" class="site-logo hidden" alt="">
+  <h1 id="siteTitle">البرنس لايف</h1>
+  <p id="siteLatin" class="site-latin hidden"></p>
   <a id="sitePhone" class="site-phone" href="#"></a>
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="channels">القنوات</button>
+    <button class="tab hidden" id="standingsTab" data-tab="standings" type="button">الجداول والنتائج</button>
   </nav>
 </header>
+
+<div id="tickerBar" class="ticker-bar hidden" role="marquee" aria-label="شريط الأخبار">
+  <div class="ticker-track"><span id="tickerText"></span></div>
+</div>
 
 <!-- ===== Player ===== -->
 <section id="playerSection" class="player-section hidden">
@@ -39,7 +52,7 @@
         </label>
         <button class="pbtn pbtn-refresh" id="refreshBtn" title="تحديث القناة">↻ تحديث</button>
         <button class="pbtn" id="muteBtn">🔊</button>
-        <button class="pbtn" id="fsBtn">⛶</button>
+        <button class="pbtn pbtn-icon" id="fsBtn" title="ملء الشاشة" aria-label="ملء الشاشة"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 3.5H3.5V9M15 3.5h5.5V9M15 20.5h5.5V15M9 20.5H3.5V15"/></svg></button>
         <button class="pbtn" id="closePlayer">✕</button>
       </div>
     </div>
@@ -54,9 +67,15 @@
   <p id="emptyMsg" class="empty hidden">لا توجد قنوات متاحة حالياً.</p>
 </main>
 
+<!-- ===== Leagues: tables & results ===== -->
+<main id="tab-standings" class="container hidden">
+  <div class="lg-tabs" id="leagueTabs"></div>
+  <div class="lg-body" id="leagueBody"></div>
+</main>
+
 <footer class="site-foot" id="siteFooter">
   <span class="foot-copy">جميع الحقوق محفوظة ©</span>
-  <a class="foot-brand" href="https://www.facebook.com/AmaanTelcom/" target="_blank" rel="noopener">أمان تيليكوم للخدمات التقنية</a>
+  <a class="foot-brand" href="https://www.facebook.com/ibra77353" target="_blank" rel="noopener">البرنس تيليكوم للخدمات التقنية</a>
 </footer>
 
 <script>
@@ -67,13 +86,15 @@
   s.onload = function () { window._hlsReady && window._hlsReady(); };
   s.onerror = function () {
     var c = document.createElement('script');
-    c.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js';
+    c.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.6.16/hls.min.js';
     c.onload = function () { window._hlsReady && window._hlsReady(); };
     document.head.appendChild(c);
   };
   document.head.appendChild(s);
 })();
 </script>
+<script src="/shared.js"></script>
 <script src="/viewer.js"></script>
+<script src="/football.js" defer></script>
 </body>
 </html>

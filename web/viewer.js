@@ -1,9 +1,7 @@
 'use strict';
-/* أمان لايف — مشغّل المشاهدين */
+/* البرنس لايف — مشغّل المشاهدين */
 
 const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
-  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 let SETTINGS = {};
 let CHANNELS = [];
@@ -14,28 +12,34 @@ let cpuSaver = false;
 const clientId = (localStorage.getItem('amaan_cid') ||
   (localStorage.setItem('amaan_cid', 'c' + Math.random().toString(36).slice(2)), localStorage.getItem('amaan_cid')));
 
-// دالة موحدة لمعالجة مسارات الصور (تحل مشكلة الصور المكسورة)
-function getAssetUrl(raw) {
-  if (!raw) return '';
-  const s = String(raw).trim();
-  // يُعيد المسار خاماً: الترميز يتم عند حقنه في HTML، وليس عند إسناده إلى .src
-  if (/^https?:\/\//i.test(s)) return s; // رابط خارجي
-  if (s.startsWith('/')) return s;       // مسار مطلق يبدأ بـ /
-  return '/' + s.replace(/^srv\/uploads\/?/, 'uploads/').replace(/^\.?\/+/, ''); // مسار نسبي
-}
-
 // ---------------- bootstrap ----------------
 async function init() {
   const s = await fetch('/api/public/settings').then(r => r.json());
   SETTINGS = s.settings || {};
   document.title = SETTINGS.siteName + ' — البث المباشر';
-  $('#siteTitle').textContent = SETTINGS.siteName || 'أمان لايف';
-  // الفوتر ثابت في HTML (أمان تيليكوم) — لا يُحقن من الإعدادات
+  $('#siteTitle').textContent = SETTINGS.siteName || 'البرنس لايف';
+  // الفوتر ثابت في HTML (البرنس تيليكوم) — لا يُحقن من الإعدادات
   if (SETTINGS.phone) { $('#sitePhone').textContent = SETTINGS.phone; $('#sitePhone').href = 'tel:' + SETTINGS.phone; }
+  // الاسم اللاتيني تحت العنوان (اختياري — يظهر فقط عند ضبطه في الإعدادات)
+  const latin = $('#siteLatin');
+  if (latin) {
+    latin.textContent = SETTINGS.siteNameLatin || '';
+    latin.classList.toggle('hidden', !SETTINGS.siteNameLatin);
+  }
+  // الشريط الإخباري: يظهر فقط عند تفعيله ووجود نص
+  const tickerText = String(SETTINGS.ticker || '').trim();
+  const tickerBar = $('#tickerBar');
+  if (tickerBar) {
+    const showTicker = !!SETTINGS.tickerEnabled && !!tickerText;
+    tickerBar.classList.toggle('hidden', !showTicker);
+    if (showTicker) $('#tickerText').textContent = tickerText;
+  }
   if (SETTINGS.logo) {
     const l = $('#siteLogo');
-    l.src = getAssetUrl(SETTINGS.logo);
-    l.classList.remove('hidden');
+    if (l) {
+      l.src = getAssetUrl(SETTINGS.logo);
+      l.classList.remove('hidden');
+    }
   }
   // الثيم يُطبَّق كصنف على body — viewer.css يعرّف body.worldcup فوق متغيرات :root.
   document.body.classList.toggle('worldcup', SETTINGS.theme === 'worldcup');
@@ -50,8 +54,23 @@ async function init() {
 async function loadChannels() {
   const r = await fetch('/api/public/channels').then(x => x.json());
   CHANNELS = r.channels || [];
+  syncCurrentChannel();
   renderCats();
   renderGrid();
+}
+
+// يحدّث بيانات القناة المعروضة من آخر قائمة عامة، ويعالج تغيّر حالة الإيقاف
+// اليدوي: قناة أُوقفت من اللوحة يتوقف المشغّل عن محاولة التجهيز، وقناة أُعيد
+// تشغيلها يدوياً يستأنف عرضها تلقائياً دون أن يضغط المشاهد «تحديث».
+function syncCurrentChannel() {
+  if (!currentChannel) return;
+  const fresh = CHANNELS.find(c => c.id === currentChannel.id);
+  if (!fresh) return;
+  const resumed = currentChannel.manualStopped && !fresh.manualStopped;
+  const stoppedManually = !currentChannel.manualStopped && fresh.manualStopped;
+  currentChannel = fresh;
+  if (resumed) loadIntoPlayer(fresh);
+  else if (stoppedManually) showManualStopped(fresh);
 }
 
 function renderCats() {
@@ -78,7 +97,8 @@ function renderGrid() {
         <p class="card-name">${esc(c.name)}</p>
         <div class="card-meta">
           <span>${esc(c.category || '')}</span>
-          ${c.live ? '<span class="badge-live">مباشر</span>' : '<span class="badge-off">متوقفة</span>'}
+          ${c.live ? '<span class="badge-live">مباشر</span>'
+            : (c.manualStopped ? '<span class="badge-off">موقوفة يدوياً</span>' : '<span class="badge-off">متوقفة</span>')}
         </div>
       </div>
     </div>`;
@@ -178,6 +198,18 @@ async function checkChannelHealth(channelId) {
 }
 // تُستدعى عند بدء تجهيز قناة: تُسلّح مراقباً يعرض رسالة صريحة إن طال التجهيز
 // بدل ترك "جاري تجهيز القناة" تدور بلا نهاية حين يكون المصدر بطيئاً أو لا يستجيب.
+// بعض المتصفحات تمنع التشغيل التلقائي بالصوت؛ نكتم ونشغّل تلقائياً بدل ترك
+// صورة ثابتة بلا أي زر تشغيل، ويبقى زر الصوت لإعادة تفعيله بضغطة.
+function playWithFallback() {
+  const v = $('#video');
+  const p = v.play();
+  if (!p || !p.catch) return;
+  p.catch(() => {
+    v.muted = true;
+    $('#muteBtn').textContent = '🔇';
+    v.play().catch(() => {});
+  });
+}
 function armPrepWatchdog() {
   clearTimeout(prepWatchdog);
   prepWatchdog = setTimeout(() => {
@@ -189,6 +221,8 @@ function armPrepWatchdog() {
 // لا نتوقّف نهائياً — المصادر الحيّة المتذبذبة تتعافى لاحقاً — لكن نتمهّل بعد دقيقة
 // (كل 8ث بدل 2ث) لتفادي القصف، ويتكفّل armPrepWatchdog بإظهار رسالة للمستخدم.
 function schedulePrepRetry() {
+  // قناة موقوفة يدوياً لن تجهز أبداً — لا نكرّر المحاولة إلى ما لا نهاية
+  if (isManualStopped(currentChannel)) { showManualStopped(currentChannel); return; }
   showLoading();
   clearTimeout(manifestRetryTimer);
   manifestRetryCount++;
@@ -203,7 +237,7 @@ function wireHlsEvents() {
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     // ملاحظة: تحليل القائمة الرئيسية لا يعني بدء العرض — التصفير يتم في hideLoading
     // عند بدء العرض الفعلي فقط، حتى يعمل مراقب التجهيز ضد المصادر التي لا تبثّ.
-    $('#video').play().catch(() => {});
+    playWithFallback();
     hideMsg();
     stallCount = 0;
   });
@@ -265,6 +299,7 @@ function loadIntoPlayer(ch) {
   const mode = ensurePlayer();
   const video = $('#video');
   $('#npName').textContent = ch.name;
+  setNpLive(true);
   
   // إيقاف أي تحميل سابق فوراً (لمنع تسريب الذاكرة عند التبديل السريع)
   if (hls) { try { hls.stopLoad(); } catch (e) {} }
@@ -278,7 +313,7 @@ function loadIntoPlayer(ch) {
     hls.loadSource(ch.url + '?t=' + Date.now());
   } else {
     video.src = ch.url;
-    video.play().catch(() => {});
+    playWithFallback();
   }
 }
 
@@ -287,19 +322,52 @@ function playChannel(id) {
   const ch = CHANNELS.find(c => c.id === id);
   if (!ch) return;
   currentChannel = ch;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  // قناة موقوفة يدوياً: نفتح المشغّل برسالة صريحة بدل محاولة تشغيل لن تنجح
+  if (isManualStopped(ch)) {
+    ensurePlayer();
+    $('#npName').textContent = ch.name;
+    showManualStopped(ch);
+    return;
+  }
   // التشغيل عند الطلب: يطلب من الخادم تجهيز بث القناة إن كان الخيار مفعّلاً في الإعدادات
   fetch('/api/public/watch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: ch.id })
+  }).then(r => r.json()).then(d => {
+    // أُوقفت القناة يدوياً بعد آخر تحميل للقائمة: نعرض السبب ونوقف المحاولات
+    if (d && d.reason === 'manual') showManualStopped(currentChannel || ch);
   }).catch(() => {});
   loadIntoPlayer(ch);
   heartbeat();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 
 function showMsg(t) { const m = $('#playerMsg'); m.textContent = t; m.classList.remove('hidden'); }
 function hideMsg() { $('#playerMsg').classList.add('hidden'); }
+
+// القناة الموقوفة يدوياً من لوحة التحكم لا تعمل تلقائياً ولا تجهّز بثاً، فبدل
+// دوّارة «جاري تجهيز البث» التي تدور بلا نهاية نوقف كل المحاولات ونعرض السبب.
+function isManualStopped(ch) { return !!(ch && ch.manualStopped); }
+// مؤشّر «مباشر» في شريط المشغّل: لا يبقى أخضر/أحمر على قناة موقوفة يدوياً.
+function setNpLive(live) {
+  const el = $('#npLive');
+  if (el) el.textContent = live ? '● مباشر' : '● موقوفة';
+}
+function stopPlayerAttempts() {
+  clearTimeout(manifestRetryTimer);
+  clearTimeout(prepWatchdog); prepWatchdog = null;
+  manifestRetryCount = 0;
+  if (hls) { try { hls.stopLoad(); } catch (e) {} }
+  hideLoading();
+}
+function showManualStopped(ch) {
+  stopPlayerAttempts();
+  setNpLive(false);
+  const v = $('#video');
+  try { v.pause(); } catch (e) {}
+  showMsg('هذه القناة موقوفة يدوياً من لوحة التحكم. اختر قناة أخرى أو انتظر تشغيلها من المسؤول.');
+}
 
 // controls
 $('#closePlayer').onclick = () => {
@@ -326,6 +394,7 @@ $('#fsBtn').onclick = () => {
 // تحديث القناة: يعيد تحميل البث الحالي من جديد دون مغادرة المشغّل
 $('#refreshBtn').onclick = () => {
   if (!currentChannel) return;
+  if (isManualStopped(currentChannel)) { showManualStopped(currentChannel); return; }
   hideMsg();
   if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
   loadIntoPlayer(currentChannel);

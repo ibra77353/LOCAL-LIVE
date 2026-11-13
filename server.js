@@ -7,9 +7,26 @@ const { spawn, execFile } = require('child_process');
 const os = require('os');
 const net = require('net');
 const crypto = require('crypto');
+// طبقة الالتقاط الموحّدة: الخادم لا يتعامل مع DirectShow مباشرة.
+const capture = require('./lib/capture');
+const { clampNumber } = require('./lib/shared/clamp');
+// مستويات جودة الفيديو: قيم -b:v و-maxrate و-bufsize لكل مستوى والحساب التلقائي.
+const { VIDEO_BITRATE_LEVELS, normalizeVideoLevel, resolveVideoLevel, bitrateKbps } = require('./lib/shared/video-levels');
+// عدّادات كارت الشبكة من النظام مباشرةً (PowerShell على ويندوز، /proc/net/dev خارجه).
+const { readReceivedBytes } = require('./lib/shared/net-counters');
+// مسار الأدوات وقاعدة المنافذ: مصدر واحد مشترك مع سكربتات Windows.
+const { resolveToolPath } = require('./lib/shared/tool-path');
+const { resolvePort } = require('./lib/shared/port');
+// جداول ونتائج الدوريات: جلب وتنظيم وتخزين مؤقت على الخادم، لا اتصال من المتصفح.
+const football = require('./lib/football');
 
 const ROOT = __dirname;
 const CONFIG_PATH = path.join(ROOT, 'config.json');
+// إصدار التطبيق من package.json (مصدر واحد) بدل رقم مكتوب في الكود يتخلّف عنه.
+const APP_VERSION = (() => {
+  try { return String(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || '0.0.0'); }
+  catch { return '0.0.0'; }
+})();
 
 let cfg;
 try {
@@ -31,33 +48,84 @@ if (process.env.FFPROBE_PATH) cfg.ffprobePath = process.env.FFPROBE_PATH;
 
 // ffmpegPath في config.json قد يكون اسماً مجرداً مثل "ffmpeg" مع أن الحزمة تحمل
 // ffmpeg.exe بجانب server.js؛ الاعتماد على PATH كان يفشل بـ ENOENT إذا شُغّل
-// الخادم من مجلد آخر. نحل الاسم إلى الملف المرفق إن وُجد ثم نترك PATH كبديل.
-function resolveTool(toolName) {
-  const value = String(toolName || '').trim();
-  if (!value || path.isAbsolute(value)) return value;
-  const names = process.platform === 'win32' ? [value, `${value}.exe`] : [value];
-  for (const name of names) {
-    const candidate = path.join(ROOT, name);
-    try { if (fs.statSync(candidate).isFile()) return candidate; } catch {}
-  }
-  return value;
+// الخادم من مجلد آخر. نحل الاسم إلى الملف المرفق إن وُجد ثم نترك PATH كبديل،
+// وتُجرَّب اللاحقة .exe لأن الإصدار مخصص لويندوز فقط.
+function ffmpegBin() { return resolveToolPath(cfg.ffmpegPath, ROOT); }
+function ffprobeBin() { return resolveToolPath(data.settings.ffprobePath || cfg.ffprobePath, ROOT); }
+
+// أبعاد ملف مصدر محلي عبر FFprobe (المسار المضبوط في الإعدادات)، حتى تُحسب أبعاد
+// الخرج من نسبة الملف الحقيقية بدل الافتراض 1280x720 الذي يشوّه الدقة عند اختيار
+// جودة مسمّاة تختلف عن أبعاد الملف.
+function probeFileDimensions(filePath) {
+  return new Promise(resolve => {
+    if (!filePath || !fs.existsSync(filePath)) return resolve('');
+    const args = ['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','json', filePath];
+    execFile(ffprobeBin(), args, { windowsHide: true, timeout: 8000, maxBuffer: 256 * 1024 }, (err, stdout) => {
+      if (err) return resolve('');
+      try {
+        const stream = (JSON.parse(stdout).streams || [])[0] || {};
+        const width = Number(stream.width), height = Number(stream.height);
+        if (width > 0 && height > 0) return resolve(`${width}x${height}`);
+      } catch {}
+      resolve('');
+    });
+  });
 }
-function ffmpegBin() { return resolveTool(cfg.ffmpegPath); }
 
 const streams = new Map(); // channelId -> independent FFmpeg runtime
 let ffmpegLog = '';
 let servedBytes = 0;
+// إجمالي كل ما خدّمه Nginx (مقاطع البث وصفحات اللوحة معاً) مقروءاً من سجلاته
+// منذ إقلاع الخادم الحالي فقط، فيبدأ من صفر مع كل تشغيل.
+let nginxServedBytes = 0;
+const channelServedBytes = new Map(); // channelId -> بايتات /hls المخدومة لتلك القناة
+// معدّل البت الفعلي لكل قناة لمقارنته بالمضبوط في إعداداتها. المقاطع تُكتب كل
+// ثانيتين بينما العيّنة كل ثلاث، فحساب المعدّل من عيّنة واحدة يتذبذب (مقطع أو
+// مقطعان في النافذة)؛ لذلك يُحسب على نافذة 12 ثانية من إجمالي البايتات المولَّدة.
+const channelGenBytes = new Map(); // channelId -> إجمالي بايتات مقاطعها المولَّدة
+const channelGenSnapshot = new Map(); // channelId -> { bytes, at } بداية النافذة الحالية
+const channelOutputBps = new Map(); // channelId -> بايت/ثانية على نافذة القياس
+// إقلاع FFmpeg يستغرق ثوانٍ (فتح الالتقاط وضبط الترميز) قبل كتابة أول مقطع، فالقياس
+// الذي يبدأ أثناء الإقلاع يجمع صفراً في أول النافذة فيظهر «أقل من الهدف» كذباً
+// (213k مقابل 396k في أول سطر). تبدأ النافذة بعد انتهاء الإقلاع فقط.
+const BITRATE_WARMUP_MS = 6000;
+// فقدان إشارة الالتقاط أثناء بث نشط: كرت/جهاز DirectShow قد يفقد الإشارة دون أن
+// تخرج عملية FFmpeg، فتبقى «تعمل» بلا مقاطع جديدة والمشاهدون على صورة مجمّدة.
+// إن مضت هذه المدة بلا بايتات مولَّدة نُنهي العملية لتعيد المحاولة الاتصال تلقائياً.
+const SOURCE_STALL_MS = 20000;
+// بث مستقر لهذه المدة يصفّر عدّاد المحاولات، فلا تُستهلك المحاولات المحدودة في
+// الإعدادات على فقدان إشارة عابر يتكرر كل ساعات ويترك القناة بلا إعادة محاولة.
+const RESTART_COUNT_RESET_MS = 60000;
+let ingestBps = 0;
+let lastHlsFiles = new Map(); // مسار مقطع -> آخر حجم معروف (لحساب معدل التوليد)
+// باندويث الإنترنت: مجموع البايتات المستقبَلة على واجهات الشبكة الفعلية.
+// null تعني أن النظام لا يوفّر عدّادات شبكة مقروءة (تظهر «—» في اللوحة).
+let internetBps = null;
+let internetRxTotal = null, internetRxAt = 0;
+// قيمة العدّاد عند أول عينة بعد الإقلاع، وتُطرح من المعروض ليبدأ إجمالي الوارد
+// من صفر مع كل تشغيل بدل عرض إجمالي النظام منذ إقلاع ويندوز.
+let internetRxBase = null;
+let internetProbeBusy = false;
+// سجلات Nginx: على ويندوز تُخدَم مقاطع HLS من القرص مباشرةً فلا يراها Node،
+// لذلك نحتسب بايتات /hls من سجلّ الوصول كي تعمل مقاييس البيانات.
+const NGINX_LOG_DIR = path.resolve(process.env.NGINX_LOG_DIR || path.join(ROOT, 'nginx', 'logs'));
+const nginxLogOffsets = new Map();
+let nginxLogActive = false;
 const viewerSessions = new Map();
 let previousCpu = os.cpus().map(c => ({ idle: c.times.idle, total: Object.values(c.times).reduce((a,b) => a+b, 0) }));
 let cpuPercent = null;
 let egressBps = 0;
 let totalViewerCount = 0;
+// مشاهدون فريدون منذ الإقلاع. منفصلة عن viewerSessions لأن الجلسة تُحذف بعد 45 ثانية
+// من الانقطاع (أو عند الخروج)، فيعود المشاهد نفسه بعدها ويُحتسب مشاهداً جديداً.
+const seenViewerIds = new Set();
 let lastServedSample = { bytes: 0, at: Date.now() };
 
 // API model: persisted locally in data.json. This release runs one capture pipeline
 // (one physical DirectShow input) and exposes it as a configurable channel.
 // data.json هو المصدر الوحيد للحالة: settings + sources + channels.
 const DATA_PATH = path.resolve(process.env.DATA_FILE || path.join(ROOT, 'data.json'));
+// وضع الترميز الوحيد هو Bitrate: لكل قناة معدّل بت محدّد (أو تلقائي حسب دقة الخرج).
 // الإعدادات فقط هي الافتراضية؛ لا تُنشأ مصادر أو قنوات تلقائياً عند أول تشغيل.
 function defaultData() {
   return {
@@ -69,6 +137,8 @@ function defaultData() {
       tickerEnabled: cfg.tickerEnabled !== false,
       logo: cfg.logo || 'logo.png',
       theme: cfg.theme || 'default',
+      // تبويب «الجداول والنتائج» في صفحة المشاهدين (الدوريات المحلية الكبرى).
+      worldCupFullPage: cfg.worldCupFullPage !== false,
       autoStartOnDemand: !!cfg.autoStartOnDemand,
       playerMaxBufferLength: Number(cfg.playerMaxBufferLength) || 20,
       playerBackBufferLength: Number(cfg.playerBackBufferLength) || 10,
@@ -76,16 +146,15 @@ function defaultData() {
       capLevelToPlayerSize: cfg.capLevelToPlayerSize !== false,
       cpuSaverDefault: !!cfg.cpuSaverDefault,
       ffmpegPath: cfg.ffmpegPath || 'ffmpeg', ffprobePath: cfg.ffprobePath || 'ffprobe', nginxPath: cfg.nginxPath || 'nginx/nginx.exe',
-      x264QualityMode: !!cfg.x264QualityMode,
-      outputWidth: Number(cfg.outputWidth) || 640,
-      outputHeight: Number(cfg.outputHeight) || 360,
-      outputFps: Number(cfg.outputFps) || 20,
-      gopSeconds: Number(cfg.gopSeconds) || 2,
       startupQueueDelayMs: Number(cfg.startupQueueDelayMs) || 8000,
       startupConcurrency: Number(cfg.startupConcurrency) || 1,
       x264Preset: cfg.preset || 'veryfast',
       x264Threads: Number(cfg.threads) || 2,
+      // وضع الجودة: يعطّل zerolatency فيستفيد libx264 من B-frames وlookahead.
+      x264QualityMode: !!cfg.x264QualityMode,
       hlsTime: Number(cfg.hlsTime) || 2,
+      // طول الـGOP بالثواني إعداد عام؛ 0 = تلقائي (يساوي طول مقطع HLS).
+      gopSeconds: Number(cfg.gopSeconds) || 2,
       hlsListSize: Number(cfg.hlsListSize) || 6,
       hlsDeleteThreshold: Number(cfg.hlsDeleteThreshold) || 4,
       port: Number(cfg.port)||3001, nginxPort: Number(cfg.nginxPort)||80,
@@ -96,10 +165,8 @@ function defaultData() {
       idleStopEnabled: !!cfg.idleStopEnabled,
       idleStopMinutes: Number(cfg.idleStopMinutes) || 2,
       sourceFailStopMinutes: Number(cfg.sourceFailStopMinutes) || 3,
-      blockedStopMinutes: Number(cfg.blockedStopMinutes) || 1000,
+      blockedStopMinutes: Number(cfg.blockedStopMinutes) || 120,
       streamUserAgent: cfg.streamUserAgent || 'VLC/3.0.20 LibVLC/3.0.20',
-      logoImage: cfg.logoImage || '', logoPosition: cfg.logoPosition || 'top-right',
-      logoSizePct: Number(cfg.logoSizePct) || 10, logoOpacityPct: Number(cfg.logoOpacityPct) || 50,
     },
     sources: [],
     channels: []
@@ -124,23 +191,30 @@ function writeData(value) {
 }
 let data = readData();
 if (Object.prototype.hasOwnProperty.call(data.settings,'ads')) delete data.settings.ads;
-// حقول قنوات ملغاة من المخطط (لا يقرأها أي كود): threads و manualStopped.
-// تُحذف من data.json عند الإقلاع حتى تتطابق الملفات القديمة مع المخطط الحالي.
-let prunedChannelFields = false;
+// threads و manualStopped حقول قنوات معتمدة: الأول خيوط ترميز اختيارية للقناة
+// (فارغ = الإعداد العام x264Threads)، والثاني يثبّت الإيقاف اليدوي فيمنع أي
+// تشغيل تلقائي حتى يبدأها المشغّل بنفسه.
+let normalizedChannelFields = false;
 for (const channel of data.channels) {
-  for (const key of ['threads', 'manualStopped']) {
-    if (Object.prototype.hasOwnProperty.call(channel, key)) { delete channel[key]; prunedChannelFields = true; }
-  }
+  if (channel.manualStopped === undefined) { channel.manualStopped = false; normalizedChannelFields = true; }
+  else if (typeof channel.manualStopped !== 'boolean') { channel.manualStopped = !!channel.manualStopped; normalizedChannelFields = true; }
+  // ترحيل بِتريت القنوات القديم ('' أو '300k'…) إلى معرّف مستوى، فيبقى المحفوظ
+  // مقروءاً بعد إعادة التشغيل بصيغة الجدول الجديدة.
+  const level = normalizeVideoLevel(channel.bitrate) || 'auto';
+  if (channel.bitrate !== level) { channel.bitrate = level; normalizedChannelFields = true; }
 }
-if (prunedChannelFields) writeData(data);
+if (normalizedChannelFields) writeData(data);
 data.settings = { ...defaultData().settings, ...data.settings };
+// حقول دقة عامة ألغيت (الدقة تُضبط لكل قناة)؛ تُحذف بقاياها من data.json القديم.
+let prunedSettingsFields = false;
+for (const key of ['outputWidth','outputHeight','outputFps']) {
+  if (Object.prototype.hasOwnProperty.call(data.settings, key)) { delete data.settings[key]; prunedSettingsFields = true; }
+}
+if (prunedSettingsFields) writeData(data);
 Object.assign(cfg, {
   ffmpegPath: data.settings.ffmpegPath ?? cfg.ffmpegPath,
   ffprobePath: data.settings.ffprobePath ?? cfg.ffprobePath,
   port:data.settings.port ?? cfg.port, nginxPort:data.settings.nginxPort ?? cfg.nginxPort,
-  outputWidth: data.settings.outputWidth ?? cfg.outputWidth,
-  outputHeight: data.settings.outputHeight ?? cfg.outputHeight,
-  outputFps: data.settings.outputFps ?? cfg.outputFps,
   preset: data.settings.x264Preset ?? cfg.preset,
   threads: data.settings.x264Threads ?? cfg.threads,
   hlsTime: data.settings.hlsTime ?? cfg.hlsTime,
@@ -153,7 +227,91 @@ function activeChannel() { return data.channels.find(c => c.enabled !== false) |
 function sourceForChannel(channel = activeChannel()) { return channel ? (data.sources.find(x => x.id === channel.sourceId) || null) : null; }
 function channelRuntime(channelId) { return streams.get(channelId) || null; }
 function channelHlsDir(channel) { return path.join(HLS_DIR, channel.id); }
+// أحجام مقاطع HLS الحالية. تُستخدم لعرض حجم المولَّد في اللوحة وحساب معدل
+// التوليد (باندويث الإدخال) من نمو كل مقطع بين عينتين.
+function hlsFileSizes() {
+  const sizes = new Map();
+  let total = 0;
+  try {
+    for (const dir of fs.readdirSync(HLS_DIR, { withFileTypes: true })) {
+      if (!dir.isDirectory()) continue;
+      for (const name of fs.readdirSync(path.join(HLS_DIR, dir.name))) {
+        if (!/\.(ts|m3u8|m4s|mp4)$/i.test(name)) continue;
+        const file = path.join(HLS_DIR, dir.name, name);
+        try { const size = fs.statSync(file).size; sizes.set(file, size); total += size; } catch {}
+      }
+    }
+  } catch {}
+  return { total, sizes };
+}
+// يقرأ ما أُضيف إلى سجلات Nginx منذ آخر قراءة ويضيف بايتات /hls إلى عدّادات
+// القنوات والإجمالي. عند وجود سجلّ Nginx يتوقف Node عن العدّ بنفسه (وإلا تكرّرت
+// البايتات) لأن كل المقاطع تمرّ عبر Nginx في هذه الحالة.
+// أول قراءة بعد الإقلاع تبدأ من نهاية السجل، فتظهر العدّادات صفراً مع بدء النظام
+// ولا تُجمع حركة تشغيلات سابقة. تُحسب كل استجابة ناجحة 200/206 في إجمالي Nginx،
+// ومقاطع /hls أيضاً في باندويث الخروج وعدّادات القنوات.
+const NGINX_LOG_CHUNK = 1024 * 1024;
+function countNginxLogLine(line) {
+  const match = line.match(/"\w+ ([^"\s]+) [^"]*" (\d{3}) (\d+)/);
+  if (!match) return;
+  const status = Number(match[2]);
+  if (status !== 200 && status !== 206) return;
+  const bytes = Number(match[3]) || 0;
+  if (!bytes) return;
+  nginxServedBytes += bytes;
+  const parts = match[1].split('/');
+  if (parts[1] !== 'hls') return; // صفحات وواجهات API لا تدخل في باندويث المشاهدين
+  servedBytes += bytes;
+  const channelId = parts[2];
+  if (channelId && data.channels.some(c => c.id === channelId)) {
+    channelServedBytes.set(channelId, (channelServedBytes.get(channelId) || 0) + bytes);
+  }
+}
+function readNginxLogs() {
+  for (const name of ['stream.log', 'access.log']) {
+    const file = path.join(NGINX_LOG_DIR, name);
+    let stat;
+    try { stat = fs.statSync(file); } catch { continue; }
+    if (!stat.isFile()) continue;
+    nginxLogActive = true;
+    const known = nginxLogOffsets.get(file);
+    // أول قراءة بعد الإقلاع تبدأ من نهاية السجل الحالي، ويُثبَّت الموضع فوراً حتى
+    // يُتابع كل ما يُضاف بعده (ولو لم يكن هناك جديد في تلك اللحظة).
+    let position = known == null ? stat.size : known;
+    let skipPartialLine = false;
+    if (stat.size < position) { position = 0; skipPartialLine = false; } // تدوير/تفريغ السجل
+    nginxLogOffsets.set(file, position);
+    if (stat.size === position) continue;
+    let fd;
+    try { fd = fs.openSync(file, 'r'); } catch { continue; }
+    const buffer = Buffer.alloc(NGINX_LOG_CHUNK);
+    let pending = Buffer.alloc(0);
+    let end = position;
+    try {
+      while (position < stat.size) {
+        const read = fs.readSync(fd, buffer, 0, Math.min(NGINX_LOG_CHUNK, stat.size - position), position);
+        if (!read) break;
+        position += read;
+        pending = Buffer.concat([pending, buffer.subarray(0, read)]);
+        let nl;
+        while ((nl = pending.indexOf(10)) >= 0) {
+          const line = pending.toString('utf8', 0, nl);
+          pending = pending.subarray(nl + 1);
+          end = position - pending.length; // نهاية آخر سطر مكتمل
+          if (skipPartialLine) { skipPartialLine = false; continue; }
+          countNginxLogLine(line);
+        }
+      }
+    } catch { /* تبقى القراءة التالية من آخر سطر مكتمل */ } finally { try { fs.closeSync(fd); } catch {} }
+    nginxLogOffsets.set(file, end);
+  }
+}
 function playlistPath(channel) { return path.join(channelHlsDir(channel), 'index.m3u8'); }
+// هل توجد قائمة تشغيل حديثة؟ نفس شرط «live» في publicChannel، ويُستخدم لتصفير
+// مؤقّتات أعطال المصدر بعد نجاح التشغيل.
+function channelIsLive(channel) {
+  try { const st = fs.statSync(playlistPath(channel)); return st.isFile() && Date.now() - st.mtimeMs < 15000; } catch { return false; }
+}
 // مسارات الملفات المرفوعة تُخزَّن كما في الحزمة (srv/uploads/x) وتُعرض عبر /uploads/x.
 function publicAsset(value) {
   const raw = String(value || '').trim();
@@ -172,7 +330,9 @@ function publicChannel(channel) {
   // الإيقاف اليدوي والخروج الناجح ليسا خطأ: سبب الإنهاء الحقيقي هو ما يحدد الحالة.
   const exit = runtime?.lastExit || null;
   const exitBenign = !!exit && typeof exit === 'object' && (exit.reason === 'إيقاف يدوي' || exit.code === 0);
-  const lastErrorText = exit && !exitBenign ? formatLastExit(exit) : '';
+  // الخطأ يُعرض فقط ما دامت القناة متوقفة فعلاً؛ بعد نجاح إعادة التشغيل وظهور
+  // قائمة تشغيل حديثة يُمحى الخطأ القديم تلقائياً حتى لا يبدو البث معطلاً.
+  const lastErrorText = exit && !exitBenign && !live ? formatLastExit(exit) : '';
   return { ...channel, chanId: channel.chanId || channel.id, sort: Number(channel.sortOrder) || 0,
     url: `/hls/${channel.id}/index.m3u8`, cover: publicAsset(channel.cover),
     device: source?.videoDevice || '', sourceName: source?.name || '', live,
@@ -180,7 +340,8 @@ function publicChannel(channel) {
     state: live ? 'running' : 'stopped', pid: runtime?.proc?.pid || null, viewers, restarts: runtime?.restartCount || 0,
     lastErrorText,
     lastError: lastErrorText ? { text: lastErrorText, severity: /exit|error|فشل|تعذر/i.test(lastErrorText) ? 'high' : 'low' } : null,
-    lastErrors: lastErrorText ? [lastErrorText] : [], bytesOut: 0 };
+    lastErrors: lastErrorText ? [lastErrorText] : [], bytesOut: channelServedBytes.get(channel.id) || 0,
+    outputBps: runtime?.proc ? (channelOutputBps.get(channel.id) || 0) : 0 };
 }
 
 function readBody(req, maxBytes=1024*1024) {
@@ -190,6 +351,35 @@ function readBody(req, maxBytes=1024*1024) {
     req.on('end', () => { if (!raw) return resolve({}); try { resolve(JSON.parse(raw)); } catch { reject(new Error('JSON غير صالح')); } });
     req.on('error', reject);
   });
+}
+// الحقول الوحيدة المسموح بها عند إنشاء القناة أو تحديثها. أي خاصية أخرى في جسم
+// الطلب (مثل الدقة أو CRF أو GOP) تُرفض صراحةً بدل تجاهلها بصمت.
+const CHANNEL_WRITE_FIELDS = ['name','chanId','sourceId','category','sort','sortOrder','cover','enabled','quality','bitrate','fps','threads','autoStart','alwaysOn'];
+// مسار PATCH مخصّص لتبديل التفعيل فقط، فلا يقبل أي حقل آخر.
+const CHANNEL_PATCH_FIELDS = ['enabled'];
+// خيوط ترميز القناة: 1..64، وأي قيمة فارغة أو غير صالحة تعني «اتبع الإعداد العام».
+function normalizeThreads(value) {
+  const count = Math.round(Number(value));
+  return Number.isFinite(count) && count >= 1 && count <= 64 ? count : '';
+}
+// حقول المصدر المعتمدة (اتحاد الحقول المشتركة والحقول الخاصة بكل نوع).
+const SOURCE_WRITE_FIELDS = ['name','type','videoDevice','videoDeviceLabel','audioDevice','videoSize','fps','pixelFormat','vcodec','captureSafeMode','enabled','url','streamUrl','path'];
+// حقول الإعدادات المعتمدة = النصوص + المفاتيح المنطقية + النطاقات الرقمية + x264Preset والثيم.
+const SETTINGS_WRITE_FIELDS = [
+  'siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent',
+  'tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode','worldCupFullPage',
+  'playerMaxBufferLength','playerBackBufferLength','playerLiveSyncDuration',
+  'startupQueueDelayMs','startupConcurrency','x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold','port','nginxPort',
+  'maxRestarts','restartBackoffMs','idleStopMinutes','sourceFailStopMinutes','blockedStopMinutes',
+  'x264Preset','theme'
+];
+// إعدادات عامة تظهر في وسائط FFmpeg لكل قناة مُرمَّزة؛ تغييرها أثناء البث
+// يُطبَّق فوراً بإعادة تشغيل القنوات النشطة بدل انتظار إعادة تشغيل يدوية.
+const ENCODING_SETTINGS_KEYS = ['x264Preset','x264QualityMode','x264Threads','hlsTime','gopSeconds','hlsListSize','hlsDeleteThreshold'];
+// يعيد أول خاصية في جسم الطلب غير موجودة في القائمة المسموحة، أو null.
+function unexpectedField(body, fields) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  return Object.keys(body).find(key => !fields.includes(key)) || null;
 }
 // اختبار رابط بث: يقرأ الترويسات وأول بايتات ليحدد نوع المصدر (m3u8/ts/آخر).
 function probeStreamUrl(target) {
@@ -280,6 +470,38 @@ function getNetworkInterfaces() {
     return rank(a) - rank(b) || a.name.localeCompare(b.name) || a.address.localeCompare(b.address);
   });
 }
+// عنوان الواجهة التي يخرج منها الجهاز فعلاً إلى الشبكة (المسار الافتراضي).
+// جهاز واحد قد يملك عدة عناوين (Wi-Fi، Ethernet، محوّلات وهمية)، وهذا هو العنوان
+// الذي يستخدمه الهاتف عادةً؛ لا تُرسل حزمة فعلية — مجرد ربط مقبس UDP لقراءة العنوان.
+function primaryLanAddress() {
+  return new Promise((resolve) => {
+    const socket = require('dgram').createSocket('udp4');
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      try { socket.close(); } catch {}
+      resolve(value);
+    };
+    setTimeout(() => finish(''), 1500).unref();
+    socket.once('error', () => finish(''));
+    socket.connect(53, '8.8.8.8', () => { try { finish(socket.address().address); } catch { finish(''); } });
+  });
+}
+// هل قواعد جدار الحماية التي يضيفها scripts/firewall.bat موجودة؟ (ويندوز فقط)
+// الهاتف لا يصل إلى الكمبيوتر إن غابت هذه القواعد أو كانت شبكة ويندوز مصنّفة «عامة».
+function firewallRuleExists(name) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    execFile('netsh', ['advfirewall', 'firewall', 'show', 'rule', `name=${name}`], { windowsHide: true, timeout: 4000 }, (err) => resolve(!err));
+  });
+}
+async function firewallStatus(port) {
+  if (process.platform !== 'win32') return { checked: false };
+  const viewer = await firewallRuleExists(`PrinceLive HTTP ${port}`);
+  const api = await firewallRuleExists(`PrinceLive API ${Number(data.settings.port) || 3001}`);
+  return { checked: true, viewer, api };
+}
 // حساب الإدارة: كلمة المرور مشفّرة بـ scrypt(salt) داخل cfg.admin،
 // مع السماح بالحقول القديمة adminUsername/adminPassword وبـ defaultPassword.
 function adminAccount() {
@@ -319,6 +541,9 @@ const CONTROL_TOKEN_FILE = path.join(RUN_DIR, 'control.token');
 // أن العملية التي يوقفها هي خادم PrinceLive نفسه، لا عملية Node.js لبرنامج آخر.
 const PID_FILE = path.join(RUN_DIR, 'server.pid');
 const CONTROL_TOKEN = crypto.randomBytes(24).toString('hex');
+// معرّف إقلاع عشوائي يدخل في توقيع جلسة اللوحة، فتصبح كل جلسة سابقة غير صالحة
+// بمجرد إعادة تشغيل النظام ويُطلب تسجيل الدخول من جديد.
+const BOOT_ID = crypto.randomBytes(9).toString('hex');
 // عدّاد جلسات محفوظ في run/session.epoch: يزداد عند تسجيل الخروج فتُبطل كل الرموز
 // الصادرة قبل ذلك فوراً بدل أن تبقى صالحة حتى انتهاء مدة الـ12 ساعة.
 const SESSION_EPOCH_FILE = path.join(RUN_DIR, 'session.epoch');
@@ -337,14 +562,14 @@ function sessionKey() {
 }
 function issueSessionToken() {
   const exp = String(Date.now() + ADMIN_SESSION_TTL_MS);
-  const payload = `${exp}.${sessionEpoch}`;
+  const payload = `${exp}.${sessionEpoch}.${BOOT_ID}`;
   return `${payload}.${crypto.createHmac('sha256', sessionKey()).update(payload).digest('hex')}`;
 }
 function isValidSessionToken(token) {
-  const [exp, epoch, mac] = String(token || '').split('.');
-  if (!exp || !epoch || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
-  if (Number(epoch) !== sessionEpoch) return false;
-  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(`${exp}.${epoch}`).digest('hex'));
+  const [exp, epoch, boot, mac] = String(token || '').split('.');
+  if (!exp || !epoch || !boot || !mac || !Number.isFinite(Number(exp)) || Number(exp) < Date.now()) return false;
+  if (Number(epoch) !== sessionEpoch || boot !== BOOT_ID) return false;
+  return sameSecret(mac, crypto.createHmac('sha256', sessionKey()).update(`${exp}.${epoch}.${boot}`).digest('hex'));
 }
 function parseCookies(req) {
   const out = {};
@@ -481,6 +706,13 @@ const COSMETIC_FFMPEG_RE = /deprecated pixel format used|Guessed Channel Layout|
 // «Error submitting packet to decoder» يُعد شكلياً فقط حين يكون نتيجة الإطار المقطوع
 // من بطاقة MJPEG نفسها، لا حين يأتي منفرداً (حينها قد يعني مصدراً تالفاً فعلاً).
 const MJPEG_CONTEXT_RE = /mjpeg|Found EOI|No JPEG data/i;
+// إشعار libswscale عن «تنسيق بكسل قديم» (yuvj*) يصدر لمجرد أن المصدر MJPEG
+// كامل المدى، وقد صار تحويله صريحاً في -vf فلا يعني خللاً في الخرج؛ يُسقط من
+// السجل دائماً حتى لو كانت التحذيرات التجميلية ظاهرة.
+const PIXEL_FORMAT_NOTICE_RE = /deprecated pixel format used/i;
+// ردّ مزوّد IPTV بحظر الوصول (403/451): يُستخدم لعدّ «حظر المصدر» بمؤقّت مستقل
+// عن أعطال الشبكة العادية (blockedStopMinutes مقابل sourceFailStopMinutes).
+const BLOCKED_SOURCE_RE = /Server returned (?:403|451)|403 Forbidden|451 Unavailable|HTTP error 403/i;
 function isCosmeticFfmpegLine(line) {
   const l = String(line).trim();
   return COSMETIC_FFMPEG_RE.test(l) || (/Error submitting packet to decoder/i.test(l) && MJPEG_CONTEXT_RE.test(l));
@@ -511,6 +743,16 @@ function send(res, code, data) {
   res.end(JSON.stringify(data));
 }
 
+// ذاكرة النظام الحقيقية من عدّادات نظام التشغيل (وليس ذاكرة عملية Node فقط).
+function systemMemory() {
+  const memTotalBytes = os.totalmem();
+  const memFreeBytes = os.freemem();
+  const memUsedBytes = Math.max(0, memTotalBytes - memFreeBytes);
+  return {
+    memTotalBytes, memUsedBytes, memFreeBytes,
+    memPercent: memTotalBytes > 0 ? Math.round((memUsedBytes / memTotalBytes) * 100) : 0
+  };
+}
 function getStatus(channelId) {
   const channel = channelId ? data.channels.find(c => c.id === channelId) : activeChannel();
   const nginxPort = Number(data.settings.nginxPort) || 80;
@@ -520,6 +762,8 @@ function getStatus(channelId) {
     nginxBinding: { listening: nginxListening, port: nginxPort, reason: nginxListening ? '' : `لم يستجب أي خدمة على المنفذ ${nginxPort}` },
     uptime: Math.floor(process.uptime()),
     memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+    cpuCount: os.cpus().length, cpuPercent,
+    ...systemMemory(),
     license: { valid: true, plan: 'محلي' },
     messages: []
   };
@@ -531,9 +775,7 @@ function getStatus(channelId) {
     running: !!runtime?.proc, pid: runtime?.proc?.pid || null, startedAt: runtime?.startedAt || null,
     restartCount: runtime?.restartCount || 0, lastExit: runtime?.lastExit || null, exitHistory: runtime?.exits || [], playlistExists, playlistAgeMs,
     streamUrl: `/hls/${channel.id}/index.m3u8`, sourceType: source?.type || '', videoDevice: source?.videoDevice || '', audioDevice: source?.audioDevice || '',
-    audioEnabled: !!source?.audioDevice, outputWidth: Number(data.settings.outputWidth) || 640,
-    outputHeight: Number(String(channel.quality || '').replace(/p$/i,'')) || Number(data.settings.outputHeight) || 360,
-    outputFps: Number(channel.fps) || Number(data.settings.outputFps) || 20, videoBitrate: channel.bitrate || '',
+    audioEnabled: !!source?.audioDevice, videoBitrate: channel.bitrate || 'auto',
     channel: { id: channel.id, name: channel.name, enabled: channel.enabled !== false }, channels: data.channels.map(publicChannel) };
 }
 function clearChannelHls(channel) {
@@ -554,6 +796,58 @@ function syncNginxPorts(){
     text=text.replace(/[ \t]*types\s*\{[^}]*m3u8[^}]*\}[ \t]*\r?\n/,'');
     fs.writeFileSync(file,text,'utf8');return true;
   }catch(err){logLine(`تعذر تحديث منافذ Nginx: ${err.message}`);return false;}
+}
+
+// مسار ملف Nginx يأتي من settings.nginxPath ويُستخدم فعلياً في أوامر الاختبار
+// والتشغيل والإيقاف. المسار النسبي يُبحث عنه في جذر المشروع ثم داخل مجلد nginx،
+// والمسار غير الموجود يُعاد كما هو لتظهر رسالة واضحة بالمسار المتوقع.
+function nginxPrefix() { return path.join(ROOT, 'nginx') + path.sep; }
+function nginxExecutable() {
+  const raw = String(data.settings.nginxPath || cfg.nginxPath || '').trim();
+  if (!raw) return '';
+  if (path.isAbsolute(raw)) return raw;
+  for (const candidate of [path.join(ROOT, raw), path.join(ROOT, 'nginx', raw)]) {
+    try { if (fs.statSync(candidate).isFile()) return candidate; } catch {}
+  }
+  return path.join(ROOT, raw);
+}
+function nginxBinaryExists() {
+  const bin = nginxExecutable();
+  try { return !!bin && fs.statSync(bin).isFile(); } catch { return false; }
+}
+// ينفّذ nginx.exe من المسار المحفوظ مع بادئة مجلد nginx وملف الإعداد نفسه الذي
+// تستخدمه السكربتات (nginx -p <root>/nginx/ -c conf/nginx.conf ...).
+function runNginxCommand(extraArgs) {
+  return new Promise(resolve => {
+    const bin = nginxExecutable();
+    if (!bin) return resolve({ ok:false, binary:'', output:'', message:'مسار Nginx غير محدد؛ اضبط «مسار Nginx» في الإعدادات.' });
+    if (!nginxBinaryExists()) return resolve({ ok:false, binary:bin, output:'', message:`ملف Nginx غير موجود في المسار «${bin}»؛ صحّح «مسار Nginx» في الإعدادات.` });
+    const args = ['-p', nginxPrefix(), '-c', 'conf/nginx.conf', ...extraArgs];
+    execFile(bin, args, { cwd: ROOT, windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      const output = `${stdout || ''}${stderr || ''}`.trim();
+      if (!err) return resolve({ ok:true, binary:bin, output, message:'تم تنفيذ أمر Nginx بنجاح.' });
+      const reason = ['ENOEXEC','EACCES','EPERM'].includes(err.code)
+        ? `تعذر تنفيذ ملف Nginx «${bin}» (${err.code}); تأكد من وجود nginx\\nginx.exe في مجلد المشروع.`
+        : (output || err.message);
+      resolve({ ok:false, binary:bin, output, message:reason });
+    });
+  });
+}
+async function nginxAction(action) {
+  if (action === 'test') return runNginxCommand(['-t']);
+  if (action === 'reload') return runNginxCommand(['-s','reload']);
+  if (action === 'stop') return runNginxCommand(['-s','quit']);
+  if (action === 'start') return runNginxCommand([]);
+  if (action === 'restart') {
+    // لا يعتمد على "nginx -s quit" وحده: مهلة صغيرة تتيح للعملية القديمة تحرير
+    // المنفذ قبل تشغيل النسخة الجديدة، ثم يُبلَّغ بنتيجة التشغيل الفعلية.
+    const stopped = await runNginxCommand(['-s','quit']);
+    await new Promise(r => setTimeout(r, 1500));
+    const started = await runNginxCommand([]);
+    return { ok: started.ok, binary: started.binary, output: [stopped.output, started.output].filter(Boolean).join('\n'),
+      message: started.ok ? 'تمت إعادة تشغيل Nginx.' : started.message };
+  }
+  return { ok:false, binary: nginxExecutable(), output:'', message:'أمر غير معروف؛ استخدم test أو start أو stop أو reload أو restart.' };
 }
 
 function validateNetworkStreamUrl(value) {
@@ -603,25 +897,24 @@ function applySourceFields(source, body) {
 // قيم libx264 المقبولة (نفس قائمة واجهة الإعدادات) ونطاق عدد الخيوط.
 const X264_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'];
 const encoderWarningsLogged = new Set();
-function clampNumber(value, min, max, fallback) {
-  const n = Math.round(Number(value));
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-// يقبل صور البِتريت التي يفهمها FFmpeg مثل 500k أو 2000K أو 2M؛ غير ذلك يعيد الافتراضي.
-function normalizeVideoBitrate(value, fallback) {
-  const text = String(value || '').trim();
-  return /^\d{2,6}[kKmM]?$/.test(text) ? text : fallback;
+// clampNumber مُستوردة من lib/shared/clamp.js: تطبيق واحد مشترك مع طبقة الالتقاط.
+// bitrateKbps مُستوردة من lib/shared/video-levels.js مع جدول مستويات الجودة،
+// فتبقى قيم FFmpeg وحساب الهدف في مكان واحد.
+// عدد خيوط الترميز: خاصية القناة إن حُدّدت، وإلا الإعداد العام x264Threads.
+function channelThreadsChoice(channel, settings) {
+  const own = Math.round(Number(channel?.threads));
+  return own >= 1 ? { value: own, label: `threads «${channel.name || channel.id}»` } : { value: settings.x264Threads, label: 'x264Threads' };
 }
 // يضمن أن preset وعدد الخيوط صالحان حتى لو عُدّلت data.json يدوياً.
-function resolveEncoderSettings(settings) {
+function resolveEncoderSettings(settings, channel) {
   const warnings = [];
   const presetRaw = String(settings.x264Preset || '').trim().toLowerCase();
   const preset = X264_PRESETS.includes(presetRaw) ? presetRaw : 'veryfast';
   if (presetRaw && preset !== presetRaw) warnings.push(`preset «${presetRaw}» غير مدعوم في libx264؛ سيُستخدم veryfast`);
-  const threadsRaw = Math.round(Number(settings.x264Threads));
-  const threads = clampNumber(settings.x264Threads, 1, 64, 2);
-  if (Number.isFinite(threadsRaw) && threadsRaw !== threads) warnings.push(`x264Threads=${threadsRaw} خارج النطاق 1..64؛ سيُستخدم ${threads}`);
+  const threadsChoice = channelThreadsChoice(channel, settings);
+  const threadsRaw = Math.round(Number(threadsChoice.value));
+  const threads = clampNumber(threadsChoice.value, 1, 64, 2);
+  if (Number.isFinite(threadsRaw) && threadsRaw !== threads) warnings.push(`${threadsChoice.label}=${threadsRaw} خارج النطاق 1..64؛ سيُستخدم ${threads}`);
   // التحذير مرة واحدة لكل قيمة، حتى لا يتكرر مع كل إعادة تشغيل.
   const fresh = warnings.filter(w => !encoderWarningsLogged.has(w));
   if (fresh.length) { fresh.forEach(w => encoderWarningsLogged.add(w)); logLine(`تنبيه إعدادات FFmpeg: ${fresh.join(' | ')}`); }
@@ -641,28 +934,104 @@ function describeEncoderParamError(text) {
   return 'فشل FFmpeg بسبب خيار غير صالح؛ راجع آخر سطر في سجل القناة.';
 }
 
+// قيم الجودة المدعومة في نموذج الترميز الحالي (نفس قائمة نافذة القناة في
+// web/admin.js): نسخ المصدر أو «تلقائي» أو مقاس مسمّى حتى 720p.
+const CHANNEL_QUALITIES = ['source','copy','auto','240p','288p','320p','360p','432p','480p','720p'];
+// تحقّق واحد من حقول الترميز (الجودة/البِتريت/FPS/الخيوط) يُطبَّق عند إنشاء القناة
+// وتعديلها معاً، فلا تُحفظ قيمة غير مدعومة يُستبدلها النظام لاحقاً بالتلقائية بصمت.
+// يعيد رسالة الخطأ العربية أو '' عند الصلاحية؛ الحقول الغائبة تُترك كما هي.
+function validateChannelEncodingFields(body) {
+  const has = key => Object.prototype.hasOwnProperty.call(body, key);
+  if (has('quality') && !CHANNEL_QUALITIES.includes(String(body.quality))) return 'جودة القناة غير صالحة';
+  // null/'' يعني «استخدم الافتراضي 20» — نموذج القناة يرسل null عند إفراغ الحقل.
+  if (has('fps') && body.fps !== '' && body.fps !== null && body.fps !== undefined
+    && (!Number.isFinite(Number(body.fps)) || Number(body.fps) < 1 || Number(body.fps) > 60)) return 'FPS يجب أن يكون بين 1 و60';
+  // البِتريت مستوى جودة معتمد (auto/economy/accepted/balanced/highest)؛ الفارغ = تلقائي.
+  if (has('bitrate') && !normalizeVideoLevel(body.bitrate)) return 'مستوى جودة الفيديو غير صالح؛ اختر «تلقائي» أو اقتصادي أو مقبول أو متوازن أو أعلى';
+  // null/'' يعني «اتبع الإعداد العام x264Threads».
+  if (has('threads') && body.threads !== '' && body.threads !== null && body.threads !== undefined
+    && !normalizeThreads(body.threads)) return 'عدد الخيوط يجب أن يكون بين 1 و64، أو اتركه فارغاً لاستخدام الإعداد العام';
+  return '';
+}
+
+// أبعاد الخرج ومعدّل الإطارات والهدف المحسوب للبِتريت من إعدادات القناة والمصدر.
+// يُستخدم في buildArgs للتشفير وفي سجل استقرار البث، فيبقى الهدف واحداً في الاثنين.
+function channelOutputPlan(channel, source) {
+  const [srcW, srcH] = String(source.videoSize || cfg.videoSize || '1280x720').split('x').map(Number);
+  // الجودة إما نسخ المصدر، أو مقاس مسمّى (240p..720p) يُحسب عرضه من نسبة المصدر،
+  // أو «تلقائي» (auto/فارغ) = 360p. الدقة تُضبط لكل قناة فقط؛ لا إعداد عام للأبعاد.
+  const qualityValue = String(channel.quality || '').trim().toLowerCase();
+  const presetHeight = /^\d{3,4}p$/.test(qualityValue) ? Number(qualityValue.replace(/p$/,'')) : 0;
+  const outputHeight = isCopyQuality(qualityValue) ? (srcH || 720) : (presetHeight || 360);
+  // yuv420p يرفض الأبعاد الفردية، فالعرض يُشتق من نسبة المصدر ويُجبَر على الزوجية.
+  const outputWidth = isCopyQuality(qualityValue) ? (srcW || 1280)
+    : Math.max(160, Math.round(((srcW || 1280) * outputHeight) / (srcH || 720) / 2) * 2);
+  const outputFps = clampNumber(Number(channel.fps), 1, 60, 20);
+  // الجودة تُضبط لكل قناة كمستوى معتمد؛ «تلقائي» يُحسب من الدقة وFPS بهذه القيم نفسها،
+  // والقيم الثلاث تُمرَّر إلى FFmpeg مستقلة كما في جدول المستويات.
+  const resolved = resolveVideoLevel(channel.bitrate, { outputWidth, outputHeight, outputFps });
+  return { outputWidth, outputHeight, outputFps, videoLevel: resolved.level, autoTargetKbps: resolved.autoTargetKbps,
+    videoBitrate: resolved.level.bitrate, videoMaxrate: resolved.level.maxrate, videoBufsize: resolved.level.bufsize };
+}
+
+// هل يُضمَّن مسار صوت في مخرَج HLS لهذا المصدر؟ شبكة/ملف دائماً، وجهاز
+// الالتقاط فقط إن كان له مدخل صوت. تُستخدم في buildArgs وفي حساب الهدف.
+function channelMuxesAudio(source) {
+  const type = String(source?.type || 'usb').toLowerCase();
+  if (['http-hls','http','hls','network','rtsp','file'].includes(type)) return true;
+  return !!String(source?.audioDevice || '').trim();
+}
+
+// سطر سجل استقرار البِتريت: المعدّل الفعلي للخرج مقابل النطاق المسموح على
+// نافذة القياس (12 ثانية). يظهر في سجل الخادم وفي سجل القناة معاً.
+// أحجام مقاطع HLS تشمل الصوت والـ muxing مع الفيديو، فهدف الصوت يُضاف إلى هدف
+// الفيديو، وإلا ظهر انحراف ثابت (+96k دائماً) وليس عيباً في الترميز.
+// المستوى يُترمَّز VBR: -b:v متوسط مستهدف و-maxrate سقف مسموح، فالمعدّل الفعلي
+// يتنقّل بينهما حسب حركة المشهد (وكلفة الإطار المفتاحي كل ثانيتين). لذلك يُقارَن
+// الفعلي بالنطاق كاملاً لا بنقطة واحدة، ولا يُعدّ تجاوزاً إلا ما خرج فوق السقف
+// مع هامش أطراف النقل (TS) والصوت الفعلي.
+const BITRATE_CEILING_SLACK = 0.05;
+function logBitrateWindow(channel, source, bytesPerSecond, seconds) {
+  const plan = channelOutputPlan(channel, source);
+  const videoKbps = bitrateKbps(plan.videoBitrate);
+  if (!videoKbps) return;
+  const videoMaxKbps = Math.max(videoKbps, bitrateKbps(plan.videoMaxrate) || videoKbps);
+  const audioKbps = channelMuxesAudio(source) ? bitrateKbps(cfg.audioBitrate || '96k') : 0;
+  const targetKbps = videoKbps + audioKbps;
+  const ceilingKbps = videoMaxKbps + audioKbps;
+  const actualKbps = Math.round((bytesPerSecond * 8) / 1000);
+  const deviation = Math.round(((actualKbps - targetKbps) / targetKbps) * 100);
+  const verdict = actualKbps > Math.round(ceilingKbps * (1 + BITRATE_CEILING_SLACK)) ? 'أعلى من السقف المسموح'
+    : (actualKbps < Math.round(targetKbps * 0.9) ? 'أقل من الهدف' : 'داخل النطاق المسموح');
+  // عندما يساوي السقف الهدف (‎-maxrate = -b:v) يُعرض رقم واحد بدل نطاق من قيمة واحدة.
+  const videoText = videoMaxKbps > videoKbps ? `فيديو ${videoKbps}k–${videoMaxKbps}k` : `فيديو ${videoKbps}k`;
+  const breakdown = audioKbps ? ` (${videoText} + صوت ${audioKbps}k)` : ` (${videoText})`;
+  const rangeText = ceilingKbps > targetKbps ? `${targetKbps}k–${ceilingKbps}k` : `${targetKbps}k`;
+  const line = `استقرار البِتريت «${channel.name}»: الفعلي ${actualKbps}k مقابل ${rangeText}${breakdown} `
+    + `(${deviation > 0 ? '+' : ''}${deviation}% عن الهدف، ${verdict}) على نافذة ${Math.round(seconds)} ثانية`;
+  logLine(line);
+  appendChannelLog(channel.id, line);
+}
+
 function buildArgs(channel, forceTranscode = false) {
   const source = sourceForChannel(channel);
   if (!channel || channel.enabled === false) throw new Error('القناة غير موجودة أو معطلة');
   if (!source || source.enabled === false) throw new Error('مصدر البث غير موجود أو معطل');
   const settings = data.settings;
-  const [srcW, srcH] = String(source.videoSize || cfg.videoSize || '1280x720').split('x').map(Number);
-  const outputHeight = isCopyQuality(channel.quality) ? (srcH || 720) : Number(String(channel.quality || '').replace(/p$/i,'')) || 360;
-  const derivedWidth=Math.max(160,Math.round((srcW||1280)*outputHeight/(srcH||720)/2)*2);
-  const configuredWidth=Number(settings.outputWidth)||640;
-  const outputWidth=isCopyQuality(channel.quality)?(srcW||1280):(outputHeight===(Number(settings.outputHeight)||360)?configuredWidth:derivedWidth);
-  const outputFps = clampNumber(Number(channel.fps) || settings.outputFps, 1, 60, 20);
-  const defaultBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
-  const videoBitrate = normalizeVideoBitrate(channel.bitrate, defaultBitrate);
-  if (String(channel.bitrate || '').trim() && videoBitrate !== String(channel.bitrate).trim()) {
-    logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
+  const { outputWidth, outputHeight, outputFps, videoLevel, autoTargetKbps, videoBitrate, videoMaxrate, videoBufsize } = channelOutputPlan(channel, source);
+  // الوضع التلقائي يُسجّل قرارَه المحسوب عند كل تشغيل، فتُعرف القيم التي وصلت FFmpeg فعلاً.
+  if (autoTargetKbps !== null) {
+    logLine(`جودة الفيديو التلقائية «${channel.name}»: ${outputWidth}×${outputHeight}@${outputFps} → الهدف ${autoTargetKbps}k ⇒ «${videoLevel.label}» (-b:v ${videoBitrate} -maxrate ${videoMaxrate} -bufsize ${videoBufsize})`);
   }
   const hlsTime = clampNumber(settings.hlsTime, 1, 10, 2);
-  const gop = Math.max(1, Math.round(outputFps * clampNumber(settings.gopSeconds, 1, 10, hlsTime)));
+  // طول الـGOP: إعداد عام اختياري بالثواني؛ 0 أو فارغ = تلقائي = طول مقطع HLS
+  // (إطار مفتاحي واحد عند بداية كل مقطع، فتكون بداية كل مقطع keyframe).
+  const gopSeconds = Math.max(1, Number(settings.gopSeconds) || 2);
+  const gop = Math.max(1, Math.round(outputFps * gopSeconds));
   const sourceType = String(source.type || 'usb').toLowerCase();
   const isNetwork = ['http-hls','http','hls','network','rtsp'].includes(sourceType);
   const audioDevice = source.audioDevice || '';
-  const args = ['-hide_banner','-loglevel','warning','-thread_queue_size','512'];
+  const args = ['-hide_banner','-loglevel','warning','-y','-thread_queue_size','512'];
   if (isNetwork) {
     const streamUrl = validateNetworkStreamUrl(source.streamUrl || source.url || '');
     args.push('-rw_timeout','15000000');
@@ -674,44 +1043,45 @@ function buildArgs(channel, forceTranscode = false) {
     if (!filePath) throw new Error('مسار ملف المصدر غير محدد');
     args.push('-re','-stream_loop','-1','-i',filePath);
   } else if (sourceType === 'screen') {
-    const screenFps = String(Number(source.fps) || 15);
-    if (process.platform === 'win32') args.push('-f','gdigrab','-framerate',screenFps,'-i','desktop');
-    else args.push('-f','x11grab','-framerate',screenFps,'-i',String(process.env.DISPLAY || ':0.0'));
+    // التقاط الشاشة (gdigrab) يأتي من طبقة الالتقاط.
+    args.push(...capture.screenInputArgs(source));
   } else {
-    const inputSpec = audioDevice ? `video=${source.videoDevice}:audio=${audioDevice}` : `video=${source.videoDevice}`;
-    args.push('-f','dshow','-rtbufsize','256M');
-    // الوضع الآمن: لا نفرض الدقة/الإطارات على الجهاز (يعالج خطأ "Could not set video options").
-    // نتحقق من الصيغة قبل تمريرها حتى لا تصل قيمة تالفة من data.json إلى FFmpeg.
-    const captureSize = String(source.videoSize || '').trim();
-    const safeSize = /^\d{3,4}x\d{3,4}$/.test(captureSize) ? captureSize : '1280x720';
-    if (!source.captureSafeMode) args.push('-framerate',String(clampNumber(source.fps, 1, 60, 30)),'-video_size',safeSize);
-    // صيغة الإدخال: pixelFormat → -pixel_format، أما codec مثل mjpeg فيُمرَّر بـ -vcodec (mjpeg ليس pixel format).
-    const inputPixelFormat = String(source.pixelFormat || '').trim();
-    const inputCodec = String(source.vcodec || '').trim();
-    const isCodecName = (value) => ['mjpeg', 'rawvideo', 'h264'].includes(value.toLowerCase());
-    const pixelSpec = isCodecName(inputPixelFormat) ? '' : inputPixelFormat;
-    const codecSpec = inputCodec || (isCodecName(inputPixelFormat) ? inputPixelFormat : '');
-    if (/^[a-z0-9_]{2,30}$/i.test(pixelSpec)) args.push('-pixel_format',pixelSpec);
-    if (/^[a-z0-9_]{2,30}$/i.test(codecSpec)) args.push('-vcodec',codecSpec);
-    args.push('-i',inputSpec);
+    // وسائط جهاز الالتقاط (DirectShow) تأتي من طبقة الالتقاط.
+    args.push(...capture.captureInputArgs(source));
   }
+  // DirectShow يحمل الصوت مع الفيديو في الإدخال الأول نفسه.
+  const audioMap = '0:a?';
   // Conservative HLS-safe remux: only network inputs can request source-copy; USB capture is always encoded.
-  if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 360p أو 480p أو 720p.');
+  if (isCopyQuality(channel.quality) && !isNetwork && sourceType !== 'file' && sourceType !== 'screen') throw new Error('نسخ المصدر دون إعادة ترميز غير متاح لهذا النوع من التقاط USB؛ اختر 240p أو 288p أو 320p أو 360p أو 432p أو 480p أو 720p.');
   if (isCopyQuality(channel.quality) && isNetwork && !forceTranscode) {
-    args.push('-map','0:v:0','-map','0:a:0?','-c:v','copy','-c:a','aac','-b:a',cfg.audioBitrate||'96k');
+    args.push('-map','0:v:0','-map',audioMap,'-c:v','copy','-c:a','aac','-b:a',cfg.audioBitrate||'96k');
   } else {
-    const encoder = resolveEncoderSettings(settings);
-    args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,fps=${outputFps}`,
-      '-c:v','libx264','-preset',encoder.preset,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
+    const encoder = resolveEncoderSettings(settings, channel);
+    // بلا pad: القياس وحده إلى الدقة المختارة يدوياً لقناة، فلا أشرطة سوداء حول الصورة.
+    // معدّل الإطارات يُضبط بخيار خرج -r (لا فِلتر fps)، وzerolatency يقلّل الإطارات
+    // المحجوزة في المخزن فيقلّ التأخير على حساب ضغط أقل كفاءة يسيراً.
+    // وضع الجودة يعطّل zerolatency: حينها يستفيد libx264 من B-frames وlookahead
+    // فيقلّ حجم البيانات بنفس الجودة ويثبت المشهد الصعب، مقابل تأخير أكبر ثوانٍ.
+    const tuneArgs = settings.x264QualityMode ? [] : ['-tune','zerolatency'];
+    // تحويل التنسيق صريح: القياس مع تحويل المدى إلى محدود (out_range=tv) ثم
+    // yuv420p، فيُعاد ترميز مصادر MJPEG كاملة المدى (yuvj420p) إلى مدى البث
+    // القياسي بدل الاعتماد على الاستنتاج التلقائي للمدى.
+    args.push('-map','0:v:0','-vf',`scale=${outputWidth}:${outputHeight}:out_range=tv,format=yuv420p`,
+      '-c:v','libx264','-preset',encoder.preset,...tuneArgs,'-pix_fmt','yuv420p','-threads',String(encoder.threads),
       '-r',String(outputFps),'-g',String(gop),'-keyint_min',String(gop),'-sc_threshold','0');
-    if(settings.x264QualityMode===true) args.push('-crf','23');
-    else args.push('-b:v',videoBitrate,'-maxrate',videoBitrate,'-bufsize','1000k');
-    if (isNetwork || audioDevice || sourceType === 'file') args.push('-map','0:a:0?','-af','aresample=async=1:first_pts=0','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
+    // وضع Bitrate: القيم الثلاث تأتي مستقلة من جدول المستويات (لا اشتقاق من -b:v).
+    // لا نستخدم nal-hrd=cbr لأن حشو CBR يرفع المشاهد الهادئة إلى المعدّل كاملاً
+    // بدل توفير البيانات.
+    args.push('-b:v',videoBitrate,'-maxrate',videoMaxrate,'-bufsize',videoBufsize);
+    if (channelMuxesAudio(source)) args.push('-map',audioMap,'-af','aresample=async=1','-c:a','aac','-b:a',cfg.audioBitrate||'96k','-ar',String(Number(cfg.audioSampleRate)||44100),'-ac',String(Number(cfg.audioChannels)||2));
     else args.push('-an');
   }
   const dir = channelHlsDir(channel); fs.mkdirSync(dir,{recursive:true});
+  // بادئة فريدة لكل تشغيل: أسماء المقاطع لا تتكرّر بعد إعادة التشغيل، فلا يقدّم
+  // مشغّل أو وسيط تخزين نسخة قديمة من ملف بالاسم نفسه.
+  const sessionTag = crypto.randomBytes(6).toString('hex');
   args.push('-f','hls','-hls_time',String(hlsTime),'-hls_list_size',String(Number(settings.hlsListSize)||6),'-hls_delete_threshold',String(Number(settings.hlsDeleteThreshold)||4),
-    '-hls_flags','delete_segments+append_list+omit_endlist+independent_segments+program_date_time','-hls_segment_filename',path.join(dir,'seg_%05d.ts'),path.join(dir,'index.m3u8'));
+    '-hls_flags','delete_segments+independent_segments+program_date_time','-hls_segment_filename',path.join(dir,`seg_${sessionTag}_%05d.ts`),path.join(dir,'index.m3u8'));
   return args;
 }
 // سجل خروج FFmpeg: يحفظ رمز الخروج والإشارة والسبب الحقيقي، مع آخر 5 محاولات
@@ -734,9 +1104,14 @@ function formatLastExit(exit) {
   if (exit.cause) parts.push(`cause=${exit.cause}`);
   return parts.join('; ');
 }
-function startChannel(channelId) {
+function startChannel(channelId, manual = false) {
   const channel = data.channels.find(c=>c.id===channelId);
   if (!channel) return {ok:false,message:'القناة غير موجودة'};
+  // الإيقاف اليدوي يمنع كل مسار تلقائي (حفظ إعدادات، تعديل مصدر، إقلاع، تشغيل
+  // عند الطلب) من تشغيل القناة؛ يُلغى فقط بتشغيل يدوي من لوحة التحكم.
+  if (!manual && channel.manualStopped) return {ok:false,message:'القناة موقوفة يدوياً من لوحة التحكم',channelId};
+  // تشغيل يدوي يلغي تثبيت الإيقاف اليدوي، فيعود التشغيل التلقائي للعمل عليها.
+  if (manual) setManualStopped(channelId, false);
   if (channel.enabled===false) return {ok:false,message:'القناة معطلة'};
   const source = sourceForChannel(channel); if (!source || source.enabled===false) return {ok:false,message:'مصدر القناة غير متاح'};
   for (const [otherId, rt] of streams) {
@@ -746,7 +1121,16 @@ function startChannel(channelId) {
   if (old?.proc && !old.stopping) return {ok:true,message:'القناة تعمل بالفعل',channelId};
   if (old?.proc && old.stopping) return {ok:false,message:'القناة ما زالت تغلق؛ انتظر اكتمال الإيقاف ثم أعد التشغيل',channelId};
   if(old?.restartTimer)clearTimeout(old.restartTimer);
-  const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:old?.lastExit||null,exits:Array.isArray(old?.exits)?old.exits:[],sourceId:source.id,forceTranscode:!!old?.forceTranscode,lastStderr:'',paramError:false};
+  const runtime={proc:null,restartCount:old?.restartCount||0,restartTimer:null,stopping:false,startedAt:null,lastExit:old?.lastExit||null,exits:Array.isArray(old?.exits)?old.exits:[],sourceId:source.id,forceTranscode:!!old?.forceTranscode,lastStderr:'',paramError:false,
+    // آخر لحظة وُلِّدت فيها بايتات HLS: المرجع الذي يكشف فقدان إشارة المصدر
+    // ما دامت العملية حيّة. liveSince يقيس مدة الاستقرار لتصفير عدّاد المحاولات.
+    lastOutputAt: Date.now(), liveSince: null,
+    // مؤقّتات التعافي: أول فشل للمصدر وأول ردّ حظر من المزوّد. تُصفَّر عند التشغيل
+    // اليدوي وعند نجاح البث، ويقارنها مؤقّت الخادم بحدود sourceFailStopMinutes
+    // وblockedStopMinutes لإيقاف القناة بدل حلقة إعادة تشغيل لا تنتهي.
+    failSince: manual || old?.failedStop ? null : (old?.failSince || null),
+    blockedSince: manual || old?.failedStop ? null : (old?.blockedSince || null),
+    failedStop: !!old?.failedStop && !manual};
   streams.set(channelId,runtime); clearTimeout(runtime.restartTimer); clearChannelHls(channel);
   let args; try { args=buildArgs(channel,runtime.forceTranscode); } catch(e) { recordExit(runtime,{reason:'فشل بناء أمر FFmpeg',cause:e.message}); return {ok:false,message:e.message}; }
   const safeArgs=args.map((a,i)=> i>0 && args[i-1]==='-i' && /^(https?|rtsp):/i.test(a) ? '[network-url-hidden]' : a);
@@ -754,17 +1138,35 @@ function startChannel(channelId) {
   try { runtime.proc=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']}); }
   catch(e) { recordExit(runtime,{reason:'تعذر تشغيل FFmpeg',cause:e.message}); return {ok:false,message:e.message}; }
   const proc=runtime.proc; runtime.startedAt=new Date().toISOString();
-  proc.stderr.on('data',b=>{
-    runtime.lastStderr=(runtime.lastStderr+b.toString()).slice(-4000);
-    let m=b.toString().trim(); if(!m) return;
+  // stderr يصل مقاطعَ عشوائية قد تنتهي في منتصف السطر، فتظهر السطور مقطوعة
+  // («Last m» ثم «essage repeated 1 times»). نجمّع المقاطع حتى نهاية السطر ثم نسجّله.
+  let stderrTail='';
+  const logStderrLine=raw=>{
+    if (PIXEL_FORMAT_NOTICE_RE.test(raw)) return;
+    let m=raw.trim(); if(!m) return;
     if(data.settings.hideCosmeticLogs===true){ m=filterCosmeticFfmpegLines(m); if(!m) return; }
     logLine(`[${channel.name}] FFmpeg: ${m}`);appendChannelLog(channelId,`FFmpeg: ${m}`);
+  };
+  proc.stderr.on('data',b=>{
+    const text=b.toString();
+    runtime.lastStderr=(runtime.lastStderr+text).slice(-4000);
+    // ردّ حظر من مزوّد IPTV (403/451): يُسجَّل أول وقت له فقط، ويوقفه
+    // blockedStopMinutes من مؤقّت الخادم.
+    if (!runtime.blockedSince && BLOCKED_SOURCE_RE.test(text)) runtime.blockedSince = Date.now();
+    stderrTail+=text;
+    // سطر واحد طويل بلا فاصل: يُسجَّل كما هو بدل ترك الحاجز يتضخم.
+    if (stderrTail.length>4000 && !stderrTail.includes('\n')) { logStderrLine(stderrTail); stderrTail=''; return; }
+    const parts=stderrTail.split(/\r?\n/);
+    stderrTail=parts.pop();
+    for (const line of parts) logStderrLine(line);
   });
   proc.on('error',e=>{recordExit(runtime,{reason:'تعذر تشغيل FFmpeg',cause:e.message});runtime.proc=null;logLine(`[${channel.name}] تعذر تشغيل FFmpeg: ${e.message}`);scheduleChannelRestart(channelId);});
   proc.on('exit',(code,signal)=>{
+    if (stderrTail.trim()) { logStderrLine(stderrTail); stderrTail=''; }
     const exitReason = runtime.stopping ? 'إيقاف يدوي' : (code === 0 ? 'انتهى بنجاح' : 'خروج غير متوقع');
     recordExit(runtime,{code,signal,reason:exitReason});
     runtime.proc=null;
+    if (code !== 0 && !runtime.stopping && !runtime.failSince) runtime.failSince = Date.now();
     logLine(`[${channel.name}] انتهى FFmpeg: ${formatLastExit(runtime.lastExit)} — ${runtime.stopping ? 'إيقاف مطلوب يدوياً' : 'خروج غير متوقع'}${runtime.forceTranscode ? ' | نسخ قسري بعد فشل' : ''}`);
     // بعد الإيقاف لا تُترك مقاطع/قوائم HLS قديمة على القرص، وإلا بقي المشاهدون
     // يستطيعون تشغيل بث متوقف أو محتوى قديم من الملفات المتبقية.
@@ -788,7 +1190,7 @@ function startChannel(channelId) {
 }
 function scheduleChannelRestart(channelId) {
   const rt=streams.get(channelId), channel=data.channels.find(c=>c.id===channelId);
-  if(!rt||!channel||rt.stopping||!data.settings.autoRestartCrashed||rt.restartCount>=Number(data.settings.maxRestarts||20))return;
+  if(!rt||!channel||channel.manualStopped||rt.stopping||rt.failedStop||!data.settings.autoRestartCrashed||rt.restartCount>=Number(data.settings.maxRestarts||20))return;
   clearTimeout(rt.restartTimer);rt.restartCount++;
   const delay=Number(data.settings.restartBackoffMs)||5000;
   rt.restartTimer=setTimeout(()=>{if(!rt.stopping&&!rt.proc)startChannel(channelId);},delay);
@@ -821,14 +1223,21 @@ function stopChannel(channelId, origin = '') {
     return {ok:false,message:e.message,channelId};
   }
 }
-function restartChannel(channelId) {
+function restartChannel(channelId, manual = false) {
+  const channel = data.channels.find(c => c.id === channelId);
+  // إعادة التشغيل التلقائية (بعد حفظ إعدادات) لا تُبطل إيقافاً يدوياً.
+  if (channel?.manualStopped && !manual) return {ok:false,message:'القناة موقوفة يدوياً؛ لن تُعاد قبل تشغيلها يدوياً',channelId};
   const rt=streams.get(channelId);
-  if (!rt?.proc) return startChannel(channelId);
+  if (!rt?.proc) return startChannel(channelId, manual);
+  // إعادة تشغيل قيد التنفيذ: لا تُسجَّل مستمعات خروج إضافية، وإلا بدأت نسختان من
+  // FFmpeg عند حفظ إعدادات متتابع بسرعة. النسخة القادمة تقرأ أحدث إعدادات من data.
+  if (rt.restartPending) return {ok:true,message:'إعادة التشغيل قيد التنفيذ (ستُطبَّق أحدث إعدادات)',channelId};
+  rt.restartPending=true;
   const proc=rt.proc;
-  const begin=()=>setTimeout(()=>startChannel(channelId),250);
+  const begin=()=>setTimeout(()=>startChannel(channelId, manual),250);
   proc.once('exit',begin);
   const stopped=stopChannel(channelId);
-  if (!stopped.ok) return stopped;
+  if (!stopped.ok) { rt.restartPending=false; return stopped; }
   return {ok:true,message:'تم طلب إعادة التشغيل بعد إغلاق FFmpeg الحالي',channelId};
 }
 function stopStream(origin = '') {
@@ -840,101 +1249,62 @@ function stopStream(origin = '') {
   logLine(`اكتمل إرسال أوامر الإيقاف${context}: ${signaled} قناة أُرسل لها الإيقاف، ${results.length - signaled} كانت متوقفة أصلاً`);
   return {ok:true,message:'تم إرسال أوامر إيقاف جميع القنوات',results};
 }
-
-function listDevices(res) {
-  execFile(
-    ffmpegBin(),
-    ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
-    { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
-    (err, stdout, stderr) => {
-      const output = `${stderr || ''}\n${stdout || ''}`.trim();
-      // FFmpeg DirectShow prints each device name followed by (video) or (audio).
-      // De-duplicate names while preserving the order returned by the device driver.
-      const video = [];
-      const audio = [];
-      const seenVideo = new Set();
-      const seenAudio = new Set();
-      for (const line of output.split(/\r?\n/)) {
-        const match = line.match(/\]\s*\"([^\"]+)\"\s*\((video|audio)\)/i);
-        if (!match) continue;
-        const name = match[1].trim();
-        const type = match[2].toLowerCase();
-        const list = type === 'video' ? video : audio;
-        const seen = type === 'video' ? seenVideo : seenAudio;
-        if (name && !seen.has(name)) { seen.add(name); list.push(name); }
-      }
-      if (res) {
-        send(res, 200, {
-          ok: true,
-          video: video.map(name => ({ value: name, label: name })),
-          audio: audio.map(name => ({ value: name, label: name })),
-          devices: { video, audio },
-          output: output || (err ? err.message : 'لم تظهر أجهزة'),
-          note: err && !output ? `تعذر تشغيل فحص FFmpeg: ${err.message}` : (video.length || audio.length ? 'قوائم الفيديو والصوت مستخرجة من أجهزة DirectShow التي يعرضها FFmpeg.' : 'لم يعرض FFmpeg أي جهاز DirectShow متصل.')
-        });
-      } else {
-        console.log(output || (err ? err.message : 'لم تظهر أجهزة'));
-      }
-    }
-  );
+// تثبيت الإيقاف اليدوي في القناة: ما دام مفعّلاً لا يعيد أي مسار تلقائي
+// (بدء عند الإقلاع، تشغيل عند الطلب، إعادة بعد عطل، تشغيل دائم) تشغيلها.
+// يُلغى فقط بتشغيل يدوي من لوحة التحكم.
+function setManualStopped(channelId, value) {
+  const channel = data.channels.find(c => c.id === channelId);
+  if (!channel || !!channel.manualStopped === !!value) return;
+  channel.manualStopped = !!value;
+  writeData(data);
 }
 
-function parseCaptureCapabilities(output) {
-  const videoSizes = new Set();
-  const frameRates = new Set();
-  const pixelFormats = new Set();
-  // FFmpeg DirectShow lists mode options on stderr, often in forms such as:
-  // pixel_format=mjpeg min s=640x480 fps=30 max s=1280x720 fps=30
-  for (const line of String(output || '').split(/\r?\n/)) {
-    for (const match of line.matchAll(/(?:min\s+s=|max\s+s=|s=)(\d{2,5})x(\d{2,5})/gi)) {
-      const width = Number(match[1]), height = Number(match[2]);
-      if (width >= 160 && height >= 120 && width <= 8192 && height <= 4320) videoSizes.add(`${width}x${height}`);
-    }
-    for (const match of line.matchAll(/fps\s*=\s*(\d{1,3}(?:\.\d+)?)/gi)) {
-      const fps = Number(match[1]); if (fps >= 1 && fps <= 240) frameRates.add(String(Number(fps.toFixed(2))));
-    }
-    for (const match of line.matchAll(/(?:pixel_format|vcodec)=([a-zA-Z0-9_]+)/gi)) pixelFormats.add(match[1].toLowerCase());
-  }
-  // Some FFmpeg builds render modes as e.g. 1280x720 @ 30 fps.
-  for (const match of String(output || '').matchAll(/(\d{2,5})x(\d{2,5})\s*(?:@|,)?\s*(\d{1,3}(?:\.\d+)?)\s*fps/gi)) {
-    const w=Number(match[1]), h=Number(match[2]), fps=Number(match[3]);
-    if (w >= 160 && h >= 120 && w <= 8192 && h <= 4320) videoSizes.add(`${w}x${h}`);
-    if (fps >= 1 && fps <= 240) frameRates.add(String(Number(fps.toFixed(2))));
-  }
-  const sizeRank = value => { const [w,h]=value.split('x').map(Number); return {value, pixels:w*h, width:w, height:h}; };
-  const ranked = [...videoSizes].map(sizeRank).sort((a,b) => {
-    const aPreferred = a.width <= 1280 && a.height <= 720 ? 1 : 0;
-    const bPreferred = b.width <= 1280 && b.height <= 720 ? 1 : 0;
-    return bPreferred-aPreferred || b.pixels-a.pixels;
+// تنفيذ أمر FFmpeg يمرّره محرك الالتقاط (DirectShow يحتاجه لتعداد الأجهزة).
+function runFfmpegArgs(args) {
+  return new Promise(resolve => {
+    execFile(ffmpegBin(), args, { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => resolve({ err, output: `${stderr || ''}\n${stdout || ''}`.trim() }));
   });
-  const fpsValues = [...frameRates].map(Number).sort((a,b)=>a-b);
-  const recommendedSize = ranked[0]?.value || '1280x720';
-  const recommendedFps = fpsValues.filter(x=>x<=30).sort((a,b)=>b-a)[0] || fpsValues[0] || 30;
-  const preferredFormats = ['mjpeg','yuyv422','uyvy422','nv12','yuv420p'];
-  const recommendedFormat = preferredFormats.find(x=>pixelFormats.has(x)) || [...pixelFormats][0] || '';
-  const modes=[];
-  for(const line of String(output||'').split(/\r?\n/)){
-    const fmt=(line.match(/(?:pixel_format|vcodec)=([a-zA-Z0-9_]+)/i)||[])[1]?.toLowerCase()||'';
-    const sizes=[...line.matchAll(/(?:min\s+s=|max\s+s=|s=)(\d{2,5})x(\d{2,5})/gi)].map(m=>`${m[1]}x${m[2]}`);
-    const rates=[...line.matchAll(/fps\s*=\s*(\d{1,3}(?:\.\d+)?)/gi)].map(m=>String(Number(Number(m[1]).toFixed(2))));
-    for(const size of new Set(sizes)) for(const rate of new Set(rates)) modes.push({pixelFormat:fmt||recommendedFormat,videoSize:size,fps:Number(rate)});
-  }
-  const uniqueModes=[...new Map(modes.map(m=>[`${m.pixelFormat}|${m.videoSize}|${m.fps}`,m])).values()];
-  return {
-    videoSizes: [...videoSizes].sort((a,b)=>sizeRank(b).pixels-sizeRank(a).pixels),
-    frameRates: fpsValues.map(String), pixelFormats: [...pixelFormats], modes: uniqueModes,
-    recommended: { videoSize: recommendedSize, fps: recommendedFps, pixelFormat: recommendedFormat }
-  };
+}
+
+function listDevices(res) {
+  // التعداد وتحليل مخرجاته في طبقة الالتقاط؛ هنا تُبنى استجابة الـAPI فقط.
+  // DirectShow يعدّد الأجهزة عبر FFmpeg.
+  capture.discoverDevices(runFfmpegArgs).then(result => {
+    if (!res) return console.log(result.output || 'لم تظهر أجهزة');
+    return send(res, 200, {
+      ok: true,
+      video: result.video,
+      audio: result.audio,
+      devices: { video: result.video.map(v => v.value), audio: result.audio.map(a => a.value) },
+      output: result.output || 'لم تظهر أجهزة',
+      note: result.note,
+      engine: capture.engineName()
+    });
+  }).catch(err => {
+    if (!res) return console.log(err.message);
+    return send(res, 200, {
+      ok: true, video: [], audio: [], devices: { video: [], audio: [] },
+      output: err.message, note: `تعذر فحص أجهزة الالتقاط: ${err.message}`, engine: capture.engineName()
+    });
+  });
 }
 
 function queryCaptureCapabilities(videoDevice, callback) {
   if (!videoDevice || String(videoDevice).length > 300 || /[\r\n\0]/.test(videoDevice)) {
     return callback(new Error('اسم جهاز الفيديو غير صالح'));
   }
-  execFile(ffmpegBin(), ['-hide_banner','-f','dshow','-list_options','true','-i',`video=${videoDevice}`],
+  let capabilityArgs;
+  try {
+    capabilityArgs = capture.capabilitiesArgs(videoDevice);
+  } catch (err) {
+    return callback(err);
+  }
+  execFile(ffmpegBin(), capabilityArgs,
     { windowsHide: true, timeout: 20000, maxBuffer: 2*1024*1024 }, (err, stdout, stderr) => {
       const output = `${stderr || ''}\n${stdout || ''}`.trim();
-      const capabilities = parseCaptureCapabilities(output);
+      // تحليل قدرات الجهاز في محرك الالتقاط (DirectShow).
+      const capabilities = capture.parseCapabilities(output);
       if (!capabilities.videoSizes.length) {
         const error = new Error(err && !output ? `تعذر تشغيل FFmpeg: ${err.message}` : 'لم يعرض FFmpeg أو تعريف الجهاز أوضاع فيديو قابلة للاستخراج');
         error.output = output;
@@ -944,27 +1314,39 @@ function queryCaptureCapabilities(videoDevice, callback) {
     });
 }
 
+// اختبار الالتقاط: بناء الوسائط في طبقة الالتقاط، والتنفيذ (spawn/مهلة/جمع الخرج)
+// يبقى هنا لأنه يحتاج مسار FFmpeg ومجلد المشروع.
 function testCapture(body, callback) {
-  const videoDevice=String(body.videoDevice||'').trim(), audioDevice=String(body.audioDevice||'').trim();
-  if(body.mode==='audio'){if(!audioDevice||audioDevice.length>300||/[\r\n\0]/.test(audioDevice))return callback(new Error('اختر جهاز صوت صالحاً'));const a=spawn(ffmpegBin(),['-hide_banner','-loglevel','error','-f','dshow','-i',`audio=${audioDevice}`,'-t','3','-f','null','-'],{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']});let out='';const timer=setTimeout(()=>{try{a.kill();}catch{}},10000);a.stderr.on('data',b=>out=(out+b.toString()).slice(-8000));a.on('error',e=>{clearTimeout(timer);callback(new Error(e.message));});a.on('close',code=>{clearTimeout(timer);code===0?callback(null,{ok:true,audio:true,output:'نجح اختبار الصوت لمدة 3 ثوانٍ.'}):callback(new Error(`فشل اختبار الصوت (exit ${code}). ${out.slice(-1800)}`));});return;}
-  if(!videoDevice || videoDevice.length>300 || /[\r\n\0]/.test(videoDevice)) return callback(new Error('جهاز الفيديو غير صالح'));
-  const size=String(body.videoSize||'1280x720'), fps=Number(body.fps)||30;
-  // mjpeg اسم codec لا pixel format: يُمرَّر بـ -vcodec، وبقية القيم تذهب إلى -pixel_format.
-  const formatRaw=String(body.pixelFormat||'').trim(), codecRaw=String(body.vcodec||'').trim();
-  const isCodecName=(value)=>['mjpeg','rawvideo','h264'].includes(value.toLowerCase());
-  const pixel=isCodecName(formatRaw)?'':formatRaw, vcodec=codecRaw||(isCodecName(formatRaw)?formatRaw:'');
-  if(!/^\d{2,5}x\d{2,5}$/.test(size)||fps<1||fps>60||(pixel&&!/^[a-z0-9_]{2,30}$/i.test(pixel))||(vcodec&&!/^[a-z0-9_]{2,30}$/i.test(vcodec))) return callback(new Error('إعدادات الالتقاط غير صالحة'));
-  const input=audioDevice?`video=${videoDevice}:audio=${audioDevice}`:`video=${videoDevice}`;
-  const args=['-hide_banner','-loglevel','error','-f','dshow','-rtbufsize','128M','-framerate',String(fps),'-video_size',size];
-  if(pixel) args.push('-pixel_format',pixel);
-  if(vcodec) args.push('-vcodec',vcodec);
-  args.push('-i',input,'-t','3','-f','null','-');
-  const child=spawn(ffmpegBin(),args,{cwd:ROOT,windowsHide:true,stdio:['ignore','ignore','pipe']});
-  let output='';const timer=setTimeout(()=>{try{child.kill();}catch{}},10000);
-  child.stderr.on('data',b=>{output=(output+b.toString()).slice(-12000);});
-  child.on('error',e=>{clearTimeout(timer);callback(new Error(`تعذر تشغيل FFmpeg: ${e.message}`));});
-  child.on('close',code=>{clearTimeout(timer);if(code===0)callback(null,{ok:true,video:true,audio:!!audioDevice,output:'نجح اختبار الالتقاط لمدة 3 ثوانٍ.'});else callback(new Error(`فشل اختبار الالتقاط (exit ${code}). ${output.slice(-2500)}`));});
+  const isAudio = body.mode === 'audio';
+  let args;
+  try {
+    args = isAudio ? capture.testAudioArgs(body.audioDevice) : capture.testVideoArgs(body, { qualityMode: !!data.settings.x264QualityMode });
+  } catch (err) {
+    return callback(err);
+  }
+  const child = spawn(ffmpegBin(), args, { cwd: ROOT, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  let output = '';
+  const timer = setTimeout(() => { try { child.kill(); } catch {} }, 10000);
+  child.stderr.on('data', b => { output = (output + b.toString()).slice(isAudio ? -8000 : -12000); });
+  child.on('error', e => {
+    clearTimeout(timer);
+    callback(new Error(isAudio ? e.message : `تعذر تشغيل FFmpeg: ${e.message}`));
+  });
+  child.on('close', code => {
+    clearTimeout(timer);
+    if (code === 0) {
+      return callback(null, isAudio
+        ? { ok: true, audio: true, output: 'نجح اختبار الصوت لمدة 3 ثوانٍ.' }
+        : { ok: true, video: true, audio: !!String(body.audioDevice || '').trim(), output: 'نجح اختبار الالتقاط لمدة 3 ثوانٍ.' });
+    }
+    callback(new Error(isAudio
+      ? `فشل اختبار الصوت (exit ${code}). ${output.slice(-1800)}`
+      : `فشل اختبار الالتقاط (exit ${code}). ${output.slice(-2500)}`));
+  });
 }
+
+// امتدادات تُخزَّن في المتصفح (صور المشروع): لا تتغيّر إلا بتحديث الملف.
+const CACHED_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.ico']);
 
 function assetType(file) {
   const types = {
@@ -1013,18 +1395,43 @@ function serveStatic(req, res) {
   // صفحة اللوحة تُخدَم دائماً لأنها تعرض شاشة الدخول بنفسها؛ حماية البيانات تبقى
   // على كل مسارات /api/* (جلسة موقّعة فقط) ولا يكشف الملف أي بيانات.
 
-  fs.readFile(fullPath, (err, data) => {
-    if (err) {
-      res.writeHead(err.code === 'ENOENT' ? 404 : 500);
-      res.end(err.code === 'ENOENT' ? 'Not found' : 'Internal Server Error');
+  // الصور المحلية (شعارات الأندية) لا تتغيّر مع كل طلب: تُخزَّن في المتصفح يوماً
+  // كاملاً بدل إعادة تنزيلها كلها (~6MB) في كل فتح للصفحة، مع ETag ليعرف
+  // المتصفح متى تغيّر الملف. أما HTML/CSS/JS فتبقى بلا تخزين مؤقت حتى يظهر أي
+  // تعديل فوراً.
+  const ext = path.extname(fullPath).toLowerCase();
+  const cacheable = CACHED_EXT.has(ext);
+
+  fs.stat(fullPath, (statErr, stat) => {
+    if (statErr || !stat.isFile()) {
+      const code = statErr && statErr.code === 'ENOENT' ? 404 : 500;
+      res.writeHead(code);
+      res.end(code === 404 ? 'Not found' : 'Internal Server Error');
       return;
     }
 
-    res.writeHead(200, {
-      'Content-Type': assetType(fullPath),
-      'Cache-Control': 'no-store'
+    const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+    if (cacheable && req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': 'public, max-age=86400' });
+      res.end();
+      return;
+    }
+
+    fs.readFile(fullPath, (err, data) => {
+      if (err) {
+        res.writeHead(err.code === 'ENOENT' ? 404 : 500);
+        res.end(err.code === 'ENOENT' ? 'Not found' : 'Internal Server Error');
+        return;
+      }
+
+      const headers = {
+        'Content-Type': assetType(fullPath),
+        'Cache-Control': cacheable ? 'public, max-age=86400' : 'no-store'
+      };
+      if (cacheable) headers.ETag = etag;
+      res.writeHead(200, headers);
+      res.end(data);
     });
-    res.end(data);
   });
 }
 
@@ -1086,7 +1493,11 @@ function serveHls(req, res, pathname) {
       'Cache-Control': ext === '.m3u8' ? 'no-store, no-cache, must-revalidate' : 'public, max-age=60',
       'Access-Control-Allow-Origin': '*'
     });
-    servedBytes += data.length;
+    // عند وجود سجلّ Nginx تتكفّل قراءته بالعدّ (المقاطع تُخدَم من nginx مباشرةً).
+    if (!nginxLogActive) {
+      servedBytes += data.length;
+      channelServedBytes.set(ownerId, (channelServedBytes.get(ownerId) || 0) + data.length);
+    }
     res.end(data);
   });
 }
@@ -1095,8 +1506,15 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   if (req.method === 'GET' && url.pathname === '/api/network/interfaces') {
     if (!requireAdmin(req, res)) return;
-    const interfaces = getNetworkInterfaces();
-    return send(res, 200, { ok: true, port: Number(cfg.nginxPort) || 80, interfaces, message: interfaces.length ? 'تم اكتشاف عناوين IPv4 على واجهات الشبكة.' : 'لم يتم العثور على عنوان IPv4 قابل للوصول.' });
+    // المنفذ المعروض هو منفذ Nginx الفعلي (هو الواجهة التي يفتحها الهاتف)، لا منفذ Node الداخلي.
+    const port = Number(data.settings.nginxPort) || 80;
+    const primary = await primaryLanAddress();
+    // العنوان الخارج فعلاً أولاً، فتعرض اللوحة عنواناً واحداً صحيحاً بدل قائمة يجرّبها المستخدم كلها.
+    const interfaces = getNetworkInterfaces()
+      .map((item) => ({ ...item, primary: !!primary && item.address === primary }))
+      .sort((a, b) => Number(b.primary) - Number(a.primary));
+    const firewall = await firewallStatus(port);
+    return send(res, 200, { ok: true, port, interfaces, primary, firewall, message: interfaces.length ? 'تم اكتشاف عناوين IPv4 على واجهات الشبكة.' : 'لم يتم العثور على عنوان IPv4 قابل للوصول.' });
   }
 
   // Explicit admin-page routes; both Node direct access and Nginx proxy use these.
@@ -1116,8 +1534,15 @@ const server = http.createServer(async (req, res) => {
 
   // Public API used by viewer.js. Public endpoints expose no filesystem paths.
   if (url.pathname === '/api/public/settings' && req.method === 'GET') {
-    const {siteName,siteNameLatin,logo,ticker,tickerEnabled,phone,theme,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault}=data.settings;
-    return send(res, 200, { ok: true, settings: {siteName,siteNameLatin,logo:publicAsset(logo),ticker,tickerEnabled,phone,theme,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault} });
+    const {siteName,siteNameLatin,logo,ticker,tickerEnabled,phone,theme,worldCupFullPage,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault}=data.settings;
+    return send(res, 200, { ok: true, settings: {siteName,siteNameLatin,logo:publicAsset(logo),ticker,tickerEnabled,phone,theme,worldCupFullPage:worldCupFullPage !== false,playerMaxBufferLength,playerBackBufferLength,playerLiveSyncDuration,capLevelToPlayerSize,cpuSaverDefault} });
+  }
+  // جداول ونتائج الدوريات: تُقدَّم للجمهور من كاش الخادم (لا مسارات ملفات ولا مفاتيح).
+  if (url.pathname === '/api/public/football' && req.method === 'GET') {
+    const comp = String(url.searchParams.get('comp') || 'esp.1');
+    const result = await football.getCompetition(comp);
+    if (!result.ok) return send(res, result.status || 502, { ok: false, error: result.error || 'تعذّر جلب بيانات الدوريات', competitions: football.COMPETITIONS });
+    return send(res, 200, { ...result, competitions: football.COMPETITIONS });
   }
   if (url.pathname === '/api/public/channels' && req.method === 'GET') {
     return send(res, 200, { ok: true, channels: data.channels.filter(c => c.enabled !== false).sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).map(publicChannel) });
@@ -1135,7 +1560,8 @@ const server = http.createServer(async (req, res) => {
     const channel = data.channels.find(c => c.id === body.id && c.enabled !== false);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة أو معطلة');
     if (!data.settings.autoStartOnDemand) return send(res, 200, { ok: true, started: false, reason: 'disabled', message: 'التشغيل عند الطلب غير مفعّل' });
-    const result = startChannel(channel.id);
+    if (channel.manualStopped) return send(res, 200, { ok: true, started: false, reason: 'manual', message: 'القناة موقوفة يدوياً من لوحة التحكم' });
+    const result = startChannel(channel.id, true);
     return send(res, result.ok ? 200 : 503, { ...result, started: !!result.ok });
   }
   if (url.pathname === '/api/public/heartbeat' && req.method === 'POST') {
@@ -1144,7 +1570,7 @@ const server = http.createServer(async (req, res) => {
     const channelId = String(body.channelId || activeChannel()?.id || '');
     if (!safeId(id)) return apiError(res, 400, 'معرّف المشاهد غير صالح');
     if (!data.channels.some(c => c.id === channelId && c.enabled !== false)) return apiError(res, 404, 'القناة غير موجودة');
-    if (!viewerSessions.has(id)) totalViewerCount++;
+    if (!seenViewerIds.has(id)) { seenViewerIds.add(id); totalViewerCount++; }
     viewerSessions.set(id, { channelId, lastSeen: Date.now() });
     return send(res, 200, { ok: true });
   }
@@ -1181,7 +1607,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, message: 'تم تسجيل الخروج' });
   }
 
-  const adminApiPath = url.pathname === '/api/channels' || url.pathname.startsWith('/api/channels/') || url.pathname === '/api/sources' || url.pathname.startsWith('/api/sources/') || url.pathname === '/api/settings' || url.pathname === '/api/stats' || url.pathname.startsWith('/api/devices') || url.pathname === '/api/start' || url.pathname === '/api/stop' || url.pathname === '/api/logs' || url.pathname.startsWith('/api/logs/') || url.pathname.startsWith('/api/backup') || url.pathname === '/api/upload' || url.pathname === '/api/metrics' || url.pathname.startsWith('/api/settings/');
+  const adminApiPath = url.pathname === '/api/channels' || url.pathname.startsWith('/api/channels/') || url.pathname === '/api/sources' || url.pathname.startsWith('/api/sources/') || url.pathname === '/api/settings' || url.pathname === '/api/stats' || url.pathname.startsWith('/api/devices') || url.pathname === '/api/start' || url.pathname === '/api/stop' || url.pathname === '/api/logs' || url.pathname.startsWith('/api/logs/') || url.pathname.startsWith('/api/backup') || url.pathname === '/api/upload' || url.pathname === '/api/metrics' || url.pathname.startsWith('/api/settings/') || url.pathname.startsWith('/api/nginx/');
   if (url.pathname === '/api/status' && req.method === 'GET') {
     // Status is intentionally public for the viewer page; it contains no credentials or filesystem paths.
   } else if (adminApiPath && !requireAdmin(req, res)) {
@@ -1191,23 +1617,32 @@ const server = http.createServer(async (req, res) => {
   // Admin/local management API: channel/source CRUD and settings persistence.
   if (url.pathname === '/api/channels' && req.method === 'GET') return send(res, 200, { ok: true, channels: data.channels.map(publicChannel) });
   if (url.pathname === '/api/sources' && req.method === 'GET') return send(res, 200, { ok: true, sources: data.sources.map(s => ({ ...s, url: s.streamUrl || '' })) });
-  if (url.pathname === '/api/settings' && req.method === 'GET') return send(res, 200, { ok: true, settings: data.settings });
-  if (url.pathname === '/api/settings' && req.method === 'PUT') {
+  if (url.pathname === '/api/settings' && req.method === 'GET') {
+    return send(res, 200, { ok: true, settings: data.settings, videoLevels: VIDEO_BITRATE_LEVELS, nginx: { binary: nginxExecutable(), binaryExists: nginxBinaryExists() } });
+  }
+  // POST وPUT متكافئان: كلاهما يحفظ الإعدادات ويطبّقها فوراً على القنوات النشطة.
+  if (url.pathname === '/api/settings' && (req.method === 'PUT' || req.method === 'POST')) {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
-    const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent','logoImage','logoPosition'];
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedSetting = unexpectedField(body, SETTINGS_WRITE_FIELDS);
+    if (unexpectedSetting) return apiError(res, 400, `خاصية غير متوقعة في الإعدادات: ${unexpectedSetting}`);
+    const previousPort = Number(data.settings.port), previousNginxPort = Number(data.settings.nginxPort);
+    // قيم الترميز قبل الحفظ: نقارنها بعده لنعرف هل تحتاج القنوات النشطة إعادة تشغيل.
+    const encodingSettingsBefore = {};
+    for (const key of ENCODING_SETTINGS_KEYS) encodingSettingsBefore[key] = data.settings[key];
+    const textKeys = ['siteName','siteNameLatin','phone','ticker','logo','ffmpegPath','ffprobePath','nginxPath','streamUserAgent'];
     for (const key of textKeys) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const value = String(body[key] ?? '');
       if (value.length > (key === 'ticker' ? 500 : (['ffmpegPath','ffprobePath','nginxPath'].includes(key) ? 1000 : 300))) return apiError(res,400,`قيمة ${key} أطول من المسموح`);
       data.settings[key] = value;
     }
-    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','x264QualityMode','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs'];
+    const boolKeys = ['tickerEnabled','autoStartOnDemand','capLevelToPlayerSize','cpuSaverDefault','autoRestartCrashed','idleStopEnabled','hideCosmeticLogs','x264QualityMode','worldCupFullPage'];
     for (const key of boolKeys) if (Object.prototype.hasOwnProperty.call(body,key)) data.settings[key] = !!body[key];
     const numberRanges = {
-      playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,30],
-      outputWidth:[160,3840], outputHeight:[120,2160], outputFps:[1,60], gopSeconds:[1,10],
-      startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
+      playerMaxBufferLength:[5,120], playerBackBufferLength:[0,120], playerLiveSyncDuration:[1,60],
+      startupQueueDelayMs:[0,120000], startupConcurrency:[1,20], x264Threads:[1,64], hlsTime:[1,10], gopSeconds:[1,10], hlsListSize:[3,30], hlsDeleteThreshold:[1,100], port:[1024,65535], nginxPort:[1,65535],
       maxRestarts:[0,100], restartBackoffMs:[1000,120000], idleStopMinutes:[1,1440],
-      sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,10000], logoSizePct:[2,40], logoOpacityPct:[0,100]
+      sourceFailStopMinutes:[1,10000], blockedStopMinutes:[1,120]
     };
     for (const [key,[min,max]] of Object.entries(numberRanges)) if (Object.prototype.hasOwnProperty.call(body,key)) {
       const n = Number(body[key]);
@@ -1219,10 +1654,6 @@ const server = http.createServer(async (req, res) => {
       if (!allowedPresets.includes(String(body.x264Preset))) return apiError(res,400,'Preset غير صالح');
       data.settings.x264Preset = String(body.x264Preset);
     }
-    if (Object.prototype.hasOwnProperty.call(body,'logoPosition')) {
-      if (!['top-right','top-left','bottom-right','bottom-left'].includes(String(body.logoPosition))) return apiError(res,400,'موضع الشعار غير صالح');
-      data.settings.logoPosition = String(body.logoPosition);
-    }
     if (Object.prototype.hasOwnProperty.call(body,'theme')) {
       const allowedThemes = ['default','worldcup'];
       if (!allowedThemes.includes(String(body.theme))) return apiError(res,400,'الثيم غير صالح');
@@ -1231,13 +1662,32 @@ const server = http.createServer(async (req, res) => {
     Object.assign(cfg, {
       ffmpegPath:data.settings.ffmpegPath||cfg.ffmpegPath, ffprobePath:data.settings.ffprobePath||cfg.ffprobePath, nginxPath:data.settings.nginxPath||cfg.nginxPath,
       port:data.settings.port||cfg.port, nginxPort:data.settings.nginxPort||cfg.nginxPort,
-      outputWidth:data.settings.outputWidth, outputHeight:data.settings.outputHeight, outputFps:data.settings.outputFps,
-      gopSeconds:data.settings.gopSeconds, startupQueueDelayMs:data.settings.startupQueueDelayMs,
+      startupQueueDelayMs:data.settings.startupQueueDelayMs,
       preset:data.settings.x264Preset, threads:data.settings.x264Threads, hlsTime:data.settings.hlsTime,
       hlsListSize:data.settings.hlsListSize, autoRestart:data.settings.autoRestartCrashed,
       maxRestarts:data.settings.maxRestarts, restartDelayMs:data.settings.restartBackoffMs
     });
-    writeData(data); syncNginxPorts(); return send(res, 200, { ok: true, settings: data.settings, message: 'تم حفظ الإعدادات. تغييرات المنافذ تتطلب إعادة تشغيل Node.js وNginx، وتغييرات الترميز تتطلب إعادة تشغيل القنوات.' });
+    // المنفذ يُقرأ مرة واحدة عند الإقلاع، لذا تغييره يحتاج إعادة تشغيل؛ نُبلّغ اللوحة
+    // لتظهر رسالة إعادة التشغيل بدل حفظ صامت لا أثر له.
+    const restartRequired = Number(data.settings.port) !== previousPort;
+    const nginxRestartRequired = Number(data.settings.nginxPort) !== previousNginxPort;
+    writeData(data); syncNginxPorts();
+    // إعدادات الترميز العامة تُطبَّق فوراً: كل قناة تعمل الآن تُعاد تشغيلها
+    // بالقيم الجديدة (والقناة الموقوفة يدوياً أو المتوقفة تبقى كما هي).
+    const changedSettings = ENCODING_SETTINGS_KEYS.filter(key =>
+      String(encodingSettingsBefore[key] ?? '') !== String(data.settings[key] ?? ''));
+    const restartedChannels = [];
+    if (changedSettings.length) {
+      for (const channel of data.channels) {
+        if (channel.enabled === false || channel.manualStopped || !streams.get(channel.id)?.proc) continue;
+        logLine(`تغيّرت إعدادات الترميز العامة (${changedSettings.join(', ')}); إعادة تشغيل «${channel.name}» تلقائياً`);
+        if (restartChannel(channel.id).ok) restartedChannels.push(channel.id);
+      }
+    }
+    return send(res, 200, {
+      ok: true, settings: data.settings, restartRequired, nginxRestartRequired, changedSettings, restartedChannels,
+      message: 'تم حفظ الإعدادات. تغييرات المنافذ تتطلب إعادة تشغيل Node.js وNginx، وتغييرات الترميز تُطبَّق فوراً على القنوات النشطة.'
+    });
   }
   // تغيير كلمة مرور اللوحة: يتحقق من الحالية ثم يحفظ hash جديداً ويعيد فتح جلسة للمستخدم الحالي.
   if (url.pathname === '/api/settings/password' && req.method === 'POST') {
@@ -1264,37 +1714,64 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/channels' && req.method === 'POST') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedNew = unexpectedField(body, CHANNEL_WRITE_FIELDS);
+    if (unexpectedNew) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedNew}`);
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم القناة مطلوب');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
-    const channelId = 'ch_' + require('crypto').randomBytes(5).toString('hex');
+    const newEncodingError = validateChannelEncodingFields(body);
+    if (newEncodingError) return apiError(res, 400, newEncodingError);
+    const channelId = 'ch_' + crypto.randomBytes(5).toString('hex');
     const chanId = String(body.chanId || '').trim();
     if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
     const sortValue = body.sort !== undefined ? body.sort : body.sortOrder;
-    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || '360p'), fps: body.fps ? Number(body.fps) : '', bitrate: String(body.bitrate||''), autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, logoEnabled: !!body.logoEnabled, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
+    const channel = { id: channelId, chanId: chanId || channelId, name: String(body.name).trim().slice(0,100), category: String(body.category || 'عام').slice(0,80), sourceId: body.sourceId || data.sources[0]?.id || '', cover: String(body.cover || '').slice(0,500), enabled: body.enabled !== false, quality: String(body.quality || 'auto'), fps: body.fps ? Number(body.fps) : '', bitrate: normalizeVideoLevel(body.bitrate), threads: normalizeThreads(body.threads), manualStopped: false, autoStart: !!body.autoStart, alwaysOn: !!body.alwaysOn, sortOrder: Number.isFinite(Number(sortValue)) ? Number(sortValue) : data.channels.length, url: `/hls/${channelId}/index.m3u8` };
     data.channels.push(channel); writeData(data); return send(res, 201, { ok: true, channel: publicChannel(channel) });
   }
   const channelMatch = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)$/);
   if (channelMatch && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedUpdate = unexpectedField(body, CHANNEL_WRITE_FIELDS);
+    if (unexpectedUpdate) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedUpdate}`);
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (body.sourceId && !data.sources.some(x => x.id === body.sourceId)) return apiError(res, 400, 'مصدر البث غير موجود');
-    if (Object.prototype.hasOwnProperty.call(body,'quality') && !['source','copy','240p','360p','480p','720p'].includes(String(body.quality))) return apiError(res,400,'جودة القناة غير صالحة');
-    if (Object.prototype.hasOwnProperty.call(body,'fps') && body.fps !== '' && (!Number.isFinite(Number(body.fps)) || Number(body.fps)<1 || Number(body.fps)>60)) return apiError(res,400,'FPS يجب أن يكون بين 1 و60');
-    if (Object.prototype.hasOwnProperty.call(body,'bitrate') && body.bitrate && !/^\d{2,5}k$/i.test(String(body.bitrate))) return apiError(res,400,'صيغة Bitrate غير صالحة؛ مثال 1500k');
+    // نفس تحقق الإنشاء: الجودة/البِتريت/FPS/الخيوط.
+    const updateEncodingError = validateChannelEncodingFields(body);
+    if (updateEncodingError) return apiError(res, 400, updateEncodingError);
     if (Object.prototype.hasOwnProperty.call(body,'chanId')) {
       const chanId = String(body.chanId || '').trim();
       if (chanId && (!/^[a-zA-Z0-9_-]{1,40}$/.test(chanId) || data.channels.some(c => c.chanId === chanId && c.id !== channel.id))) return apiError(res, 400, 'معرّف القناة يجب أن يكون بالإنجليزية وفريداً');
       channel.chanId = chanId || channel.id;
     }
-    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn','logoEnabled']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    // إعدادات تؤثر في وسائط FFmpeg: تغييرها على قناة تعمل يحتاج إعادة تشغيل فورية.
+    const encodingKeys = ['sourceId','quality','fps','bitrate','threads'];
+    const encodingBefore = {}; for (const key of encodingKeys) encodingBefore[key] = channel[key];
+    for (const key of ['name','category','sourceId','cover','enabled','quality','fps','bitrate','autoStart','alwaysOn']) if (Object.prototype.hasOwnProperty.call(body,key)) channel[key] = body[key];
+    // البِتريت يُخزَّن كمعرّف مستوى معتمد (وتُقبل صورته القديمة 300k..600k فتُحوَّل).
+    channel.bitrate = normalizeVideoLevel(channel.bitrate) || 'auto';
+    if (channel.fps === null || channel.fps === undefined) channel.fps = '';
+    if (Object.prototype.hasOwnProperty.call(body,'threads')) channel.threads = normalizeThreads(body.threads);
     if (Object.prototype.hasOwnProperty.call(body,'sort')) channel.sortOrder = Number(body.sort) || 0;
     else if (Object.prototype.hasOwnProperty.call(body,'sortOrder')) channel.sortOrder = Number(body.sortOrder) || 0;
     channel.url = `/hls/${channel.id}/index.m3u8`;
-    writeData(data); return send(res, 200, { ok: true, channel: publicChannel(channel) });
+    const changedEncoding = encodingKeys.filter(key => String(encodingBefore[key] ?? '') !== String(channel[key] ?? ''));
+    writeData(data);
+    // إعادة التشغيل تلقائياً بدل مطالبة المستخدم بها: تُطبَّق القيم الجديدة فوراً
+    // على قناة تعمل (وإلا بقيت تعمل بإعدادات الترميز القديمة حتى إعادة تشغيل يدوية).
+    let restarted = false;
+    if (changedEncoding.length && channel.enabled !== false && streams.get(channel.id)?.proc) {
+      logLine(`تغيّرت إعدادات الترميز في «${channel.name}» (${changedEncoding.join(', ')})؛ إعادة تشغيل القناة تلقائياً`);
+      restarted = restartChannel(channel.id).ok;
+    }
+    return send(res, 200, { ok: true, channel: publicChannel(channel), restarted, changedEncoding });
   }
   if (channelMatch && req.method === 'PATCH') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedToggle = unexpectedField(body, CHANNEL_PATCH_FIELDS);
+    if (unexpectedToggle) return apiError(res, 400, `خاصية غير متوقعة في إعدادات القناة: ${unexpectedToggle}`);
     const channel = data.channels.find(c => c.id === channelMatch[1]);
     if (!channel) return apiError(res, 404, 'القناة غير موجودة');
     if (Object.prototype.hasOwnProperty.call(body,'enabled')) {
@@ -1311,12 +1788,20 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/sources' && req.method === 'POST') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedSource = unexpectedField(body, SOURCE_WRITE_FIELDS);
+    if (unexpectedSource) return apiError(res, 400, `خاصية غير متوقعة في إعدادات المصدر: ${unexpectedSource}`);
     const type = normalizeSourceType(body.type);
     if (!type) return apiError(res, 400, 'نوع المصدر غير مدعوم');
     if (!String(body.name || '').trim()) return apiError(res, 400, 'اسم المصدر مطلوب');
-    const source = { id: 'src_' + require('crypto').randomBytes(5).toString('hex'), name: String(body.name).trim().slice(0,100), type, enabled: body.enabled !== false };
+    const source = { id: 'src_' + crypto.randomBytes(5).toString('hex'), name: String(body.name).trim().slice(0,100), type, enabled: body.enabled !== false };
     const invalid = applySourceFields(source, body);
     if (invalid) return apiError(res, 400, invalid);
+    // أبعاد الملف الحقيقية عبر FFprobe: تُستخدم في حساب أبعاد الخرج عند تشغيل القناة.
+    if (source.type === 'file') {
+      const dimensions = await probeFileDimensions(source.path);
+      if (dimensions) source.videoSize = dimensions;
+    }
     data.sources.push(source);
     writeData(data);
     return send(res, 201, { ok: true, source, message: 'تم حفظ المصدر. أضف قناة مرتبطة به من صفحة القنوات.' });
@@ -1336,18 +1821,31 @@ const server = http.createServer(async (req, res) => {
   const sourceMatch = url.pathname.match(/^\/api\/sources\/([a-zA-Z0-9_-]+)$/);
   if (sourceMatch && req.method === 'PUT') {
     let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return apiError(res, 400, 'جسم الطلب غير صالح');
+    const unexpectedSource = unexpectedField(body, SOURCE_WRITE_FIELDS);
+    if (unexpectedSource) return apiError(res, 400, `خاصية غير متوقعة في إعدادات المصدر: ${unexpectedSource}`);
     const source = data.sources.find(x => x.id === sourceMatch[1]);
     if (!source) return apiError(res, 404, 'مصدر البث غير موجود');
     const nextType = Object.prototype.hasOwnProperty.call(body, 'type') ? normalizeSourceType(body.type) : normalizeSourceType(source.type);
     if (!nextType) return apiError(res, 400, 'نوع المصدر غير مدعوم');
-    const linked = data.channels.filter(c => c.sourceId === source.id);
-    const wasRunning = linked.filter(c => channelRuntime(c.id)?.proc).map(c => c.id);
-    wasRunning.forEach(stopChannel);
     const previousType = source.type;
+    // التحقق قبل إيقاف القنوات المرتبطة: حفظ غير صالح أثناء التشغيل يجب أن يُرفض
+    // دون قطع بث يعمل (كان الإيقاف يسبق التحقق فتتوقف القناة بلا إعادة تشغيل).
+    const candidate = Object.assign({}, source, { type: nextType });
+    if (previousType !== nextType) { delete candidate.streamUrl; delete candidate.path; delete candidate.videoDevice; }
+    const invalid = applySourceFields(candidate, body);
+    if (invalid) return apiError(res, 400, invalid);
+    const linked = data.channels.filter(c => c.sourceId === source.id);
+    // القناة الموقوفة يدوياً لا تُعاد حتى لو كان إغلاق FFmpeg ما زال جارياً.
+    const wasRunning = linked.filter(c => !c.manualStopped && channelRuntime(c.id)?.proc).map(c => c.id);
+    wasRunning.forEach(stopChannel);
     source.type = nextType;
     if (previousType !== nextType) { delete source.streamUrl; delete source.path; delete source.videoDevice; }
-    const invalid = applySourceFields(source, body);
-    if (invalid) { source.type = previousType; return apiError(res, 400, invalid); }
+    applySourceFields(source, body);
+    if (source.type === 'file') {
+      const dimensions = await probeFileDimensions(source.path);
+      if (dimensions) source.videoSize = dimensions;
+    }
     writeData(data);
     wasRunning.forEach(id => {
       const rt = streams.get(id);
@@ -1367,9 +1865,8 @@ const server = http.createServer(async (req, res) => {
     for (const [id, session] of viewerSessions) if (now - session.lastSeen > 45000) viewerSessions.delete(id);
     const channels = data.channels.map(publicChannel);
     const viewers = channels.reduce((sum,c)=>sum+(c.viewers||0),0);
-    let hlsBytes = 0;
-    try { for (const dir of fs.readdirSync(HLS_DIR,{withFileTypes:true})) if(dir.isDirectory()) for(const name of fs.readdirSync(path.join(HLS_DIR,dir.name))) if(/\.(ts|m3u8|m4s|mp4)$/i.test(name)){try{hlsBytes+=fs.statSync(path.join(HLS_DIR,dir.name,name)).size;}catch{}} } catch {}
-    return send(res, 200, { ok: true, stats: { channels: { total: channels.length, running: channels.filter(c => c.live).length, error: channels.filter(c => c.status === 'error').length }, viewers, totalViewers: viewers, cpuPercent, memoryMb: Math.round(process.memoryUsage().rss/1048576), platform: process.platform, node: process.version, uptimeSeconds: Math.floor(process.uptime()), genBps: 0, outBps: 0, hlsBytes, servedBytes, devices: { total: data.sources.length, present: data.sources.filter(x => x.enabled !== false).length, video: data.sources.filter(x => x.enabled !== false).length, audio: data.sources.filter(x => x.enabled !== false && x.audioDevice).length }, nginx: null }, channels });
+    const hlsBytes = hlsFileSizes().total;
+    return send(res, 200, { ok: true, stats: { channels: { total: channels.length, running: channels.filter(c => c.live).length, error: channels.filter(c => c.status === 'error').length }, viewers, totalViewers: viewers, cpuPercent, memoryMb: Math.round(process.memoryUsage().rss/1048576), platform: process.platform, captureEngine: capture.engineName(), node: process.version, uptimeSeconds: Math.floor(process.uptime()), genBps: 0, outBps: 0, hlsBytes, servedBytes, devices: { total: data.sources.length, present: data.sources.filter(x => x.enabled !== false).length, video: data.sources.filter(x => x.enabled !== false).length, audio: data.sources.filter(x => x.enabled !== false && x.audioDevice).length }, nginx: null }, channels });
   }
   if (url.pathname.startsWith('/api/')) {
     // Continue to legacy routes below; unknown routes get a consistent JSON response.
@@ -1391,24 +1888,42 @@ const server = http.createServer(async (req, res) => {
     const videoDevice = url.searchParams.get('videoDevice') || '';
     return queryCaptureCapabilities(videoDevice, (err, result) => {
       if (err) return send(res, 422, { ok: false, error: err.message, output: err.output || '' });
-      return send(res, 200, { ok: true, capabilities: result.capabilities, note: 'القدرات مستخرجة من مخرجات FFmpeg DirectShow. قد تختلف الخيارات الفعلية حسب تعريف القطعة.' });
+      return send(res, 200, { ok: true, capabilities: result.capabilities, note: capture.capabilitiesNote(), engine: capture.engineName() });
     });
+  }
+
+  // حلّ «تلقائي» لنموذج القناة قبل الحفظ: نفس دالة الترميز (channelOutputPlan) حتى
+  // يرى المستخدم المستوى المحسوب من الدقة وFPS دون تكرار المعادلة في الواجهة.
+  if (req.method === 'POST' && url.pathname === '/api/channels/plan') {
+    let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const invalid = validateChannelEncodingFields(body);
+    if (invalid) return apiError(res, 400, invalid);
+    const source = data.sources.find(s => s.id === String(body.sourceId || ''));
+    if (!source) return apiError(res, 404, 'مصدر البث غير موجود');
+    const plan = channelOutputPlan({ quality: String(body.quality || ''), fps: body.fps, bitrate: 'auto' }, source);
+    return send(res, 200, { ok: true, outputWidth: plan.outputWidth, outputHeight: plan.outputHeight,
+      outputFps: plan.outputFps, autoTargetKbps: plan.autoTargetKbps, level: plan.videoLevel });
   }
 
   const channelAction = url.pathname.match(/^\/api\/channels\/([a-zA-Z0-9_-]+)\/(start|stop|restart)$/);
   if (channelAction && req.method === 'POST') {
     const [,id,action]=channelAction;
-    if(action==='stop') return send(res,200,stopChannel(id,clientInfo(req)));
-    if(action==='restart')return send(res,202,restartChannel(id));
+    if(action==='stop'){ const result=stopChannel(id,clientInfo(req)); setManualStopped(id,true); return send(res,200,result); }
+    if(action==='restart')return send(res,202,restartChannel(id, true));
     logLine(`طلب تشغيل القناة ${id}: ${clientInfo(req)}`);
-    return send(res,200,startChannel(id));
+    return send(res,200,startChannel(id, true));
   }
   if (req.method === 'POST' && url.pathname === '/api/start') {
     logLine(`طلب تشغيل القنوات التلقائية: ${clientInfo(req)}`);
-    const started=data.channels.filter(c=>c.enabled!==false && c.autoStart).map(c=>startChannel(c.id));
+    const started=data.channels.filter(c=>c.enabled!==false && c.autoStart).map(c=>startChannel(c.id, true));
     return send(res,200,{ok:true,message:'تم إرسال أوامر تشغيل القنوات المحددة للتشغيل التلقائي',results:started});
   }
-  if (req.method === 'POST' && url.pathname === '/api/stop') return send(res,200,stopStream(clientInfo(req)));
+  if (req.method === 'POST' && url.pathname === '/api/stop') {
+    // إيقاف كل القنوات إيقافاً مؤقتاً فقط: نفس المسار يستخدمه scripts/stop.bat عند
+    // إغلاق البرنامج، فلو ثبّت إيقافاً يدوياً بقيت كل القنوات «موقوفة يدوياً» بعد
+    // كل تشغيل. التثبيت اليدوي يبقى لزر «إيقاف» الخاص بقناة واحدة.
+    return send(res,200,stopStream(clientInfo(req)));
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/logs') {
     return send(res, 200, { logs: ffmpegLog });
@@ -1457,27 +1972,22 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/metrics') {
     const channels = data.channels.map(publicChannel);
-    let hlsBytesTotal = 0;
-    try {
-      for (const dir of fs.readdirSync(HLS_DIR, { withFileTypes: true })) {
-        if (!dir.isDirectory()) continue;
-        for (const name of fs.readdirSync(path.join(HLS_DIR, dir.name))) {
-          if (!/\.(ts|m3u8|m4s|mp4)$/i.test(name)) continue;
-          try { hlsBytesTotal += fs.statSync(path.join(HLS_DIR, dir.name, name)).size; } catch {}
-        }
-      }
-    } catch {}
+    const hlsBytesTotal = hlsFileSizes().total;
     return send(res, 200, {
       ok: true,
-      cpuCount: os.cpus().length, cpuLoad: os.loadavg()[0] || 0,
+      cpuCount: os.cpus().length, cpuPercent, cpuLoad: os.loadavg()[0] || 0,
       uptimeSec: Math.floor(process.uptime()), memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+      ...systemMemory(),
       currentViewers: channels.reduce((sum, c) => sum + (c.viewers || 0), 0),
       watchedChannels: channels.filter(c => c.viewers > 0).length,
       totalViewers: totalViewerCount,
       runningChannels: channels.filter(c => c.status === 'running').length,
       totalChannels: channels.length,
       hlsBytesTotal, egressBytesTotal: servedBytes,
-      ingestBandwidthBps: 0, egressBandwidthBps: egressBps, internetBandwidthBps: 0
+      // إجمالي حركة Nginx من السجلات + حصيلة عدّادات الشبكة منذ الإقلاع.
+      nginxBytesTotal: nginxServedBytes, nginxLogActive,
+      internetRxBytesTotal: internetRxTotal == null ? null : Math.max(0, internetRxTotal - (internetRxBase || 0)),
+      ingestBandwidthBps: ingestBps, egressBandwidthBps: egressBps, internetBandwidthBps: internetBps
     });
   }
   if (req.method === 'POST' && url.pathname === '/api/settings/regenerate-nginx') {
@@ -1489,6 +1999,15 @@ const server = http.createServer(async (req, res) => {
       notes.push('لم يُعثر على nginx/conf/nginx.conf داخل الحزمة؛ حدّث منافذ Nginx يدوياً.');
     }
     return send(res, 200, { ok: true, nginxPort: Number(data.settings.nginxPort) || 80, port: Number(data.settings.port) || 3001, written, notes });
+  }
+  // أوامر Nginx تُنفَّذ من المسار المحفوظ في settings.nginxPath، فيصبح هذا الحقل
+  // فعّالاً بدل بقائه نصاً محفوظاً بلا أثر.
+  if (req.method === 'POST' && url.pathname === '/api/nginx/action') {
+    let body; try { body = await readBody(req); } catch (e) { return apiError(res, 400, e.message); }
+    const action = String(body.action || 'test');
+    const result = await nginxAction(action);
+    logLine(`أمر Nginx «${action}»: ${result.ok ? 'نجح' : 'فشل'} — ${result.message}`);
+    return send(res, result.ok ? 200 : 500, { ok: result.ok, action, binary: result.binary, output: result.output, message: result.message });
   }
   if (req.method === 'POST' && url.pathname === '/api/upload') {
     const raw = await readRawBody(req).catch(() => null);
@@ -1526,7 +2045,7 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, message: 'تم استرجاع الإعدادات. أعد تشغيل النظام لتطبيق تغييرات المنافذ.' });
   }
   if (req.method === 'GET' && url.pathname === '/api/update/status') {
-    return send(res, 200, { ok: true, available: false, currentVersion: '8.0.0', latestVersion: '8.0.0' });
+    return send(res, 200, { ok: true, available: false, currentVersion: APP_VERSION, latestVersion: APP_VERSION });
   }
 
   if (url.pathname.startsWith('/api/')) {
@@ -1538,12 +2057,8 @@ const server = http.createServer(async (req, res) => {
 
 // المنفذ يأتي من settings.port في data.json (مصدر وحيد يتغيّر من اللوحة)،
 // ويبقى متغير البيئة PORT أعلى أولوية للتشغيل في حاوية أو خلف وكيل.
-// نفس القاعدة موجودة في scripts/ports.js الذي تقرأه ملفات BAT، فأي قيمة غير
-// صالحة في data.json أو PORT تُحوَّل إلى 3001 في الطرفين بدل اختلاف المنفذ.
-function resolvePort(value, fallback) {
-  const n = Number(value);
-  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : fallback;
-}
+// نفس القاعدة في lib/shared/port.js يستخدمها الخادم وscripts/ports.js (ملفات BAT)،
+// فأي قيمة غير صالحة في data.json أو PORT تُحوَّل إلى 3001 في الطرفين بدل اختلاف المنفذ.
 const LISTEN_PORT = resolvePort(process.env.PORT || data.settings.port, 3001);
 const LISTEN_HOST = process.env.HOST || cfg.host || '127.0.0.1';
 
@@ -1558,6 +2073,52 @@ server.on('error', err => {
 setInterval(() => {
   const now=Date.now();
   for (const [id,session] of viewerSessions) if(now-session.lastSeen>45000)viewerSessions.delete(id);
+  // التعافي من أعطال المصدر: فشل متكرر أو حظر (403/451) يستمر حدّاً زمنياً يوقف
+  // القناة بدل حلقة إعادة تشغيل لا تنتهي. تُصفَّر المؤقّتات بمجرد نجاح البث.
+  for (const channel of data.channels) {
+    const rt = channelRuntime(channel.id);
+    if (!rt || rt.failedStop) continue;
+    // فقدان إشارة المصدر أثناء البث النشط: العملية ما زالت حيّة لكن لا بايتات HLS
+    // جديدة تُولَّد، فالمشاهدون على صورة مجمّدة. نُنهي FFmpeg فيعيد مؤقّت الإعادة
+    // الاتصال بالجهاز تلقائياً، ويُحتسب العطل في failSince حتى يتوقف الحدّ الزمني
+    // في الإعدادات على جهاز مفصول فعلاً بدل حلقة إعادة تشغيل لا تنتهي.
+    if (!rt.stopping && rt.proc) {
+      const lastOutput = rt.lastOutputAt || now;
+      if (now - lastOutput >= SOURCE_STALL_MS) {
+        const sourceType = String(sourceForChannel(channel)?.type || '').toLowerCase();
+        const reason = sourceType === 'usb' ? 'فقدان إشارة مصدر DirectShow' : 'توقف توليد مقاطع المصدر';
+        rt.lastOutputAt = now;
+        rt.failSince = rt.failSince || now;
+        logLine(`[${channel.name}] ${reason} منذ ${Math.round((now - lastOutput) / 1000)} ثانية — إعادة المحاولة تلقائياً`);
+        appendChannelLog(channel.id, `${reason}: أُعيد تشغيل الالتقاط تلقائياً`);
+        try { rt.proc.kill(); } catch {}
+        continue;
+      }
+    }
+    if (!rt.stopping && channelIsLive(channel)) {
+      rt.failSince = null; rt.blockedSince = null;
+      if (!rt.liveSince) rt.liveSince = now;
+      // بث مستقر دقيقة كاملة يعيد المحاولات المسموحة، ففقدان إشارة عابر كل فترة
+      // لا يستهلك حدّ maxRestarts ويترك القناة بلا إعادة محاولة لاحقاً.
+      if (rt.restartCount && now - rt.liveSince >= RESTART_COUNT_RESET_MS) rt.restartCount = 0;
+      continue;
+    }
+    rt.liveSince = null;
+    const failLimitMs = Math.max(1, Number(data.settings.sourceFailStopMinutes) || 3) * 60000;
+    const blockLimitMs = Math.max(1, Math.min(120, Number(data.settings.blockedStopMinutes) || 120)) * 60000;
+    let reason = '';
+    if (rt.blockedSince && now - rt.blockedSince >= blockLimitMs) {
+      reason = `المصدر يحظر الاتصال (403) منذ ${Math.round((now - rt.blockedSince) / 60000)} دقيقة`;
+    } else if (rt.failSince && now - rt.failSince >= failLimitMs) {
+      reason = `المصدر يفشل منذ ${Math.round((now - rt.failSince) / 60000)} دقيقة`;
+    }
+    if (!reason) continue;
+    rt.failedStop = true;
+    clearTimeout(rt.restartTimer); rt.restartTimer = null;
+    logLine(`إيقاف القناة ${channel.name}: ${reason} — الحدود من الإعدادات: فشل المصدر ${data.settings.sourceFailStopMinutes} دقيقة، حظر IPTV ${data.settings.blockedStopMinutes} دقيقة. أعد التشغيل يدوياً بعد إصلاح المصدر.`);
+    appendChannelLog(channel.id, `إيقاف تلقائي: ${reason}`);
+    stopChannel(channel.id, 'توقف تلقائي بعد استمرار العطل');
+  }
   if(!data.settings.idleStopEnabled)return;
   const idleMs=Math.max(1,Number(data.settings.idleStopMinutes)||2)*60000;
   for(const channel of data.channels){
@@ -1580,18 +2141,81 @@ setInterval(() => {
 
 setInterval(() => {
   const now = Date.now();
+  readNginxLogs();
   const elapsed = Math.max(1, (now - lastServedSample.at) / 1000);
   egressBps = Math.max(0, Math.round((servedBytes - lastServedSample.bytes) / elapsed));
   lastServedSample = { bytes: servedBytes, at: now };
+  // قراءة عدّادات الكارت أمر خارجي على ويندوز، فنمنع تداخل قراءتين.
+  if (!internetProbeBusy) {
+    internetProbeBusy = true;
+    readReceivedBytes((rx) => {
+      internetProbeBusy = false;
+      if (rx == null) { internetBps = null; return; }
+      const at = Date.now();
+      if (internetRxBase == null || rx < internetRxBase) internetRxBase = rx;
+      if (internetRxTotal == null || rx < internetRxTotal) {
+        internetRxTotal = rx; internetRxAt = at; internetBps = 0; return;
+      }
+      const seconds = Math.max(1, (at - internetRxAt) / 1000);
+      internetBps = Math.max(0, Math.round((rx - internetRxTotal) / seconds));
+      internetRxTotal = rx; internetRxAt = at;
+    });
+  }
+  // باندويث الإدخال: نمو مقاطع HLS بين عينتين. يُحسب لكل ملف على حدة حتى لا
+  // يُلغي حذف المقاطع القديمة (hlsDeleteThreshold) البايتات المولَّدة حديثاً.
+  const hls = hlsFileSizes();
+  let generated = 0;
+  const generatedByChannel = new Map();
+  if (lastHlsFiles.size) for (const [file, size] of hls.sizes) {
+    const prev = lastHlsFiles.get(file) || 0;
+    if (size > prev) {
+      const delta = size - prev;
+      generated += delta;
+      // مجلد كل قناة يحمل معرّفها، فننسب بايتات مقاطعها إليها وحدها.
+      const channelId = path.basename(path.dirname(file));
+      generatedByChannel.set(channelId, (generatedByChannel.get(channelId) || 0) + delta);
+    }
+  }
+  lastHlsFiles = hls.sizes;
+  ingestBps = lastHlsFiles.size && generated ? Math.max(0, Math.round(generated / elapsed)) : 0;
+  // معدّل البت الفعلي لكل قناة: تراكم البايتات + معدّل على نافذة 12 ثانية.
+  for (const [channelId, bytes] of generatedByChannel) {
+    channelGenBytes.set(channelId, (channelGenBytes.get(channelId) || 0) + bytes);
+    // إشارة حياة المصدر: أي بايت جديد يعني أن الالتقاط ما زال يصل.
+    const rt = channelRuntime(channelId);
+    if (rt && bytes > 0) rt.lastOutputAt = Date.now();
+  }
+  const sampleAt = Date.now();
+  for (const [channelId, total] of channelGenBytes) {
+    const snapshot = channelGenSnapshot.get(channelId);
+    // نافذة بدأت أثناء إقلاع العملية تُحتسب منقوصة؛ نعيد ضبط بدايتها حتى ينتهي الإقلاع.
+    const startedAt = Date.parse(channelRuntime(channelId)?.startedAt || '') || 0;
+    if (!snapshot || snapshot.at < startedAt + BITRATE_WARMUP_MS) {
+      channelGenSnapshot.set(channelId, { bytes: total, at: sampleAt }); continue;
+    }
+    const seconds = (sampleAt - snapshot.at) / 1000;
+    if (seconds < 12) continue;
+    const bps = Math.max(0, Math.round((total - snapshot.bytes) / seconds));
+    channelOutputBps.set(channelId, bps);
+    channelGenSnapshot.set(channelId, { bytes: total, at: sampleAt });
+    // السجل للقنوات العاملة فقط: قناة متوقفة تُنتج صفراً فتظهر «أقل من الهدف» بلا معنى.
+    const channel = data.channels.find(c => c.id === channelId);
+    const source = channel ? sourceForChannel(channel) : null;
+    if (channel && source && channelRuntime(channelId)?.proc) logBitrateWindow(channel, source, bps, seconds);
+  }
   probeNginxPort();
 }, 3000).unref();
 probeNginxPort();
 
 server.listen(LISTEN_PORT, LISTEN_HOST, () => {
   logLine(`الخادم يعمل على http://${LISTEN_HOST}:${LISTEN_PORT} (منفذ Nginx: ${Number(data.settings.nginxPort) || 80})`);
-  for (const item of getNetworkInterfaces()) logLine(`رابط المشاهدة: ${item.url} | الواجهة: ${item.name}`);
+  // العنوان الذي يخرج منه الجهاز فعلاً يُسجَّل أولاً ومعلَّماً، فالهاتف يستخدمه هو.
+  primaryLanAddress().then((primary) => {
+    const nets = getNetworkInterfaces().sort((a, b) => Number(b.address === primary) - Number(a.address === primary));
+    for (const item of nets) logLine(`رابط المشاهدة: ${item.url} | الواجهة: ${item.name}${item.address === primary ? ' (الأنسب للهاتف)' : ''}`);
+  });
   if (process.argv.includes('--devices')) listDevices();
-  const bootChannels=data.channels.filter(c=>c.enabled!==false && (c.autoStart||c.alwaysOn));
+  const bootChannels=data.channels.filter(c=>c.enabled!==false && !c.manualStopped && (c.autoStart||c.alwaysOn));
   // كل دورة تُشغّل startupConcurrency قناة معاً: 1 = تسلسلي كما كان، وأكثر = دفعات متزامنة بفاصل ثانية بين الدفعات.
   const bootConcurrency=Math.max(1,Number(data.settings.startupConcurrency)||1);
   bootChannels.forEach((c,i)=>setTimeout(()=>startChannel(c.id),Math.max(0,Number(data.settings.startupQueueDelayMs)||0)+Math.floor(i/bootConcurrency)*1000));

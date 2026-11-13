@@ -48,9 +48,13 @@ for /f "tokens=1,2" %%A in ("!PORTS!") do (
 )
 
 rem ---- جدار الحماية ----
+set "FW_MISSING="
 netsh advfirewall firewall show rule name="PrinceLive HTTP !FW_PORT!" >nul 2>&1
-if errorlevel 1 (
-  echo Setting up Windows Firewall for viewing port !FW_PORT! - approve the UAC prompt...
+if errorlevel 1 set "FW_MISSING=1"
+netsh advfirewall firewall show rule name="PrinceLive API !API_PORT!" >nul 2>&1
+if errorlevel 1 set "FW_MISSING=1"
+if defined FW_MISSING (
+  echo Setting up Windows Firewall for ports !FW_PORT! and !API_PORT! - approve the UAC prompt...
   call "%ROOT%scripts\firewall.bat" quiet
 )
 
@@ -95,6 +99,7 @@ rem ---- خدمة Nginx ----
 :nginx
 if not exist "nginx\nginx.exe" (
   echo WARNING: nginx\nginx.exe not found. The viewer is served by Node.js only.
+  set "NO_NGINX=1"
   goto :summary
 )
 call "%ROOT%scripts\nginx-dirs.bat"
@@ -135,7 +140,7 @@ echo OK: Nginx is listening on port !FW_PORT!.
 echo.
 echo ---------------------------------------------
 echo Local UI:  http://127.0.0.1:!API_PORT!
-echo Nginx UI:  http://127.0.0.1:!FW_PORT!/
+if not defined NO_NGINX echo Nginx UI:  http://127.0.0.1:!FW_PORT!/
 echo ---------------------------------------------
 if not defined START_FAILED goto :started
 echo.

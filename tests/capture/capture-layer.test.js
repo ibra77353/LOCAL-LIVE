@@ -1,0 +1,241 @@
+'use strict';
+// اختبارات وحدة لطبقة الالتقاط (lib/capture) — Windows فقط.
+// تغطي أوامر DirectShow وتحليل مخرجاته، ووسائط التقاط الشاشة (gdigrab)،
+//
+// التشغيل: node --test tests/capture/
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+
+const capture = require('../../lib/capture');
+const dshow = require('../../lib/capture/dshow');
+
+const ROOT = path.resolve(__dirname, '..', '..');
+
+// المشروع Windows فقط: لا يوجد اختيار محرك حسب النظام، فكل الاستدعاءات تعود
+// إلى DirectShow مباشرة.
+const winCapture = {
+  deviceListArgs: () => capture.deviceListArgs(),
+  parseDeviceList: (output) => capture.parseDeviceList(output),
+  describeDevices: (devices, err, output) => capture.describeDevices(devices, err, output),
+  capabilitiesArgs: (device) => capture.capabilitiesArgs(device),
+  parseCapabilities: (output) => capture.parseCapabilities(output),
+  usbInputArgs: (source) => capture.usbInputArgs(source),
+  testVideoArgs: (body, options) => capture.testVideoArgs(body, options),
+  testAudioArgs: (device) => capture.testAudioArgs(device),
+};
+
+// ---------------------------------------------------------------- المحرك
+test('المحرك هو DirectShow ويندوز', () => {
+  assert.equal(capture.engineName(), 'dshow');
+  assert.equal(capture.engineLabel(), 'DirectShow (Windows)');
+});
+
+test('نطاق الدعم: Windows 10/11 فقط', () => {
+  assert.deepEqual(capture.supportedTargets(), [{ target: 'Windows 10/11', platform: 'win32', engine: 'dshow' }]);
+});
+
+// ---------------------------------------------------------------- تعداد الأجهزة
+test('أمر تعداد الأجهزة مطابق للأصل حرفياً', () => {
+  assert.deepEqual(winCapture.deviceListArgs(), ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy']);
+});
+
+test('تحليل مخرج تعداد الأجهزة يفصل الفيديو عن الصوت ويزيل التكرار', () => {
+  const output = [
+    '[dshow @ 000001] "USB Video" (video)',
+    '[dshow @ 000001]   Alternative name "@device_pnp_\\\\?\\usb#vid_1"',
+    '[dshow @ 000001] "Digital Audio Interface (2- USB Digital Audio)" (audio)',
+    '[dshow @ 000001] "USB Video" (video)',
+    '[dshow @ 000001] "Webcam HD" (video)',
+    '[dshow @ 000001] "Microphone (USB Audio)" (audio)',
+    '[dshow @ 000001] Could not enumerate audio only (see option \'-list_options\').',
+  ].join('\r\n');
+  const devices = winCapture.parseDeviceList(output);
+  assert.deepEqual(devices.video, ['USB Video', 'Webcam HD']);
+  assert.deepEqual(devices.audio, ['Digital Audio Interface (2- USB Digital Audio)', 'Microphone (USB Audio)']);
+});
+
+test('رسائل تعداد الأجهزة الثلاث تبقى كما هي في واجهة الـAPI', () => {
+  const withDevices = { video: ['USB Video'], audio: [] };
+  assert.equal(
+    winCapture.describeDevices(withDevices, null, 'x'),
+    'قوائم الفيديو والصوت مستخرجة من أجهزة DirectShow التي يعرضها FFmpeg.'
+  );
+  assert.equal(winCapture.describeDevices({ video: [], audio: [] }, null, 'x'), 'لم يعرض FFmpeg أي جهاز DirectShow متصل.');
+  assert.equal(
+    winCapture.describeDevices({ video: [], audio: [] }, new Error('boom'), ''),
+    'تعذر تشغيل فحص FFmpeg: boom'
+  );
+});
+
+// ---------------------------------------------------------------- قدرات الجهاز
+test('أمر استخراج القدرات مطابق للأصل', () => {
+  assert.deepEqual(
+    winCapture.capabilitiesArgs('USB Video'),
+    ['-hide_banner', '-f', 'dshow', '-list_options', 'true', '-i', 'video=USB Video']
+  );
+});
+
+test('تحليل قدرات الجهاز يستخرج الدقات ومعدلات الإطارات والتوصية', () => {
+  const output = [
+    '[dshow @ 000001]   pixel_format=mjpeg  min s=640x480 fps=30 max s=1920x1080 fps=30',
+    '[dshow @ 000001]   pixel_format=yuyv422  min s=640x480 fps=30 max s=1280x720 fps=30',
+    '[dshow @ 000001]   pixel_format=nv12  min s=320x240 fps=15 max s=640x480 fps=30',
+  ].join('\n');
+  const caps = winCapture.parseCapabilities(output);
+
+  assert.deepEqual(caps.videoSizes, ['1920x1080', '1280x720', '640x480', '320x240']);
+  assert.ok(caps.frameRates.includes('30'));
+  assert.ok(caps.frameRates.includes('15'));
+  assert.deepEqual(caps.pixelFormats.sort(), ['mjpeg', 'nv12', 'yuyv422']);
+  // التوصية تفضّل ما لا يتجاوز 1280x720 ثم الأكبر مساحةً.
+  assert.equal(caps.recommended.videoSize, '1280x720');
+  assert.equal(caps.recommended.fps, 30);
+  assert.equal(caps.recommended.pixelFormat, 'mjpeg');
+  assert.ok(caps.modes.length >= 4);
+});
+
+test('تحليل القدرات يعيد قائمة فارغة عند مخرج لا يحتوي أوضاعاً', () => {
+  const caps = winCapture.parseCapabilities('dummy: Immediate exit requested');
+  assert.deepEqual(caps.videoSizes, []);
+  assert.equal(caps.recommended.videoSize, '1280x720');
+});
+
+// ---------------------------------------------------------------- وسائط الإدخال
+test('وسائط USB كاملة تطابق أمراً مرجعياً منسوخاً من الإصدار السابق', () => {
+  const args = winCapture.usbInputArgs({
+    videoDevice: 'USB Video Test Device',
+    audioDevice: 'USB Audio Test Device',
+    videoSize: '1280x720',
+    fps: 30,
+    vcodec: 'mjpeg',
+  });
+  assert.deepEqual(args, [
+    '-f', 'dshow', '-rtbufsize', '256M',
+    '-framerate', '30', '-video_size', '1280x720',
+    '-vcodec', 'mjpeg',
+    '-i', 'video=USB Video Test Device:audio=USB Audio Test Device',
+  ]);
+});
+
+test('وضع الالتقاط الآمن لا يفرض الدقة ولا معدل الإطارات', () => {
+  const args = winCapture.usbInputArgs({ videoDevice: 'USB Video', videoSize: '1920x1080', fps: 60, captureSafeMode: true });
+  assert.deepEqual(args, ['-f', 'dshow', '-rtbufsize', '256M', '-i', 'video=USB Video']);
+});
+
+test('pixelFormat الحقيقي يمرَّر بـ -pixel_format، وmjpeg يمرَّر بـ -vcodec', () => {
+  const pixel = winCapture.usbInputArgs({ videoDevice: 'USB Video', videoSize: '640x480', fps: 15, pixelFormat: 'yuyv422' });
+  assert.deepEqual(pixel.slice(0, 10), [
+    '-f', 'dshow', '-rtbufsize', '256M',
+    '-framerate', '15', '-video_size', '640x480',
+    '-pixel_format', 'yuyv422',
+  ]);
+
+  const codec = winCapture.usbInputArgs({ videoDevice: 'USB Video', pixelFormat: 'mjpeg' });
+  assert.ok(codec.includes('-vcodec'));
+  assert.equal(codec[codec.indexOf('-vcodec') + 1], 'mjpeg');
+  assert.equal(codec.includes('-pixel_format'), false);
+});
+
+test('القيم التالفة في data.json لا تصل إلى FFmpeg', () => {
+  const args = winCapture.usbInputArgs({
+    videoDevice: 'USB Video',
+    videoSize: 'not-a-size',
+    pixelFormat: 'bad format!',
+    vcodec: 'also bad!',
+  });
+  assert.ok(args.includes('-video_size'));
+  assert.equal(args[args.indexOf('-video_size') + 1], '1280x720');
+  assert.equal(args.includes('-pixel_format'), false);
+  assert.equal(args.includes('-vcodec'), false);
+  // «افتراضي» يصل من اللوحة null أو ''، ويجب أن يعني 30 لا إطاراً واحداً.
+  assert.equal(args[args.indexOf('-framerate') + 1], '30');
+  for (const fps of ['', null, undefined, 0, 'abc']) {
+    const fallback = winCapture.usbInputArgs({ videoDevice: 'USB Video', fps });
+    assert.equal(fallback[fallback.indexOf('-framerate') + 1], '30', `fps=${String(fps)} يجب أن يعطي 30`);
+  }
+  const chosen = winCapture.usbInputArgs({ videoDevice: 'USB Video', fps: 25 });
+  assert.equal(chosen[chosen.indexOf('-framerate') + 1], '25');
+});
+
+// ---------------------------------------------------------------- اختبار الالتقاط
+// الاختبار يكتب MPEG-TS مُرمَّزاً بدل `-f null`: نسخة FFmpeg المرفقة لا تضم
+// null muxer ولا wrapped_avframe، فكان الاختبار يفشل على جهاز سليم.
+test('وسائط اختبار التقاط الصوت والفيديو تستخدم مُخرَجاً مدعوماً دائماً', () => {
+  assert.deepEqual(winCapture.testAudioArgs('USB Audio'), [
+    '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M',
+    '-i', 'audio=USB Audio', '-t', '3', '-map', '0:a:0?', '-c:a', 'aac', '-f', 'mpegts', '-',
+  ]);
+  assert.deepEqual(winCapture.testVideoArgs({ videoDevice: 'USB Video', audioDevice: 'USB Audio', videoSize: '1280x720', fps: 30, pixelFormat: 'mjpeg' }), [
+    '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M',
+    '-framerate', '30', '-video_size', '1280x720',
+    '-vcodec', 'mjpeg',
+    '-i', 'video=USB Video:audio=USB Audio', '-t', '3', '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mpegts', '-',
+  ]);
+  // لا يظهر `null` في أي من الأمرين: مُخرَجه غير موجود في نسخة FFmpeg المقلّمة.
+  const audio = winCapture.testAudioArgs('USB Audio');
+  const video = winCapture.testVideoArgs({ videoDevice: 'USB Video' });
+  for (const args of [audio, video]) {
+    assert.equal(args.includes('null'), false);
+    assert.equal(args[args.lastIndexOf('-f') + 1], 'mpegts');
+  }
+});
+
+test('الواجهة الموحّدة تعيد تصدير خطة الإدخال وفحص اسم الكودك', () => {
+  assert.deepEqual(capture.inputPlan({ videoDevice: 'USB Video' }), dshow.inputPlan({ videoDevice: 'USB Video' }));
+  assert.equal(capture.inputPlan({ videoDevice: 'USB Video' }).audioInputIndex, null);
+  assert.equal(capture.isCodecName('MJPEG'), true);
+  assert.equal(capture.isCodecName('yuyv422'), false);
+});
+
+test('اختبار الالتقاط يحترم وضع الجودة العام كما تفعل وسائط القناة', () => {
+  const quality = winCapture.testVideoArgs({ videoDevice: 'USB Video' }, { qualityMode: true });
+  // وضع الجودة يعطّل zerolatency — لا أثر لـ -tune ولا لقيمته في الوسائط.
+  assert.equal(quality.includes('-tune'), false);
+  assert.equal(quality.includes('zerolatency'), false);
+  assert.deepEqual(quality, [
+    '-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M',
+    '-framerate', '30', '-video_size', '1280x720',
+    '-i', 'video=USB Video', '-t', '3', '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-f', 'mpegts', '-',
+  ]);
+  // الافتراضي (وضع الجودة معطّل) يبقى كما هو: zerolatency مفعّل.
+  const normal = winCapture.testVideoArgs({ videoDevice: 'USB Video' });
+  assert.deepEqual(normal.slice(normal.indexOf('-c:v'), normal.indexOf('-c:v') + 6),
+    ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency']);
+  assert.deepEqual(normal, winCapture.testVideoArgs({ videoDevice: 'USB Video' }, { qualityMode: false }));
+});
+
+test('اختبار الالتقاط يحترم الوضع الآمن كما تفعل وسائط القناة', () => {
+  const args = winCapture.testVideoArgs({ videoDevice: 'USB Video', videoSize: '1920x1080', fps: 60, captureSafeMode: true });
+  assert.equal(args.includes('-framerate'), false);
+  assert.equal(args.includes('-video_size'), false);
+  assert.deepEqual(args.slice(0, 7), ['-hide_banner', '-loglevel', 'error', '-f', 'dshow', '-rtbufsize', '128M']);
+});
+
+test('اختبار الالتقاط يرفض المدخلات غير الصالحة بنفس رسائل الأصل', () => {
+  assert.throws(() => winCapture.testAudioArgs(''), /اختر جهاز صوت صالحاً/);
+  assert.throws(() => winCapture.testAudioArgs('a\nb'), /اختر جهاز صوت صالحاً/);
+  assert.throws(() => winCapture.testVideoArgs({}), /جهاز الفيديو غير صالح/);
+  assert.throws(() => winCapture.testVideoArgs({ videoDevice: 'USB Video', videoSize: 'big' }), /إعدادات الالتقاط غير صالحة/);
+  assert.throws(() => winCapture.testVideoArgs({ videoDevice: 'USB Video', fps: 120 }), /إعدادات الالتقاط غير صالحة/);
+});
+
+// ---------------------------------------------------------------- التقاط الشاشة
+test('التقاط الشاشة يستخدم gdigrab بوسائط مطابقة للأصل', () => {
+  assert.deepEqual(capture.screenInputArgs({ fps: 15 }), ['-f', 'gdigrab', '-framerate', '15', '-i', 'desktop']);
+  assert.deepEqual(capture.screenInputArgs({}), ['-f', 'gdigrab', '-framerate', '15', '-i', 'desktop']);
+  assert.deepEqual(capture.screenInputArgs({ fps: 20 }), ['-f', 'gdigrab', '-framerate', '20', '-i', 'desktop']);
+});
+
+// ---------------------------------------------------------------- عزل الطبقة
+test('server.js لا يبني أوامر dshow/gdigrab بنفسه بعد الاستخراج', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  for (const literal of ["'dshow'", "'gdigrab'", '"-f", "dshow"']) {
+    assert.equal(source.includes(literal), false, `ما زال server.js يحتوي ${literal}`);
+  }
+  assert.ok(source.includes("require('./lib/capture')"), 'server.js يجب أن يستورد طبقة الالتقاط');
+});

@@ -1,4 +1,4 @@
-/* أمان لايف — لوحة التحكم
+/* البرنس لايف — لوحة التحكم
    Palette: ink petrol #101B24 / panel #16242F / line #23394A
             brass #E8A33D / live red #E2493B / text #E9EEF2 / muted #8FA3B0 */
 :root {
@@ -12,8 +12,97 @@
   --ok: #3FA66A;
   --text: #E9EEF2;
   --muted: #8FA3B0;
+  --field-bg: #0C151D;
+  --log-bg: #0A1118;
+  --log-text: #C9D6DF;
+  --modal-backdrop: rgba(5, 10, 14, .7);
+  --row-line: rgba(35, 57, 74, .55);
+  --login-glow: #1C3140;
+  --card-shadow: 0 24px 60px rgba(0, 0, 0, .45);
   --radius: 10px;
   --font: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+}
+
+/* ===== الوضع النهاري ===== */
+html[data-theme="light"] {
+  --bg: #EDF2F6;
+  --panel: #FFFFFF;
+  --panel2: #F5F8FA;
+  --line: #D5E0E9;
+  --brass: #A9680B;
+  --brass-soft: #F7EBD6;
+  --live: #C9342A;
+  --ok: #2C8355;
+  --text: #14202A;
+  --muted: #5B6C7A;
+  --field-bg: #FFFFFF;
+  --log-bg: #F6F9FB;
+  --log-text: #33454F;
+  --modal-backdrop: rgba(16, 27, 36, .45);
+  --row-line: #E4EBF1;
+  --login-glow: #DDE9F2;
+  --card-shadow: 0 20px 50px rgba(16, 27, 36, .16)
+}
+
+html[data-theme="light"] .form-error,
+html[data-theme="light"] .chip.error,
+html[data-theme="light"] .chip.error::before,
+html[data-theme="light"] .err-lines,
+html[data-theme="light"] .err-lines.err-high {
+  color: #B3261E
+}
+
+html[data-theme="light"] .chip.error::before {
+  color: inherit
+}
+
+html[data-theme="light"] .chip.running {
+  color: #14603B
+}
+
+html[data-theme="light"] .err-lines.err-medium {
+  color: #9A6108
+}
+
+html[data-theme="light"] .err-lines.err-low {
+  color: #5B6C7A
+}
+
+html[data-theme="light"] .sys-msg-close:hover {
+  background: rgba(20, 32, 42, .07)
+}
+
+/* زر تبديل الثيم */
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  cursor: pointer
+}
+
+.theme-btn svg {
+  display: block;
+  flex: 0 0 auto
+}
+
+.theme-btn-float {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 6;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 13px
+}
+
+.theme-btn-float:hover {
+  border-color: var(--brass)
 }
 
 * {
@@ -49,7 +138,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(1100px 600px at 80% -10%, #1C3140 0%, var(--bg) 60%)
+  background: radial-gradient(1100px 600px at 80% -10%, var(--login-glow) 0%, var(--bg) 60%)
 }
 
 .login-card {
@@ -58,7 +147,7 @@ a {
   border-radius: 14px;
   padding: 34px 30px;
   width: min(380px, 92vw);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, .45)
+  box-shadow: var(--card-shadow)
 }
 
 .login-mark {
@@ -106,34 +195,47 @@ a {
 }
 
 .brand {
-  padding: 22px 18px 14px;
-  border-bottom: 1px solid var(--line)
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px
 }
 
 .brand-logo {
+  flex: 0 0 100%;
   max-height: 42px;
   max-width: 100%;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   display: block
 }
 
 .brand-name {
-  font-size: 22px;
-  font-weight: 800
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1.2
 }
 
 .onair-strip {
-  margin-top: 10px;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  letter-spacing: 2px;
+  gap: 5px;
+  width: max-content;
+  max-width: 100%;
+  white-space: nowrap;
+  font-size: 9.5px;
+  letter-spacing: 1.1px;
   font-weight: 700;
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 99px;
-  padding: 4px 12px
+  padding: 3px 9px
 }
 
 .onair-strip.live {
@@ -299,12 +401,6 @@ a {
   font-weight: 800
 }
 
-.head-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap
-}
-
 .head-stats {
   display: flex;
   gap: 10px;
@@ -330,11 +426,6 @@ a {
 
 .stat-chip.good b {
   color: var(--ok)
-}
-
-.sec-title {
-  margin: 26px 0 10px;
-  font-size: 17px
 }
 
 .hint {
@@ -393,15 +484,9 @@ a {
   border-radius: 6px
 }
 
-.file-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center
-}
-
 .input,
 .login-card input {
-  background: #0C151D;
+  background: var(--field-bg);
   border: 1px solid var(--line);
   color: var(--text);
   border-radius: 8px;
@@ -456,41 +541,6 @@ label .input {
   flex: 1
 }
 
-.filter-input {
-  max-width: 340px;
-  margin-bottom: 12px
-}
-
-/* تبويبات فرعية داخل النافذة الواحدة (نافذة IPTV الموحّدة) */
-.subtabs {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 16px
-}
-
-.subtab {
-  background: none;
-  border: 0;
-  color: var(--muted);
-  font-family: var(--font);
-  font-size: 14.5px;
-  padding: 10px 16px;
-  cursor: pointer;
-  border-bottom: 3px solid transparent
-}
-
-.subtab:hover {
-  color: var(--text)
-}
-
-.subtab.active {
-  color: var(--brass);
-  border-bottom-color: var(--brass);
-  font-weight: 700
-}
-
 .form-error {
   color: #FF9C90;
   font-size: 13px;
@@ -525,10 +575,99 @@ label .input {
   margin-bottom: 10px
 }
 
-.grid-2 {
+/* ---- settings ---- */
+.settings-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-  gap: 16px
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: start
+}
+
+.settings-grid > .card {
+  margin-bottom: 0
+}
+
+.settings-grid > .card.span-2 {
+  grid-column: 1 / -1
+}
+
+.settings-grid .card h3 {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px
+}
+
+.fields-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0 14px
+}
+
+.field-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 20px 26px
+}
+
+.field-group h4 {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  color: var(--brass)
+}
+
+.field-group .switch-row {
+  margin: 6px 0
+}
+
+.field-note {
+  margin: -4px 0 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7
+}
+
+.field-note.warn {
+  color: var(--accent);
+  margin-bottom: 0
+}
+
+/* ---- الوصول من الهاتف ---- */
+.lan-block {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px
+}
+
+.lan-block h4 {
+  margin: 0 0 6px;
+  font-size: 13px
+}
+
+.lan-links p {
+  margin: 4px 0;
+  font-size: 12.5px;
+  line-height: 1.7
+}
+
+.lan-links a {
+  direction: ltr;
+  unicode-bidi: isolate;
+  word-break: break-all
+}
+
+.lan-links .lan-if {
+  color: var(--muted);
+  font-size: 12px
+}
+
+.lan-links .lan-alt {
+  margin: -8px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.9;
+  text-align: left
 }
 
 /* ---- tables ---- */
@@ -541,8 +680,7 @@ label .input {
 
 .table {
   width: 100%;
-  border-collapse: collapse;
-  min-width: 680px
+  border-collapse: collapse
 }
 
 .table th {
@@ -564,7 +702,7 @@ label .input {
 
 .table td {
   padding: 11px 14px;
-  border-bottom: 1px solid rgba(35, 57, 74, .55);
+  border-bottom: 1px solid var(--row-line);
   vertical-align: middle;
   font-size: 14px
 }
@@ -598,12 +736,203 @@ label .input {
   white-space: nowrap
 }
 
-.iptv-logo {
-  width: 34px;
-  height: 34px;
-  object-fit: contain;
-  background: #0C151D;
-  border-radius: 6px
+/* ---- جداول لوحة الإدارة المتجاوبة ----
+   بلا عرض أدنى ثابت، فلا يتجاوز الجدول حاوية .table-wrap على الشاشات الصغيرة،
+   وعندما يضيق عرض الحاوية يتحول كل صف إلى بطاقة بعناوين حقول واضحة. */
+.table th,
+.table td {
+  white-space: normal;
+  overflow-wrap: anywhere
+}
+
+.table th:last-child,
+.table td:last-child {
+  width: auto
+}
+
+.table .row-actions {
+  flex-wrap: wrap
+}
+
+.table-wrap {
+  container-type: inline-size
+}
+
+@container (max-width: 760px) {
+  .table thead {
+    display: none
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: auto
+  }
+
+  .table tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 16px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--row-line)
+  }
+
+  .table tbody tr:last-child {
+    border-bottom: 0
+  }
+
+  .table tr:hover td {
+    background: none
+  }
+
+  .table td {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    font-size: 13.5px
+  }
+
+  .table td::before {
+    content: "";
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 600
+  }
+
+  /* عناوين حقول جدول المراقبة */
+  #statusTable td:nth-child(1)::before {
+    content: "القناة"
+  }
+
+  #statusTable td:nth-child(2)::before {
+    content: "الحالة"
+  }
+
+  #statusTable td:nth-child(3)::before {
+    content: "المشاهدون"
+  }
+
+  #statusTable td:nth-child(4)::before {
+    content: "البيانات"
+  }
+
+  #statusTable td:nth-child(5)::before {
+    content: "معدّل البت"
+  }
+
+  #statusTable td:nth-child(6)::before {
+    content: "إعادة التشغيل"
+  }
+
+  #statusTable td:nth-child(7)::before {
+    content: "آخر الأخطاء"
+  }
+
+  #statusTable td:nth-child(8)::before {
+    content: "إجراءات"
+  }
+
+  /* عناوين حقول جدول القنوات */
+  #channelsTable td:nth-child(1)::before {
+    content: "الترتيب"
+  }
+
+  #channelsTable td:nth-child(2)::before {
+    content: "القناة"
+  }
+
+  #channelsTable td:nth-child(3)::before {
+    content: "المعرّف"
+  }
+
+  #channelsTable td:nth-child(4)::before {
+    content: "التصنيف"
+  }
+
+  #channelsTable td:nth-child(5)::before {
+    content: "المصدر"
+  }
+
+  #channelsTable td:nth-child(6)::before {
+    content: "الجودات"
+  }
+
+  #channelsTable td:nth-child(7)::before {
+    content: "تشغيل تلقائي"
+  }
+
+  #channelsTable td:nth-child(8)::before {
+    content: "الحالة"
+  }
+
+  #channelsTable td:nth-child(9)::before {
+    content: "إجراءات"
+  }
+
+  /* عناوين حقول جدول المصادر */
+  #sourcesTable td:nth-child(1)::before {
+    content: "الاسم"
+  }
+
+  #sourcesTable td:nth-child(2)::before {
+    content: "النوع"
+  }
+
+  #sourcesTable td:nth-child(3)::before {
+    content: "التفاصيل"
+  }
+
+  #sourcesTable td:nth-child(4)::before {
+    content: "إجراءات"
+  }
+
+  /* اسم القناة/المصدر والتفاصيل والإجراءات تمتد على كامل عرض البطاقة */
+  #statusTable td:nth-child(1),
+  #statusTable td:nth-child(7),
+  #statusTable td:nth-child(8),
+  #channelsTable td:nth-child(2),
+  #channelsTable td:nth-child(3),
+  #channelsTable td:nth-child(9),
+  #sourcesTable td:nth-child(1),
+  #sourcesTable td:nth-child(3),
+  #sourcesTable td:nth-child(4) {
+    grid-column: 1 / -1
+  }
+
+  #statusTable td:nth-child(1),
+  #channelsTable td:nth-child(2),
+  #sourcesTable td:nth-child(1) {
+    font-size: 15px
+  }
+
+  #statusTable td:nth-child(2) .chip,
+  #channelsTable td:nth-child(8) .chip {
+    font-size: 11.5px
+  }
+
+  /* حقول ذات اتجاه لاتيني: نعيد اتجاه الخلية ليظهر العنوان في مكانه */
+  .table td.cell-muted {
+    direction: rtl;
+    text-align: right
+  }
+
+  /* صف "لا توجد…" لا يحتاج عنوان حقل */
+  .table td[colspan] {
+    grid-column: 1 / -1
+  }
+
+  #statusTable td[colspan]::before,
+  #channelsTable td[colspan]::before,
+  #sourcesTable td[colspan]::before {
+    content: none
+  }
 }
 
 /* status chips — the ON AIR signature */
@@ -611,6 +940,7 @@ label .input {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 700;
   border-radius: 99px;
@@ -665,7 +995,7 @@ label .input {
 }
 
 .log-body {
-  background: #0A1118;
+  background: var(--log-bg);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
@@ -674,7 +1004,7 @@ label .input {
   direction: ltr;
   text-align: left;
   font: 12.5px/1.6 Consolas, monospace;
-  color: #C9D6DF;
+  color: var(--log-text);
   white-space: pre-wrap;
   word-break: break-all
 }
@@ -689,6 +1019,18 @@ label .input {
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: Consolas, monospace
+}
+
+/* معدّل البت الفعلي مقابل المضبوط: أحمر عند تجاوز المضبوط */
+.bw-cell {
+  display: inline-block;
+  direction: ltr;
+  white-space: nowrap
+}
+
+.bw-cell.bw-over {
+  color: #FF6B5C;
+  font-weight: 700
 }
 
 /* تلوين الأخطاء حسب الخطورة على عمل القناة */
@@ -726,7 +1068,7 @@ label .input {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(5, 10, 14, .7);
+  background: var(--modal-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -789,83 +1131,13 @@ label .input {
   margin: 0
 }
 
-.qual-row,
-.slot-row,
-.variant-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
-  flex-wrap: wrap
-}
-
-.qual-checks {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-top: 8px
-}
-
-.qual-checks label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  color: var(--text);
-  margin: 0
-}
-
-.days-checks {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 8px
-}
-
-.days-checks label {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  color: var(--text);
+.confirm-text {
   margin: 0;
-  font-size: 13px
+  line-height: 1.9;
+  color: var(--text)
 }
 
 /* ---- misc ---- */
-.news-list {
-  list-style: none;
-  padding: 0;
-  margin: 12px 0
-}
-
-.news-list li {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 14px
-}
-
-.news-list .src {
-  color: var(--muted);
-  font-size: 12px;
-  margin-inline-start: 8px
-}
-
-.license-status div {
-  margin-bottom: 10px
-}
-
-.license-status .lbl {
-  color: var(--muted);
-  font-size: 13px
-}
-
-.license-status .val {
-  font-weight: 700;
-  direction: ltr;
-  text-align: left;
-  font-family: Consolas, monospace;
-  font-size: 13px
-}
-
 .toast {
   position: fixed;
   bottom: 26px;
@@ -932,52 +1204,6 @@ label .input {
   .main {
     padding: 18px 14px 70px
   }
-}
-
-/* شريط الفترة التجريبية */
-.trial-banner {
-  background: rgba(224, 168, 46, .12);
-  border: 1px solid #E0A82E;
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 14px;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text)
-}
-
-.trial-banner.ended {
-  background: rgba(226, 73, 59, .12);
-  border-color: #E2493B
-}
-
-/* أزرار الشراء/التواصل */
-.buy-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px
-}
-
-.buy-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--accent, #3FA66A);
-  color: #fff;
-  text-decoration: none;
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-weight: 700;
-  font-size: 13px
-}
-
-.buy-btn.wa {
-  background: #25D366
-}
-
-.buy-btn:hover {
-  opacity: .9
 }
 
 /* ===== لوحة مقاييس المراقبة (بطاقات) ===== */

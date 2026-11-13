@@ -13,6 +13,7 @@ if not exist "%ROOT%server.js" (
   exit /b 1
 )
 cd /d "%ROOT%"
+chcp 65001 >nul
 
 echo ==== Node.js ====
 where node
@@ -24,11 +25,17 @@ if exist "server.js" (echo OK: server.js) else echo MISSING: server.js
 if exist "config.json" (echo OK: config.json) else echo MISSING: config.json
 echo.
 echo ==== Config JSON and stream settings ====
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $c=Get-Content -Raw -Encoding UTF8 'config.json' | ConvertFrom-Json; $d=Get-Content -Raw -Encoding UTF8 'data.json' | ConvertFrom-Json; Write-Host 'OK: valid JSON'; Write-Host ('Config: host='+$c.host+' / Node port='+$d.settings.port); Write-Host ('FFmpeg: '+$d.settings.ffmpegPath); Write-Host ('Nginx: '+$d.settings.nginxPath); Write-Host ('Output: '+$d.settings.outputWidth+'x'+$d.settings.outputHeight+' / '+$d.settings.outputFps+' FPS'); Write-Host ('Sources: '+@($d.sources).Count+'  Channels: '+@($d.channels).Count); if (@($d.sources).Count -gt 0) { Write-Host ('Video device: '+$d.sources[0].videoDevice); Write-Host ('Audio device: '+$d.sources[0].audioDevice) } } catch { Write-Host ('ERROR: '+$_.Exception.Message); exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $c=Get-Content -Raw -Encoding UTF8 'config.json' | ConvertFrom-Json; $d=Get-Content -Raw -Encoding UTF8 'data.json' | ConvertFrom-Json; Write-Host 'OK: valid JSON'; Write-Host ('Config: host='+$c.host+' / Node port='+$d.settings.port); Write-Host ('FFmpeg: '+$d.settings.ffmpegPath); Write-Host ('Nginx: '+$d.settings.nginxPath); Write-Host ('Sources: '+@($d.sources).Count+'  Channels: '+@($d.channels).Count); if (@($d.sources).Count -gt 0) { Write-Host ('Video device: '+$d.sources[0].videoDevice); Write-Host ('Audio device: '+$d.sources[0].audioDevice) } } catch { Write-Host ('ERROR: '+$_.Exception.Message); exit 1 }"
 echo.
 echo ==== Nginx ====
 if exist "nginx\nginx.exe" call "%ROOT%scripts\nginx-dirs.bat"
 if exist "nginx\nginx.exe" ("nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -t) else echo MISSING: nginx\nginx.exe
+echo.
+echo ==== Capture devices [DirectShow] ====
+rem نفس فحص devices.js: إصدار FFmpeg وقابلية تشغيله على ويندوز، ثم أجهزة
+rem الفيديو والصوت التي ستراها لوحة الإدارة — بأوامر طبقة الالتقاط نفسها.
+node scripts\devices.js --no-caps
+if errorlevel 1 echo WARNING: device scan failed - read the message above.
 echo.
 rem المنافذ من نفس المصدر الذي يقرأه الخادم وسكربتا التشغيل والإيقاف
 set "PORTS="

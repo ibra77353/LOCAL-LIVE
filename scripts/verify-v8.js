@@ -1,5 +1,5 @@
 'use strict';
-// فحص استقرار المشروع بعد اعتماد لوحة AmaanLive وصفحة المشاهدة الجديدة.
+// فحص استقرار المشروع بعد اعتماد لوحة PrinceLive وصفحة المشاهدة الجديدة.
 // يتحقق من: سلامة الملفات والصيغة، تطابق حقول الإعدادات بين اللوحة والبيانات،
 // عناصر اللوحة الأساسية، عقد نقاط النهاية بين صفحة المشاهدة والخادم، وسلامة البيانات.
 const fs = require('fs');
@@ -20,7 +20,12 @@ const required = [
 for (const file of required) if (!fs.existsSync(filePath(file))) failures.push(`ملف مفقود: ${file}`);
 
 // 2) صيغة JavaScript
-for (const file of ['server.js', 'web/admin.js', 'web/viewer.js']) {
+const syntaxFiles = ['server.js', 'web/admin.js', 'web/viewer.js'];
+for (const dir of ['lib/capture', 'lib/shared']) {
+  if (!fs.existsSync(filePath(dir))) continue;
+  for (const file of fs.readdirSync(filePath(dir))) if (/\.js$/i.test(file)) syntaxFiles.push(`${dir}/${file}`);
+}
+for (const file of syntaxFiles) {
   if (!fs.existsSync(filePath(file))) continue;
   const result = spawnSync(process.execPath, ['--check', filePath(file)], { encoding: 'utf8' });
   if (result.status !== 0) failures.push(`فشل فحص JavaScript: ${file}\n${result.stderr}`);
@@ -44,12 +49,12 @@ const duplicated = Object.keys(cfg).filter((key) => !bootstrapKeys.includes(key)
 if (duplicated.length) failures.push(`config.json يحمل حقولاً مكررة مع data.settings: ${duplicated.join(', ')}`);
 
 // 4) حقول قسم الإعدادات: S_KEYS في admin.js ↔ id="s_*" في admin.html ↔ بيانات data.json
-const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'theme', 'ticker', 'tickerEnabled', 'x264Preset',
+const S_KEYS = ['siteName', 'siteNameLatin', 'logo', 'phone', 'theme', 'worldCupFullPage', 'ticker', 'tickerEnabled', 'x264Preset',
   'port', 'nginxPort',
-  'x264Threads', 'x264QualityMode', 'hlsTime', 'hlsListSize', 'hlsDeleteThreshold', 'gopSeconds', 'outputWidth', 'outputHeight', 'outputFps', 'startupQueueDelayMs', 'startupConcurrency', 'autoRestartCrashed', 'maxRestarts', 'restartBackoffMs', 'hideCosmeticLogs',
+  'x264Threads', 'x264QualityMode', 'hlsTime', 'gopSeconds', 'hlsListSize', 'hlsDeleteThreshold', 'startupQueueDelayMs', 'startupConcurrency', 'autoRestartCrashed', 'maxRestarts', 'restartBackoffMs', 'hideCosmeticLogs',
   'playerMaxBufferLength', 'playerBackBufferLength', 'playerLiveSyncDuration', 'capLevelToPlayerSize',
   'cpuSaverDefault', 'ffmpegPath', 'ffprobePath', 'nginxPath', 'streamUserAgent', 'autoStartOnDemand', 'idleStopEnabled', 'idleStopMinutes',
-  'sourceFailStopMinutes', 'blockedStopMinutes', 'logoImage', 'logoPosition', 'logoSizePct', 'logoOpacityPct'];
+  'sourceFailStopMinutes', 'blockedStopMinutes'];
 const adminHtml = fs.existsSync(filePath('web/admin.html')) ? readText('web/admin.html') : '';
 const adminJs = fs.existsSync(filePath('web/admin.js')) ? readText('web/admin.js') : '';
 const declaredMatch = /const S_KEYS = \[([\s\S]*?)\];/.exec(adminJs);
@@ -64,10 +69,10 @@ const htmlSettingsKeys = [...new Set([...adminHtml.matchAll(/id="s_([A-Za-z0-9_]
 for (const key of htmlSettingsKeys) if (!S_KEYS.includes(key)) failures.push(`حقل في اللوحة لا يُقرأ من data.json: s_${key}`);
 // 4.2) اللوحة تقرأ وتحفظ الإعدادات عبر /api/settings وحدها (لا تخزين محلي ولا ملف آخر)
 if (!/async function loadSettings[\s\S]{0,500}?api\('\/settings'\)/.test(adminJs)) failures.push('web/admin.js لا يقرأ الإعدادات من /api/settings');
-if (!/async function saveSettings[\s\S]{0,900}?api\('\/settings', \{ method: 'PUT'/.test(adminJs)) failures.push('web/admin.js لا يحفظ الإعدادات في /api/settings');
+if (!/async function saveSettings[\s\S]{0,900}?api\('\/settings', \{ method: 'POST'/.test(adminJs)) failures.push('web/admin.js لا يحفظ الإعدادات في /api/settings عبر POST');
 if (/amaan_settings|settings\.json/.test(adminJs)) failures.push('web/admin.js ما زال يستخدم مصدر إعدادات قديماً');
 
-// 5) عناصر لوحة AmaanLive الأساسية
+// 5) عناصر لوحة PrinceLive الأساسية
 const adminIds = ['view-dashboard', 'view-sources', 'view-channels', 'view-settings',
   'dashGrid', 'onairStrip', 'sourcesTable', 'channelsTable', 'statusTable', 'sysStats', 'sysMsgBar',
   'logBody', 'modalOverlay', 'modalBody', 'modalSave', 'modalError', 'toast', 'brandName', 'logoutBtn', 'restoreFileInput'];
@@ -146,7 +151,7 @@ const batScripts = fs.existsSync(scriptsDir)
   : [];
 const requiredScripts = ['start.bat', 'stop.bat', 'check.bat', 'devices.bat', 'firewall.bat', 'allow-lan.bat',
   'restart-nginx.bat', 'stop-nginx.bat', 'nginx-dirs.bat', 'nginx-stop.bat', 'check-v8.bat',
-  'ports.js', 'procs.js', 'test-stop.js', 'verify-v8.js'];
+  'ports.js', 'procs.js', 'test-stop.js', 'verify-v8.js', 'devices.js'];
 for (const name of requiredScripts) if (!fs.existsSync(filePath(`scripts/${name}`))) failures.push(`سكربت مفقود: scripts/${name}`);
 // 10.1) كل ملف يقرأ المنافذ يجب أن يعتمد scripts\ports.js وحده (بلا افتراضي ثابت ثانٍ)
 const portReaders = ['scripts/start.bat', 'scripts/stop.bat', 'scripts/check.bat', 'scripts/firewall.bat', 'scripts/restart-nginx.bat'];
@@ -181,12 +186,22 @@ if (fs.existsSync(filePath('scripts/start.bat'))) {
 }
 // 10.5) الخادم يكتب معرّف عمليته ليستخدمه stop.bat
 if (serverJs && !/server\.pid/.test(serverJs)) failures.push('server.js لا يكتب run\\server.pid اللازم لتمييز عملية PrinceLive');
+// 10.6) المشروع Windows فقط: مجلدات التشغيل والالتقاط تحمل .bat و.js فقط
+for (const dir of ['scripts', 'lib/capture']) {
+  for (const file of fs.readdirSync(filePath(dir))) {
+    if (!/\.(bat|js)$/i.test(file)) failures.push(`ملف غير مدعوم في ${dir}: ${file}`);
+  }
+}
+// 10.7) أداة الأجهزة: devices.bat يفوّض إلى scripts/devices.js
+if (fs.existsSync(filePath('scripts/devices.bat')) && !readText('scripts/devices.bat').includes('scripts\\devices.js')) {
+  failures.push('scripts/devices.bat لا يستخدم أداة الأجهزة المشتركة scripts\\devices.js');
+}
 
 if (failures.length) {
-  console.error('AmaanLive verification FAILED');
+  console.error('PrinceLive verification FAILED');
   console.error(failures.join('\n'));
   process.exit(1);
 }
-console.log('AmaanLive verification PASSED');
+console.log('PrinceLive verification PASSED');
 console.log(`Sources: ${data.sources.length}; channels: ${data.channels.length}; settings fields: ${S_KEYS.length}`);
-console.log('JavaScript syntax, JSON schema, AmaanLive settings fields, admin sections, viewer API contract, and data integrity are valid.');
+console.log('JavaScript syntax, JSON schema, PrinceLive settings fields, admin sections, viewer API contract, and data integrity are valid.');

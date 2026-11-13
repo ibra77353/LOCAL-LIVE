@@ -3,9 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>لوحة التحكم — أمان لايف</title>
+<meta name="theme-color" content="#0E141B">
+<script>try{document.documentElement.setAttribute('data-theme',localStorage.getItem('pl_theme')==='light'?'light':'dark')}catch(e){document.documentElement.setAttribute('data-theme','dark')}</script>
+<title>لوحة التحكم — البرنس لايف</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="stylesheet" href="/admin.css">
+<script src="/theme.js" defer></script>
 </head>
 <body>
 
@@ -19,13 +22,18 @@
     <button class="btn btn-primary btn-block" type="submit">دخول</button>
     <p id="loginError" class="form-error"></p>
   </form>
+  <button class="theme-btn theme-btn-float" type="button" data-theme-toggle aria-label="الوضع النهاري" title="الوضع النهاري">
+    <svg class="ico-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>
+    <svg class="ico-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.5 14.2A8.6 8.6 0 0 1 9.8 3.5a8.6 8.6 0 1 0 10.7 10.7z"/></svg>
+    <span class="theme-label">الوضع النهاري</span>
+  </button>
 </div>
 
 <div id="app" class="app hidden">
   <aside class="sidebar">
     <div class="brand" id="brandBox">
       <img id="brandLogo" class="brand-logo hidden" alt="">
-      <div class="brand-name" id="brandName">أمان لايف</div>
+      <div class="brand-name" id="brandName">البرنس لايف</div>
       <div class="onair-strip" id="onairStrip">OFF AIR</div>
     </div>
     <nav class="nav">
@@ -41,6 +49,11 @@
       
     </nav>
     <div class="sidebar-foot">
+      <button class="btn btn-ghost btn-block theme-btn" type="button" data-theme-toggle aria-label="الوضع النهاري" title="الوضع النهاري">
+        <svg class="ico-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>
+        <svg class="ico-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.5 14.2A8.6 8.6 0 0 1 9.8 3.5a8.6 8.6 0 1 0 10.7 10.7z"/></svg>
+        <span class="theme-label">الوضع النهاري</span>
+      </button>
       <a href="/" target="_blank" class="btn btn-ghost btn-block">صفحة المشاهدين ↗</a>
       <button id="logoutBtn" class="btn btn-ghost btn-block">تسجيل الخروج</button>
     </div>
@@ -58,7 +71,7 @@
       <div class="table-wrap">
         <table class="table" id="statusTable">
           <thead><tr>
-            <th>القناة</th><th>الحالة</th><th>المشاهدون</th><th>البيانات</th><th>إعادة التشغيل</th><th>آخر الأخطاء</th><th>إجراءات</th>
+            <th>القناة</th><th>الحالة</th><th>المشاهدون</th><th>البيانات</th><th>معدّل البت (فعلي / مضبوط)</th><th>إعادة التشغيل</th><th>آخر الأخطاء</th><th>إجراءات</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -86,9 +99,6 @@
       </div>
     </section>
 
-    <!-- ===== Online Channels ===== -->
-    
-
     <!-- ===== Sources ===== -->
     <section id="view-sources" class="view hidden">
       <header class="view-head"><h1>مصادر البث</h1>
@@ -101,153 +111,171 @@
       </div>
     </section>
 
-    <!-- ===== IPTV (مكتبة القنوات + Xtream Codes + اشتراك MH في نافذة واحدة) =====
-         الدمج واجهةٌ فقط: محتوى الأقسام الثلاثة القديمة نُقل كما هو بنفس المعرّفات
-         والدوال، فكل منطق admin.js يعمل دون أي تعديل. -->
-    
-
-    <!-- ===== Scheduler ===== -->
-    
-
-    <!-- ===== الإعلانات ===== -->
-    
-
-    <!-- ===== World Cup ===== -->
-    
-
     <!-- ===== Settings ===== -->
     <section id="view-settings" class="view hidden">
       <header class="view-head"><h1>الإعدادات العامة</h1>
         <button class="btn btn-primary" onclick="saveSettings()">حفظ الإعدادات</button></header>
-      <div class="grid-2">
+
+      <div class="settings-grid">
         <div class="card">
           <h3>المنصة</h3>
-          <label>اسم المنصة<input class="input" id="s_siteName"></label>
-          <label>الاسم اللاتيني<input class="input" id="s_siteNameLatin"></label>
+          <div class="fields-grid">
+            <label>اسم المنصة<input class="input" id="s_siteName"></label>
+            <label>الاسم اللاتيني<input class="input" id="s_siteNameLatin"></label>
+          </div>
           <label>الشعار
             <span class="with-browse">
               <input class="input" id="s_logo" placeholder="srv/uploads/logo.png">
               <button class="btn" onclick="browseUpload('s_logo')">استعراض / رفع</button>
             </span></label>
-          <label>رقم التواصل (يظهر تحت العنوان)<input class="input" id="s_phone"></label>
+          <div class="fields-grid">
+            <label>رقم التواصل<input class="input" id="s_phone"></label>
+            <label>الثيم
+              <select class="input" id="s_theme">
+                <option value="default">افتراضي</option>
+                <option value="worldcup">كأس العالم</option>
+              </select></label>
+          </div>
+          <label class="switch-row"><input type="checkbox" id="s_worldCupFullPage"> تبويب «الجداول والنتائج» في صفحة المشاهدين (الدوري الإسباني والإنجليزي والسعودي)</label>
           <label class="switch-row"><input type="checkbox" id="s_tickerEnabled"> تفعيل الشريط الإخباري</label>
           <label>نص الشريط الإخباري<textarea class="input" id="s_ticker" rows="2"></textarea></label>
-          <label>الثيم
-            <select class="input" id="s_theme">
-              <option value="default">افتراضي</option>
-              <option value="worldcup">كأس العالم (worldcup)</option>
-            </select></label>
         </div>
-        <div class="card">
-          <h3>الأداء والبث</h3>
-          <label>x264 Preset
-            <select class="input" id="s_x264Preset">
-              <option>ultrafast</option><option>superfast</option><option>veryfast</option>
-              <option>faster</option><option>fast</option><option>medium</option><option>slow</option>
-            </select></label>
-          <label>عدد الـ Threads لكل قناة<input class="input" id="s_x264Threads" type="number" min="1" max="16"></label>
-          <label class="switch-row"><input type="checkbox" id="s_x264QualityMode"> وضع الجودة: ضغط أفضل واستقرار أعلى (يزيد تأخير البث ثوانٍ)</label>
-          <p class="sub" style="margin-top:-4px">يعطّل «البث الفوري» (zerolatency) فيستفيد المرمّز من B-frames وlookahead: نفس الجودة بحجم بيانات أقل بـ10–15٪ تقريباً، وجودة أثبت في المشاهد الصعبة. مناسب عندما يكون الاستقرار أهم من التأخير. يُطبَّق على القنوات عند تشغيلها التالي.</p>
-          <label>طول مقطع HLS بالثواني (hls_time)<input class="input" id="s_hlsTime" type="number" min="1" max="10"></label>
-          <label>عدد المقاطع في القائمة (hls_list_size)<input class="input" id="s_hlsListSize" type="number" min="3" max="20"></label>
-          <label>عدد المقاطع المحفوظة قبل الحذف (hls_delete_threshold)<input class="input" id="s_hlsDeleteThreshold" type="number" min="1" max="100"></label>
-          <label>GOP بالثواني<input class="input" id="s_gopSeconds" type="number" min="1" max="10"></label>
-          <label>عرض الخرج بالبكسل<input class="input" id="s_outputWidth" type="number" min="160" max="3840" step="16"></label>
-          <label>ارتفاع الخرج بالبكسل<input class="input" id="s_outputHeight" type="number" min="120" max="2160" step="16"></label>
-          <label>معدل إطارات الخرج (FPS)<input class="input" id="s_outputFps" type="number" min="1" max="60"></label>
-          <p class="sub" style="margin-top:-4px">أبعاد ومعدل الإطارات الافتراضية للترميز؛ جودة القناة الواحدة تتجاوز الارتفاع، ومعدل الإطارات المضبوط في القناة يتجاوز هذه القيمة.</p>
-          <label>تأخير طابور التشغيل عند الإقلاع (مللي ثانية)<input class="input" id="s_startupQueueDelayMs" type="number" min="0" step="1000"></label>
-          <label>عدد القنوات التي تُشغَّل معاً عند الإقلاع<input class="input" id="s_startupConcurrency" type="number" min="1" max="20"></label>
-          <p class="sub" style="margin-top:-4px">1 = تشغيل تسلسلي (الأكثر أماناً لكرت التقاط واحد). ارفعه فقط عندما تكون المصادر شبكية ومتصلة بسرعة كافية، فبدء عدة تحويلات FFmpeg في اللحظة نفسها يرفع استهلاك المعالج عند الإقلاع.</p>
-          <label class="switch-row"><input type="checkbox" id="s_autoRestartCrashed"> إعادة تشغيل القناة تلقائياً عند الانهيار</label>
-          <label>الحد الأقصى لمحاولات إعادة التشغيل التلقائي<input class="input" id="s_maxRestarts" type="number" min="0" max="100"></label>
-          <label>المهلة بين محاولات إعادة التشغيل (مللي ثانية)<input class="input" id="s_restartBackoffMs" type="number" min="1000" max="120000" step="500"></label>
-          <label class="switch-row"><input type="checkbox" id="s_hideCosmeticLogs"> إخفاء التحذيرات التجميلية من سجل القناة</label>
-          <p class="sub" style="margin-top:-4px">يخفي سطوراً لا تعني فشلاً: «deprecated pixel format»، «Guessed Channel Layout»، وإنذارات MJPEG عند إيقاف البطاقة. تُبقى الأخطاء الحقيقية (الجهاز مشغول، تعذر الفتح، انقطاع المصدر) ظاهرة دائماً.</p>
-          <label class="switch-row"><input type="checkbox" id="s_autoStartOnDemand"> تشغيل القنوات عند الطلب (مع أول مشاهد)</label>
-          <p class="sub" style="margin-top:-4px">عند التعطيل لا تُشغَّل القناة تلقائياً بفتح المشاهد لها، ويبقى التشغيل من اللوحة فقط.</p>
-          <label class="switch-row"><input type="checkbox" id="s_idleStopEnabled"> إيقاف القنوات المستمرة تلقائياً عند عدم وجود مشاهدين (توفير الموارد)</label>
-          <label>إيقاف بعد (دقائق بلا مشاهدين)<input class="input" id="s_idleStopMinutes" type="number" min="1" max="60"></label>
-          <p class="sub" style="margin-top:-4px">تنطبق فقط على القنوات المستمرة (بلا جدولة وقتية) والمفعّلة. تعمل القناة تلقائياً من جديد فور فتح أحد المشاهدين لها.</p>
-          <label>إيقاف عند فشل تام في المصدر — إعادة المحاولة بعد (دقائق)<input class="input" id="s_sourceFailStopMinutes" type="number" min="1" max="120"></label>
-          <p class="sub" style="margin-top:-4px">عند فشل تشغيل القناة بسبب مشكلة في المصدر، تتوقف هذه المدة ثم يُعاد تشغيلها تلقائياً.</p>
-          <label>إيقاف عند الحظر / عدم استجابة سيرفر IPTV — إعادة المحاولة بعد (دقائق)<input class="input" id="s_blockedStopMinutes" type="number" min="1" max="10000"></label>
-          <p class="sub" style="margin-top:-4px">عند رفض المصدر (403) أو عدم استجابته، يحاول النظام كشف الطريقة الصحيحة وإصلاح المصدر تلقائياً؛ وإن فشلت كل المحاولات يتوقف هذه المدة ثم يعيد المحاولة.</p>
-        </div>
+
         <div class="card">
           <h3>المشغّل (صفحة المشاهدين)</h3>
-          <label>حجم البفر الأقصى بالثواني<input class="input" id="s_playerMaxBufferLength" type="number" min="5" max="120"></label>
-          <label>البفر الخلفي بالثواني<input class="input" id="s_playerBackBufferLength" type="number" min="0" max="120"></label>
-          <label>تأخير البث المباشر بالثواني (live sync)<input class="input" id="s_playerLiveSyncDuration" type="number" min="2" max="60"></label>
-          <p class="sub" style="margin-top:-4px">يُرفَع تلقائياً إلى (طول مقطع HLS × 2 + 1) كحد أدنى — قيمة أقصر تجعل المشغّل يلتصق بحافة البث فيتقطع.</p>
-          <label class="switch-row"><input type="checkbox" id="s_capLevelToPlayerSize"> منع اختيار جودة أعلى من حجم المشغّل</label>
-          <label class="switch-row"><input type="checkbox" id="s_cpuSaverDefault"> تفعيل وضع توفير المعالج افتراضياً</label>
+          <div class="fields-grid">
+            <label>حجم البفر الأقصى (ث)<input class="input" id="s_playerMaxBufferLength" type="number" min="5" max="120"></label>
+            <label>البفر الخلفي (ث)<input class="input" id="s_playerBackBufferLength" type="number" min="0" max="120"></label>
+            <label>تأخير البث المباشر (ث)<input class="input" id="s_playerLiveSyncDuration" type="number" min="2" max="60"></label>
+          </div>
+          <p class="field-note">الحد الأدنى للتأخير = طول مقطع HLS × 2 + 1.</p>
+          <label class="switch-row"><input type="checkbox" id="s_capLevelToPlayerSize"> منع جودة أعلى من حجم المشغّل</label>
+          <label class="switch-row"><input type="checkbox" id="s_cpuSaverDefault"> توفير المعالج افتراضياً</label>
         </div>
-        <!-- شعار القنوات: معطَّل مؤقتاً بالكامل (من packages/core/src/ffmpeg.js:
-             LOGO_FEATURE_ENABLED) لضمان أفضل أداء بث دون مشاكل، بعد بلاغات
-             تهنيج/تجمّد وتضارب محتوى بين الأجهزة عند تفعيله. أُخفيت عناصر
-             التحكّم هنا لتطابق الواجهة سلوك الخادم. لإعادة التفعيل مستقبلاً:
-             أعد هذا القسم واضبط LOGO_FEATURE_ENABLED=true. -->
-        <div class="card" style="display:none">
-          <h3>شعار القنوات</h3>
-          <p class="hint">إعدادات عامة تنطبق على شعار كل القنوات المُطبوع فوق البث. الشعار موحّد لكل القنوات؛ ويُفعّل لكل قناة من خيار «تفعيل الشعار» في نافذة القناة.</p>
-          <label>صورة الشعار (موحّدة لجميع القنوات)
-            <span class="with-browse">
-              <input class="input" id="s_logoImage" placeholder="srv/uploads/logo.png">
-              <button class="btn" type="button" onclick="browseUpload('s_logoImage','image/png')">استعراض / رفع</button>
-            </span></label>
-          <label>الموقع
-            <select class="input" id="s_logoPosition">
-              <option value="top-right">أعلى اليمين</option>
-              <option value="top-left">أعلى اليسار</option>
-              <option value="bottom-right">أسفل اليمين</option>
-              <option value="bottom-left">أسفل اليسار</option>
-            </select></label>
-          <label>الحجم (٪ من عرض الشاشة): <span id="logoSizeVal" dir="ltr"></span>
-            <input type="range" id="s_logoSizePct" min="2" max="40" step="1" oninput="document.getElementById('logoSizeVal').textContent=this.value+'٪'"></label>
-          <label>الشفافية (٪): <span id="logoOpacityVal" dir="ltr"></span>
-            <input type="range" id="s_logoOpacityPct" min="0" max="100" step="5" oninput="document.getElementById('logoOpacityVal').textContent=this.value+'٪'"></label>
+
+        <div class="card span-2">
+          <h3>الأداء والبث</h3>
+          <div class="field-groups">
+            <div class="field-group">
+              <h4>الترميز والجودة</h4>
+              <div class="fields-grid">
+                <label>x264 Preset
+                  <select class="input" id="s_x264Preset">
+                    <option>ultrafast</option><option>superfast</option><option>veryfast</option>
+                    <option>faster</option><option>fast</option><option>medium</option><option>slow</option>
+                  </select></label>
+                <label>Threads لكل قناة<input class="input" id="s_x264Threads" type="number" min="1" max="16"></label>
+              </div>
+              <label class="switch-row"><input type="checkbox" id="s_x264QualityMode"> وضع الجودة: ضغط أفضل واستقرار أعلى (يزيد تأخير البث ثوانٍ)</label>
+              <p class="field-note">يعطّل «البث الفوري» (zerolatency) فيستفيد المرمّز من B-frames وlookahead: نفس الجودة بحجم بيانات أقل بـ10–15٪ تقريباً. يُطبَّق فوراً على القنوات النشطة عند الحفظ.</p>
+              <p class="field-note">معدّل البت (Bitrate) يُضبط لكل قناة على حدة من قسم «القنوات»، ويُطبَّق عند التشغيل التالي للقناة.</p>
+            </div>
+
+            <div class="field-group">
+              <h4>مقاطع HLS</h4>
+              <div class="fields-grid">
+                <label>طول المقطع (ث)<input class="input" id="s_hlsTime" type="number" min="1" max="10"></label>
+                <label>طول الـGOP (ث)<input class="input" id="s_gopSeconds" type="number" min="1" max="10"></label>
+                <label>المقاطع في القائمة<input class="input" id="s_hlsListSize" type="number" min="3" max="20"></label>
+                <label>المقاطع المحفوظة قبل الحذف<input class="input" id="s_hlsDeleteThreshold" type="number" min="1" max="100"></label>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <h4>الإقلاع وإعادة التشغيل</h4>
+              <div class="fields-grid">
+                <label>تأخير التشغيل (مللي ث)<input class="input" id="s_startupQueueDelayMs" type="number" min="0" step="1000"></label>
+                <label>قنوات تُشغَّل معاً<input class="input" id="s_startupConcurrency" type="number" min="1" max="20"></label>
+                <label>أقصى محاولات إعادة التشغيل<input class="input" id="s_maxRestarts" type="number" min="0" max="100"></label>
+                <label>المهلة بين المحاولات (مللي ث)<input class="input" id="s_restartBackoffMs" type="number" min="1000" max="120000" step="500"></label>
+              </div>
+              <p class="field-note">1 = تشغيل تسلسلي، وهو الأفضل لكرت التقاط واحد.</p>
+              <label class="switch-row"><input type="checkbox" id="s_autoRestartCrashed"> إعادة التشغيل بعد الانهيار</label>
+            </div>
+
+            <div class="field-group">
+              <h4>التشغيل عند الطلب وتوفير الموارد</h4>
+              <div class="fields-grid">
+                <label>إيقاف بعد (دقائق بلا مشاهدين)<input class="input" id="s_idleStopMinutes" type="number" min="1" max="60"></label>
+              </div>
+              <label class="switch-row"><input type="checkbox" id="s_autoStartOnDemand"> تشغيل القنوات عند الطلب</label>
+              <p class="field-note">عند التعطيل يبقى التشغيل من اللوحة فقط.</p>
+              <label class="switch-row"><input type="checkbox" id="s_idleStopEnabled"> إيقاف القنوات بلا مشاهدين</label>
+              <p class="field-note">للقنوات المستمرة فقط، وتعود عند أول مشاهد.</p>
+            </div>
+
+            <div class="field-group">
+              <h4>التعافي من أعطال المصدر</h4>
+              <div class="fields-grid">
+                <label>بعد فشل المصدر (دقائق)<input class="input" id="s_sourceFailStopMinutes" type="number" min="1" max="120"></label>
+                <label>بعد حظر IPTV (دقائق)<input class="input" id="s_blockedStopMinutes" type="number" min="1" max="120"></label>
+              </div>
+              <p class="field-note">يتوقف ثم يُعاد التشغيل تلقائياً؛ وعند الرفض (403) يحاول النظام إصلاح المصدر أولاً.</p>
+            </div>
+
+            <div class="field-group">
+              <h4>السجل</h4>
+              <label class="switch-row"><input type="checkbox" id="s_hideCosmeticLogs"> إخفاء التحذيرات التجميلية</label>
+              <p class="field-note">تُبقي الأخطاء الحقيقية ظاهرة دائماً.</p>
+            </div>
+          </div>
         </div>
+
         <div class="card">
           <h3>المنافذ والشبكة</h3>
-          <p class="hint">إن حدث تعارض على المنفذ (خطأ 80 مشغول)، غيّر منفذ Nginx هنا. منفذ النظام الداخلي (Node) نادراً ما يحتاج تغييراً.</p>
-          <label>منفذ Nginx (المنفذ الذي يفتحه المشاهدون، الافتراضي 80)
-            <input class="input" id="s_nginxPort" type="number" min="1" max="65535" placeholder="80"></label>
-          <label>منفذ النظام الداخلي Node (الافتراضي 3000)
-            <input class="input" id="s_port" type="number" min="1" max="65535" placeholder="3000"></label>
-          <button class="btn" onclick="regenerateNginx()">تحديث ملف nginx.conf بالمنافذ الحالية</button>
-          <p class="hint">بعد تغيير المنافذ: احفظ الإعدادات، اضغط الزر أعلاه لتحديث ملف الإعداد، ثم أعد تشغيل النظام و Nginx. إن غيّرت منفذ Nginx فالعنوان يصبح مثل <span dir="ltr">http://SERVER_IP:المنفذ</span></p>
+          <div class="fields-grid">
+            <label>منفذ Nginx (افتراضي 80)<input class="input" id="s_nginxPort" type="number" min="1" max="65535" placeholder="80"></label>
+            <label>منفذ النظام الداخلي (افتراضي 3000)<input class="input" id="s_port" type="number" min="1" max="65535" placeholder="3000"></label>
+          </div>
+          <button class="btn" onclick="regenerateNginx()">تحديث ملف nginx.conf</button>
+          <p class="field-note">بعد التغيير: احفظ الإعدادات، ثم اضغط الزر، ثم أعد تشغيل النظام و Nginx.</p>
+          <div class="fields-grid" style="margin-top:8px">
+            <button class="btn" onclick="nginxAction('test')">اختبار مسار Nginx</button>
+            <button class="btn" onclick="nginxAction('restart')">إعادة تشغيل Nginx</button>
+          </div>
+          <p class="field-note" id="nginxPathNote"></p>
+          <div class="lan-block">
+            <h4>الوصول من الهاتف (نفس شبكة Wi-Fi)</h4>
+            <div id="lanLinks"></div>
+          </div>
         </div>
+
         <div class="card">
           <h3>المسارات</h3>
-          <label>مسار FFmpeg<input class="input" id="s_ffmpegPath"></label>
-          <label>مسار FFprobe<input class="input" id="s_ffprobePath"></label>
-          <label>مسار Nginx<input class="input" id="s_nginxPath"></label>
-          <label>User-Agent للبث (لقنوات Xtream/IPTV التي ترفض بـ 403)<input class="input" id="s_streamUserAgent" dir="ltr" placeholder="VLC/3.0.20 LibVLC/3.0.20"></label>
-          
+          <div class="fields-grid">
+            <label>مسار FFmpeg<input class="input" id="s_ffmpegPath"></label>
+            <label>مسار FFprobe<input class="input" id="s_ffprobePath"></label>
+            <label>مسار Nginx<input class="input" id="s_nginxPath"></label>
+          </div>
+          <label>User-Agent (لمصادر ترفض بـ 403)<input class="input" id="s_streamUserAgent" dir="ltr" placeholder="VLC/3.0.20 LibVLC/3.0.20"></label>
         </div>
+
         <div class="card">
           <h3>الأمان</h3>
-          <p class="hint">تُحفظ كلمة المرور مشفّرة (scrypt + salt) في config.json، وتُغلق بعد تغييرها الجلسات المفتوحة على الأجهزة الأخرى.</p>
-          <label>كلمة المرور الحالية<input class="input" id="pw_current" type="password" autocomplete="current-password"></label>
-          <label>كلمة المرور الجديدة<input class="input" id="pw_next" type="password" autocomplete="new-password"></label>
+          <div class="fields-grid">
+            <label>كلمة المرور الحالية<input class="input" id="pw_current" type="password" autocomplete="current-password"></label>
+            <label>كلمة المرور الجديدة<input class="input" id="pw_next" type="password" autocomplete="new-password"></label>
+          </div>
           <button class="btn" onclick="changePassword()">تغيير كلمة المرور</button>
+          <p class="field-note">تُحفظ مشفّرة (scrypt)، وتُغلق الجلسات الأخرى بعد التغيير.</p>
         </div>
+
         <div class="card">
           <h3>النسخ الاحتياطي</h3>
-          <p class="hint">احفظ نسخة من كل الإعدادات (القنوات، المصادر، الإعلانات، الصور، إعدادات النظام) في ملف واحد، أو استرجع نسخة سابقة.</p>
+          <p class="field-note">نسخة واحدة تشمل القنوات والمصادر والإعلانات والإعدادات.</p>
           <button class="btn btn-primary" onclick="downloadBackup()">⬇ حفظ نسخة احتياطية</button>
           <hr class="sep">
-          <label>استرجاع من ملف نسخة احتياطية (.zip)
+          <label>استرجاع من ملف (.zip)
             <span class="with-browse">
               <input class="input" id="restoreFileName" placeholder="اختر ملف النسخة..." readonly>
               <button class="btn" onclick="document.getElementById('restoreFileInput').click()">اختيار ملف</button>
             </span>
           </label>
           <input type="file" id="restoreFileInput" accept=".zip" style="display:none" onchange="restoreFileChosen(this)">
-          <button class="btn btn-danger" id="restoreBtn" onclick="doRestore()" disabled>♻ استرجاع النسخة المختارة</button>
-          <p class="hint" style="color:var(--accent)">تنبيه: الاسترجاع يستبدل كل الإعدادات الحالية ويعيد تشغيل النظام.</p>
+          <button class="btn btn-danger" id="restoreBtn" onclick="doRestore()" disabled>♻ استرجاع النسخة</button>
+          <p class="field-note warn">الاسترجاع يستبدل كل الإعدادات ويعيد تشغيل النظام.</p>
         </div>
+
       </div>
     </section>
 
@@ -273,6 +301,7 @@
 <div id="toast" class="toast hidden"></div>
 <footer class="admin-footer" id="adminFooter"></footer>
 
+<script src="/shared.js"></script>
 <script src="/admin.js"></script>
 </body>
 </html>
