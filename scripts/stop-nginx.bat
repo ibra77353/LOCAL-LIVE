@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-rem إيقاف Nginx الخاص بـ PrinceLive فقط (يُفوَّض إلى scripts\nginx-stop.bat).
+rem Stops only the PrinceLive Nginx (delegated to scripts\nginx-stop.bat).
 set "ROOT=%~dp0"
 if not exist "%ROOT%server.js" (
   if exist "%ROOT%..\server.js" (

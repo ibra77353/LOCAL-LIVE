@@ -1,10 +1,10 @@
 'use strict';
-// مصدر المنافذ الوحيد لكل سكربتات Windows (start/stop/check/firewall) والخادم.
-// يتبع نفس ترتيب الأولوية المستخدم في server.js حتى لا يختلف المنفذ الذي يوقف
-// السكربت خادماً يعمل على منفذ آخر:
-//   Node:  PORT (بيئة) ← data.settings.port ← config.port ← 3001
-//   Nginx: data.settings.nginxPort ← config.nginxPort ← 80
-// المخرجات: "<nginxPort> <nodePort>" في سطر واحد تقرأه ملفات BAT بـ tokens=1,2.
+// Single port source for every Windows script (start/stop/check/firewall) and for the server.
+// Follows the same priority order as server.js so the port a script stops never differs
+// from the port the server actually listens on:
+//   Node:  PORT (env) <- data.settings.port <- config.port <- 3001
+//   Nginx: data.settings.nginxPort <- config.nginxPort <- 80
+// Output: "<nginxPort> <nodePort>" on one line, read by the BAT files with tokens=1,2.
 const fs = require('fs');
 const path = require('path');
 const root = path.resolve(__dirname, '..');
@@ -16,7 +16,7 @@ function readJson(file) {
     return null;
   }
 }
-// نفس قاعدة server.js: أي قيمة غير رقمية أو خارج نطاق المنافذ تُستبدل بالافتراضي.
+// Same rule as server.js: any non-numeric or out-of-range value falls back to the default.
 function toPort(value, fallback) {
   const n = Number(value);
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : fallback;
@@ -26,7 +26,7 @@ const data = readJson('data.json');
 const settings = data && data.settings ? data.settings : null;
 const cfg = readJson('config.json') || {};
 
-// عند تعذّر قراءة data.json يعيد server.js إنشاءه من config.json، فنقرأ config هنا أيضاً.
+// When data.json cannot be read, server.js recreates it from config.json, so read config here too.
 const nginxPort = toPort(settings ? settings.nginxPort : cfg.nginxPort, toPort(cfg.nginxPort, 80));
 const envPort = String(process.env.PORT || '').trim();
 const nodePort = envPort

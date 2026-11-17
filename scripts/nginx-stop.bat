@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-rem يُوقف عمليات Nginx التي تخص هذا المشروع فقط، وينتظر خروجها.
-rem التمييز يتم بمسار nginx\nginx.exe داخل المشروع (scripts\procs.js) وليس بالاسم،
-rem حتى لا يتأثر أي Nginx آخر يعمل على الجهاز.
-rem رموز الخروج: 0 = أُوقف أو لم يكن يعمل، 1 = ما زال يعمل، 2 = nginx.exe غير موجود.
+rem Stops only the Nginx processes that belong to this project, then waits for them to exit.
+rem Processes are identified by the project's nginx\nginx.exe path (scripts\procs.js), not by name,
+rem so any other Nginx running on the machine is left alone.
+rem Exit codes: 0 = stopped or was not running, 1 = still running, 2 = nginx.exe not found.
 set "ROOT=%~dp0"
 if not exist "%ROOT%..\server.js" (
   if not exist "%ROOT%server.js" (
@@ -22,8 +22,8 @@ if not defined NGINX_PIDS (
 )
 echo Stopping Prince Live Nginx [PIDs:!NGINX_PIDS!]...
 
-rem nginx -s quit يقرأ المعرّف من nginx\logs\nginx.pid، فنستخدمه فقط عندما يكون
-rem هذا المعرّف من عمليات المشروع، وإلا فقد نرسل الإشارة إلى عملية أخرى.
+rem nginx -s quit reads the id from nginx\logs\nginx.pid, so use it only when that
+rem id belongs to one of this project's processes; otherwise the signal may hit another process.
 set "NGINX_PIDFILE="
 if exist "nginx\logs\nginx.pid" for /f "usebackq delims=" %%P in ("nginx\logs\nginx.pid") do set "NGINX_PIDFILE=%%P"
 set "QUIT_OK="

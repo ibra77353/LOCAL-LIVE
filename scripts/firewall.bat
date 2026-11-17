@@ -2,30 +2,30 @@
 chcp 65001 >nul
 setlocal EnableExtensions
 rem ============================================================
-rem  PrinceLive - إعداد جدار الحماية تلقائياً (Windows 10/11)
-rem  يقرأ منافذ البث والمشاهدة من data.json (ومن config.json كاحتياط) ثم يفتحها.
-rem    firewall.bat          - السماح على الشبكات الخاصة والمكتبية (الافتراضي)
-rem    firewall.bat public   - السماح على كل الشبكات بما فيها العامة
-rem    firewall.bat remove   - حذف قواعد PrinceLive من جدار الحماية
-rem    firewall.bat quiet    - تشغيل تلقائي (بلا توقف في النهاية) يستخدمه start.bat
+rem  PrinceLive - automatic Windows Firewall setup (Windows 10/11)
+rem  Reads the viewer/streaming ports from data.json (config.json as fallback) and opens them.
+rem    firewall.bat          - Allow on private and domain networks (default)
+rem    firewall.bat public   - Allow on every network, including public
+rem    firewall.bat remove   - Remove the PrinceLive firewall rules
+rem    firewall.bat quiet    - Unattended run (no pause at the end), used by start.bat
 rem ============================================================
 set "ROOT=%~dp0"
 if exist "%ROOT%..\server.js" for %%I in ("%ROOT%..") do set "ROOT=%%~fI\"
 cd /d "%ROOT%"
 
-rem ---- طلب صلاحيات المسؤول تلقائياً ----
+rem ---- Request administrator rights automatically ----
 net session >nul 2>&1
 if not "%errorlevel%"=="0" (
-  echo يتم طلب صلاحيات المسؤول لإعداد جدار الحماية...
+  echo Requesting administrator rights to set up the firewall...
   powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs"
   exit /b
 )
 
-rem ---- قراءة المنافذ الفعلية من الإعدادات ----
+rem ---- Read the actual ports from the settings ----
 set "PORTS="
 for /f "delims=" %%P in ('node scripts\ports.js') do set "PORTS=%%P"
 if not defined PORTS (
-  echo تعذر قراءة المنافذ من الإعدادات. تأكد من تثبيت Node.js وإضافته إلى PATH.
+  echo Could not read the ports from the settings. Make sure Node.js is installed and in PATH.
   pause
   exit /b 1
 )
@@ -43,43 +43,43 @@ if /i "%~1"=="remove" goto REMOVE
 set "PROFILES=private,domain"
 if /i "%~1"=="public" set "PROFILES=any"
 
-echo منفذ المشاهدة (HTTP/HLS): %NGINX_PORT%
-echo منفذ لوحة الإدارة/API: %NODE_PORT%
+echo Viewer port (HTTP/HLS): %NGINX_PORT%
+echo Admin panel/API port: %NODE_PORT%
 
-rem حذف القواعد القديمة أولاً ليكون التشغيل قابلاً للتكرار دون تكرار القواعد
+rem Delete the old rules first so the script can run again without duplicating rules
 netsh advfirewall firewall delete rule name="%RULE_HTTP%" >nul 2>&1
 netsh advfirewall firewall delete rule name="%RULE_NODE%" >nul 2>&1
 netsh advfirewall firewall delete rule name="PrinceLive HTTP LAN Port %NGINX_PORT%" >nul 2>&1
 
 netsh advfirewall firewall add rule name="%RULE_HTTP%" dir=in action=allow protocol=TCP localport=%NGINX_PORT% profile=%PROFILES% enable=yes >nul
 if errorlevel 1 (
-  echo تعذر فتح منفذ المشاهدة %NGINX_PORT%.
+  echo Could not open the viewer port %NGINX_PORT%.
   pause
   exit /b 1
 )
 netsh advfirewall firewall add rule name="%RULE_NODE%" dir=in action=allow protocol=TCP localport=%NODE_PORT% profile=%PROFILES% enable=yes >nul
 if errorlevel 1 (
-  echo تعذر فتح منفذ لوحة الإدارة %NODE_PORT%.
+  echo Could not open the admin panel port %NODE_PORT%.
   pause
   exit /b 1
 )
 
 echo.
-echo تم إعداد جدار الحماية بنجاح (الملفات: %PROFILES%).
-echo روابط المشاهدة من أجهزة الشبكة:
+echo Firewall rules added successfully (profiles: %PROFILES%).
+echo Viewing links from other devices on the network:
 for /f "tokens=2 delims=:" %%I in ('ipconfig ^| findstr /c:"IPv4"') do (
   setlocal EnableDelayedExpansion
   set "IP=%%I"
   set "IP=!IP: =!"
-  echo    http://!IP!:%NGINX_PORT%/          واجهة المشاهدة
-  echo    http://!IP!:%NODE_PORT%/admin     لوحة الإدارة
+  echo    http://!IP!:%NGINX_PORT%/          viewer
+  echo    http://!IP!:%NODE_PORT%/admin     admin panel
   endlocal
 )
 echo.
 set "PUBLICNET="
 for /f "delims=" %%C in ('powershell -NoProfile -Command "Get-NetConnectionProfile ^| Select-Object -ExpandProperty NetworkCategory"') do if /i "%%C"=="Public" set "PUBLICNET=1"
-if defined PUBLICNET echo تنبيه: إحدى شبكاتك مصنّفة عامة ولن تتصل أجهزتها. شغّل firewall.bat public للسماح عليها.
-echo لإلغاء السماح: firewall.bat remove
+if defined PUBLICNET echo WARNING: one of your networks is set to Public, so its devices cannot connect. Run firewall.bat public to allow it.
+echo To remove the rules: firewall.bat remove
 if not defined QUIET pause
 exit /b 0
 
@@ -87,6 +87,6 @@ exit /b 0
 netsh advfirewall firewall delete rule name="%RULE_HTTP%" >nul 2>&1
 netsh advfirewall firewall delete rule name="%RULE_NODE%" >nul 2>&1
 netsh advfirewall firewall delete rule name="PrinceLive HTTP LAN Port %NGINX_PORT%" >nul 2>&1
-echo تم حذف قواعد PrinceLive من جدار الحماية.
+echo PrinceLive firewall rules removed.
 if not defined QUIET pause
 exit /b 0

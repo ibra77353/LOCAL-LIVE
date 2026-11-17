@@ -1,10 +1,10 @@
 'use strict';
-// اختبار يحاكي ما يفعله scripts/stop.bat بالضبط:
-//   1) يقرأ المنفذ من data.json (نفس مصدر ports.js)
-//   2) يقرأ رمز التحكّم المحلي من run/control.token
-//   3) يرسل POST /api/stop مع ترويسة X-Control-Token ويتحقق من النتيجة
-// ونتحقق أيضاً أن الطلب بدون الرمز يُرفض بـ 401، وإلا فالاختبار لا يثبت شيئاً.
-// الاستخدام: node scripts/test-stop.js [port]   — رمز الخروج: 0 نجاح، 1 فشل.
+// Test that mirrors exactly what scripts/stop.bat does:
+//   1) read the port from data.json (same source as ports.js)
+//   2) read the local control token from run/control.token
+//   3) send POST /api/stop with the X-Control-Token header and verify the result
+// We also verify a request without the token is rejected with 401, otherwise the test proves nothing.
+// Usage: node scripts/test-stop.js [port]   - exit code: 0 pass, 1 fail.
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -22,8 +22,8 @@ function readJson(file) {
 }
 
 const settings = readJson('data.json').settings || {};
-// نفس ترتيب أولوية server.js (PORT ثم data.settings.port) حتى يختبر السكربت المنفذ
-// الذي يستمع عليه الخادم فعلياً، لا منفذاً افتراضياً مختلفاً.
+// Same priority order as server.js (PORT then data.settings.port) so the script tests the port
+// the server actually listens on, not a different default.
 const PORT = Number(process.argv[2]) || Number(process.env.PORT || settings.port) || 3001;
 
 function stopRequest(token) {
@@ -39,7 +39,7 @@ function stopRequest(token) {
         resolve({ status: res.statusCode, body, json });
       });
     });
-    req.on('timeout', () => req.destroy(new Error('انتهت مهلة الاتصال')));
+    req.on('timeout', () => req.destroy(new Error('connection timed out')));
     req.on('error', err => resolve({ error: err.message }));
     req.end();
   });
@@ -47,33 +47,33 @@ function stopRequest(token) {
 
 (async () => {
   const failures = [];
-  console.log(`1) المنفذ المستخدم: ${PORT} (من data.json وconfig.json كما في ports.js)`);
+  console.log(`1) Port in use: ${PORT} (from data.json and config.json as in ports.js)`);
 
   let token = '';
   try { token = fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch {}
   if (!token) {
-    console.error(`FAIL: تعذر قراءة run/control.token — شغّل الخادم أولاً (scripts\\start.bat).`);
+    console.error(`FAIL: could not read run/control.token - start the server first (scripts\\start.bat).`);
     process.exit(1);
   }
-  console.log(`2) قُرئ رمز التحكّم المحلي من run/control.token (${token.length} حرفاً)`);
+  console.log(`2) Local control token read from run/control.token (${token.length} chars)`);
 
   const anonymous = await stopRequest('');
   if (anonymous.error) {
-    console.error(`FAIL: الخادم لا يستجيب على ${HOST}:${PORT} — ${anonymous.error}`);
+    console.error(`FAIL: the server does not respond on ${HOST}:${PORT} - ${anonymous.error}`);
     process.exit(1);
   }
-  console.log(`3) طلب بدون رمز: HTTP ${anonymous.status}`);
-  if (anonymous.status !== 401) failures.push(`الطلب بدون رمز لم يُرفض بـ 401 (جاء ${anonymous.status})؛ رمز التحكّم غير فعّال`);
+  console.log(`3) Request without token: HTTP ${anonymous.status}`);
+  if (anonymous.status !== 401) failures.push(`request without a token was not rejected with 401 (got ${anonymous.status}); the control token is not enforced`);
 
   const authed = await stopRequest(token);
   if (authed.error) {
-    console.error(`FAIL: تعذر إرسال طلب الإيقاف — ${authed.error}`);
+    console.error(`FAIL: could not send the stop request - ${authed.error}`);
     process.exit(1);
   }
-  console.log(`4) طلب بالرمز: HTTP ${authed.status} ${authed.body}`);
-  if (authed.status !== 200) failures.push(`طلب الإيقاف بالرمز فشل: HTTP ${authed.status}`);
-  if (!authed.json || authed.json.ok !== true) failures.push('استجابة الإيقاف لا تحتوي ok:true');
-  else if (!Array.isArray(authed.json.results)) failures.push('استجابة الإيقاف لا تحتوي مصفوفة results');
+  console.log(`4) Request with token: HTTP ${authed.status} ${authed.body}`);
+  if (authed.status !== 200) failures.push(`stop request with token failed: HTTP ${authed.status}`);
+  if (!authed.json || authed.json.ok !== true) failures.push('stop response does not contain ok:true');
+  else if (!Array.isArray(authed.json.results)) failures.push('stop response does not contain a results array');
 
   if (failures.length) {
     console.error('STOP TEST FAILED');
@@ -81,5 +81,5 @@ function stopRequest(token) {
     process.exit(1);
   }
   console.log('STOP TEST PASSED');
-  console.log('الرمز المحلي يعمل، والطلب بدون رمز مرفوض، وأمر إيقاف كل القنوات قُبل من الخادم.');
+  console.log('The local token works, a request without it is rejected, and the stop-all-channels command was accepted by the server.');
 })();

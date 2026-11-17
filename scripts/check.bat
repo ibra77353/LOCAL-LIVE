@@ -32,12 +32,12 @@ if exist "nginx\nginx.exe" call "%ROOT%scripts\nginx-dirs.bat"
 if exist "nginx\nginx.exe" ("nginx\nginx.exe" -p "%ROOT%nginx/" -c conf/nginx.conf -t) else echo MISSING: nginx\nginx.exe
 echo.
 echo ==== Capture devices [DirectShow] ====
-rem نفس فحص scripts/check.sh: إصدار FFmpeg وقابلية تشغيله على ويندوز، ثم أجهزة
-rem الفيديو والصوت التي ستراها لوحة الإدارة — بأوامر طبقة الالتقاط نفسها.
+rem Same check as scripts/check.sh: the FFmpeg version and whether it runs on Windows, then the
+rem video and audio devices the admin panel will show - using the same capture-layer commands.
 node scripts\devices.js --no-caps
 if errorlevel 1 echo WARNING: device scan failed - read the message above.
 echo.
-rem المنافذ من نفس المصدر الذي يقرأه الخادم وسكربتا التشغيل والإيقاف
+rem Ports come from the same source the server and the start/stop scripts read
 set "PORTS="
 for /f "delims=" %%P in ('node scripts\ports.js 2^>nul') do set "PORTS=%%P"
 if not defined PORTS (

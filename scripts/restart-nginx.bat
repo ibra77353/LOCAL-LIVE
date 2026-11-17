@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-rem إعادة تشغيل Nginx: تحقق من الإعدادات، ثم إيقاف نسخة PrinceLive فقط وإعادة تشغيلها.
-rem لا يُستخدم "nginx -s reload" لأنه يعتمد على ملف pid قد يحمل معرّف عملية أخرى.
+rem Restart Nginx: test the configuration, then stop only the PrinceLive copy and start it again.
+rem "nginx -s reload" is not used because it relies on a pid file that may hold another process id.
 set "ROOT=%~dp0"
 if not exist "%ROOT%server.js" (
   if exist "%ROOT%..\server.js" (
@@ -43,7 +43,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem المنفذ من نفس المصدر الذي يقرأه الخادم وبقية السكربتات
+rem Port from the same source the server and the other scripts read
 set "PORTS="
 for /f "delims=" %%P in ('node scripts\ports.js 2^>nul') do set "PORTS=%%P"
 if not defined PORTS (

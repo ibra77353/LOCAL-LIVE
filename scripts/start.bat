@@ -34,7 +34,7 @@ if not exist "ffmpeg.exe" (
   if errorlevel 1 echo WARNING: FFmpeg not found. Put ffmpeg.exe beside server.js or add FFmpeg to PATH.
 )
 
-rem ---- المنافذ: مصدر واحد هو scripts\ports.js (نفس قواعد server.js) ----
+rem ---- Ports: single source is scripts\ports.js (same rules as server.js) ----
 set "PORTS="
 for /f "delims=" %%P in ('node scripts\ports.js 2^>nul') do set "PORTS=%%P"
 if not defined PORTS (
@@ -47,14 +47,14 @@ for /f "tokens=1,2" %%A in ("!PORTS!") do (
   set "API_PORT=%%B"
 )
 
-rem ---- جدار الحماية ----
+rem ---- Firewall ----
 netsh advfirewall firewall show rule name="PrinceLive HTTP !FW_PORT!" >nul 2>&1
 if errorlevel 1 (
   echo Setting up Windows Firewall for viewing port !FW_PORT! - approve the UAC prompt...
   call "%ROOT%scripts\firewall.bat" quiet
 )
 
-rem ---- خدمة Node.js: لا نعلن النجاح قبل أن يجيب الخادم فعلياً ----
+rem ---- Node.js service: do not report success before the server actually answers ----
 set "START_FAILED="
 set "NODE_PID="
 for /f "delims=" %%P in ('node scripts\procs.js node-pid !API_PORT! 2^>nul') do set "NODE_PID=%%P"
@@ -91,7 +91,7 @@ goto :nginx
 :node_ready
 echo OK: Node API is running on port !API_PORT!.
 
-rem ---- خدمة Nginx ----
+rem ---- Nginx service ----
 :nginx
 if not exist "nginx\nginx.exe" (
   echo WARNING: nginx\nginx.exe not found. The viewer is served by Node.js only.

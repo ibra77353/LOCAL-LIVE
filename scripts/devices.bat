@@ -3,7 +3,7 @@ setlocal EnableExtensions
 rem Unified device report for Windows: lists the DirectShow video/audio devices
 rem through the same capture layer the server uses (lib/capture/dshow.js), then
 rem prints each video device's supported modes and the recommended settings.
-rem UTF-8 code page so localized (Arabic) device names display correctly.
+rem UTF-8 code page so localized device names display correctly.
 chcp 65001 >nul
 rem Find project root whether this BAT is in the root or a subfolder.
 set "ROOT=%~dp0"

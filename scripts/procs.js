@@ -1,14 +1,14 @@
 'use strict';
-// تمييز عمليات PrinceLive عن أي عملية Node.js أو Nginx أخرى على الجهاز.
-// تستخدمه سكربتات start/stop/restart-nginx/stop-nginx قبل إيقاف أي عملية، حتى لا
-// يُغلق خادم أو Nginx يخص برنامجاً آخر يعمل على نفس الجهاز.
+// Distinguishes PrinceLive processes from any other Node.js or Nginx process on the machine.
+// Used by the start/stop/restart-nginx/stop-nginx scripts before stopping anything, so that
+// a server or Nginx that belongs to another program on the machine is never closed.
 //
-// الأوامر:
-//   node scripts\procs.js node-pid            ← معرّف عملية خادم PrinceLive أو لا شيء
-//   node scripts\procs.js nginx-pids          ← معرّفات Nginx التابعة للمشروع، سطر لكل معرّف
-//   node scripts\procs.js port-owner <port>   ← من يستمع على المنفذ: "PID <pid> <name>"
-//   node scripts\procs.js verify-node <pid>   ← exit 0 إن كانت العملية خادم المشروع
-//   node scripts\procs.js verify-nginx <pid>  ← exit 0 إن كانت العملية Nginx المشروع
+// Commands:
+//   node scripts\procs.js node-pid            <- PID of the PrinceLive server, or nothing
+//   node scripts\procs.js nginx-pids          <- PIDs of this project's Nginx, one per line
+//   node scripts\procs.js port-owner <port>   <- who listens on the port: "PID <pid> <name>"
+//   node scripts\procs.js verify-node <pid>   <- exit 0 if the process is this project's server
+//   node scripts\procs.js verify-nginx <pid>  <- exit 0 if the process is this project's Nginx
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -19,10 +19,10 @@ function normalizePath(value) {
   return String(value || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
 
-// هل سطر أوامر العملية يشغّل server.js الموجود في جذر هذا المشروع؟
-// المطابقة على المسار المطلق فقط: أي خادم آخر يعمل باسم server.js من مجلد مختلف
-// يُعدّ عملية غريبة ولا يُوقَف. scripts\start.bat يشغّل الخادم بالمسار المطلق
-// (%ROOT%\server.js) حتى يعمل هذا التمييز دائماً.
+// Does the process command line run server.js located in this project's root?
+// Matching is on the absolute path only: any other server.js started from a different folder
+// counts as a foreign process and is not stopped. scripts\start.bat starts the server with its
+// absolute path (%ROOT%\server.js) so this distinction always works.
 function isOwnServerCommandLine(cmdline, root) {
   const line = normalizePath(String(cmdline || '').replace(/"/g, ''));
   if (!line || !/server\.js/.test(line)) return false;
@@ -31,7 +31,7 @@ function isOwnServerCommandLine(cmdline, root) {
   return line.includes(`${rootDir}\\server.js`);
 }
 
-// هل ملف Nginx هذا هو نسخة المشروع (nginx\nginx.exe) وليس Nginx لنظام آخر؟
+// Is this Nginx file the project's copy (nginx\nginx.exe) and not another system's Nginx?
 function isOwnNginxPath(exePath, root) {
   const exe = normalizePath(exePath);
   const expected = `${normalizePath(root)}\\nginx\\nginx.exe`;
@@ -55,7 +55,7 @@ function listProcessesWindows() {
   }).filter(Boolean);
 }
 
-// على غير ويندوز نقرأ /proc حتى تبقى نفس قواعد التمييز قابلة للاختبار محلياً.
+// On non-Windows systems we read /proc so the same ownership rules stay testable locally.
 function listProcessesPosix() {
   let entries = [];
   try { entries = fs.readdirSync('/proc'); } catch { return []; }
@@ -87,7 +87,7 @@ function readPidFile(root, name) {
   }
 }
 
-// معرّف العملية المستمعة على منفذ TCP محدد مع اسم البرنامج، أو null.
+// PID of the process listening on the given TCP port plus the program name, or null.
 function portOwner(port) {
   const target = Number(port);
   if (!Number.isInteger(target) || target <= 0) return null;
@@ -116,8 +116,8 @@ function portOwner(port) {
   return { pid, name: proc ? proc.name : '' };
 }
 
-// عملية خادم PrinceLive: مسار مطلق لـ server.js داخل المشروع، أو معرّف مسجّل في
-// run\server.pid (ملف يكتبه خادم المشروع نفسه) مع سطر أوامر يشغّل server.js.
+// PrinceLive server process: an absolute server.js path inside the project, or an id recorded in
+// run\server.pid (a file the project's own server writes) with a command line running server.js.
 function isServerProcess(proc, root = ROOT) {
   if (!proc || !/^node/i.test(proc.name)) return false;
   if (isOwnServerCommandLine(proc.cmdline, root)) return true;
@@ -133,7 +133,7 @@ function ownNginxProcesses(root = ROOT) {
   return listProcesses().filter(p => /^nginx/i.test(p.name) && isOwnNginxPath(p.path, root));
 }
 
-// عملية الخادم الواحدة: نفضّل من يستمع على منفذ API، ثم ما في run\server.pid.
+// The single server process: prefer whoever listens on the API port, then run\server.pid.
 function findServerPid(root = ROOT, port) {
   const candidates = ownServerProcesses(root).map(p => p.pid);
   if (!candidates.length) return null;

@@ -1,18 +1,18 @@
 'use strict';
-// تقرير أجهزة الالتقاط — أداة تشخيص واحدة للنظامين.
+// Capture device report - a single diagnostic tool for both systems.
 //
-// تُستخدم من scripts\devices.bat على Windows وscripts/devices.sh على Linux،
-// وتقرأ الأجهزة عبر طبقة الالتقاط نفسها التي يستخدمها الخادم:
-//   Windows → DirectShow (FFmpeg -list_devices)
-//   Linux   → V4L2 + ALSA (قراءة /dev و/sys و/proc)
-// لذلك أي جهاز يظهر هنا هو نفسه الذي سيظهر في قائمة «جهاز الفيديو» بلوحة الإدارة.
+// Used by scripts\devices.bat on Windows and scripts/devices.sh on Linux,
+// and it reads devices through the same capture layer the server uses:
+//   Windows -> DirectShow (FFmpeg -list_devices)
+//   Linux   -> V4L2 + ALSA (reads /dev, /sys and /proc)
+// So any device shown here is the same one that appears in the admin panel's video device list.
 //
-// التشغيل:
-//   node scripts/devices.js             ← الأجهزة + أوضاع كل جهاز فيديو
-//   node scripts/devices.js --no-caps   ← الأجهزة وحدها (أسرع، بلا استدعاء FFmpeg للقدرات)
+// Usage:
+//   node scripts/devices.js             <- devices plus the modes of each video device
+//   node scripts/devices.js --no-caps   <- devices only (faster, no FFmpeg capability call)
 //
-// رموز الخروج: 0 نجح الفحص (حتى لو لم يوجد جهاز)، 1 تعذّر الفحص نفسه
-// (نظام غير مدعوم، أو FFmpeg غير قابل للتشغيل على Windows حيث التعداد يحتاجه).
+// Exit codes: 0 the check succeeded (even when no device exists), 1 the check itself failed
+// (unsupported platform, or FFmpeg cannot run on Windows where enumeration needs it).
 
 const fs = require('fs');
 const path = require('path');
@@ -33,8 +33,8 @@ const data = readJson('data.json') || {};
 const cfg = readJson('config.json') || {};
 const settings = data.settings || {};
 
-// نفس قاعدة server.js: المسار النسبي يُبحث عنه بجانب server.js أولاً ثم في PATH،
-// وعلى Windows تُجرَّب اللاحقة .exe كما في إعدادات المستخدم.
+// Same rule as server.js: a relative path is looked up next to server.js first, then in PATH,
+// and on Windows the .exe suffix is tried as in the user settings.
 function resolveTool(toolName) {
   const value = String(toolName || '').trim();
   if (!value || path.isAbsolute(value)) return value;
@@ -60,7 +60,7 @@ const line = (text = '') => process.stdout.write(`${text}\n`);
 async function main() {
   const showCaps = !process.argv.includes('--no-caps');
   line('============================================================');
-  line(' PrinceLive — device report');
+  line(' PrinceLive - device report');
   line('============================================================');
   line(`Platform      : ${process.platform} (${process.arch})`);
   line(`Capture engine: ${capture.engineLabel()} [${capture.engineName()}]`);
@@ -104,7 +104,7 @@ async function main() {
 
   if (process.platform === 'win32') {
     line('Windows: a USB capture card must appear under "Cameras" (or "Imaging devices") in Device Manager,');
-    line('and Settings → Privacy → Camera → "Allow desktop apps" must be enabled for FFmpeg to see it.');
+    line('and Settings > Privacy > Camera > "Allow desktop apps" must be enabled for FFmpeg to see it.');
   } else if (process.platform === 'linux') {
     line('Linux: add your user to the "video" (and "audio") group, then log in again to read /dev/video*.');
   }
@@ -112,7 +112,7 @@ async function main() {
   if (showCaps && video.length) {
     for (const device of video.slice(0, 8)) {
       line('');
-      line(`Modes — ${device.value}:`);
+      line(`Modes - ${device.value}:`);
       let args;
       try {
         args = capture.capabilitiesArgs(device.value);
@@ -126,9 +126,9 @@ async function main() {
         line(`  not readable: ${err && !output ? err.message : 'the driver reported no video modes'}`);
         continue;
       }
-      line(`  sizes   : ${caps.videoSizes.slice(0, 8).join(', ')}${caps.videoSizes.length > 8 ? ' …' : ''}`);
-      line(`  fps     : ${caps.frameRates.join(', ') || '—'}`);
-      line(`  formats : ${caps.pixelFormats.join(', ') || '—'}`);
+      line(`  sizes   : ${caps.videoSizes.slice(0, 8).join(', ')}${caps.videoSizes.length > 8 ? ' ...' : ''}`);
+      line(`  fps     : ${caps.frameRates.join(', ') || '-'}`);
+      line(`  formats : ${caps.pixelFormats.join(', ') || '-'}`);
       const rec = caps.recommended;
       line(`  best    : ${rec.videoSize} @ ${rec.fps}fps ${rec.pixelFormat || ''}`.trimEnd());
     }

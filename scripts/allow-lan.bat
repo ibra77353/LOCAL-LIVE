@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
 setlocal EnableExtensions
-rem اختصار متوافق: يفوّض العمل إلى scripts\firewall.bat الذي يفتح منفذ المشاهدة ولوحة الإدارة تلقائياً.
+rem Shortcut: delegates to scripts\firewall.bat, which opens the viewer port and the admin panel automatically.
 call "%~dp0firewall.bat" %*
 exit /b %errorlevel%

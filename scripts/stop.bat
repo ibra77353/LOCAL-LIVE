@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-rem إيقاف كامل: أولاً إغلاق البث عبر API، ثم إيقاف Nginx، ثم خادم Node.js.
-rem لا تُوقف هذه الملفات إلا عمليات PrinceLive نفسها:
-rem   - Nginx: يُحدَّد من مسار nginx\nginx.exe داخل المشروع (scripts\procs.js)
-rem   - Node.js: يُحدَّد من سطر الأوامر %ROOT%\server.js أو run\server.pid
-rem سجلات التشغيل (logs وnginx\logs) لا تُحذف عند الإيقاف العادي.
+rem Full stop: close the streams through the API first, then stop Nginx, then the Node.js server.
+rem These files stop only PrinceLive's own processes:
+rem   - Nginx: identified by the project's nginx\nginx.exe path (scripts\procs.js)
+rem   - Node.js: identified by the %ROOT%\server.js command line or run\server.pid
+rem Run logs (logs and nginx\logs) are not deleted by a normal stop.
 set "ROOT=%~dp0"
 if not exist "%ROOT%server.js" (
   if exist "%ROOT%..\server.js" (
@@ -18,7 +18,7 @@ if not exist "%ROOT%server.js" (
 )
 cd /d "%ROOT%"
 
-rem ---- المنافذ: مصدر واحد هو scripts\ports.js (نفس قواعد server.js) ----
+rem ---- Ports: single source is scripts\ports.js (same rules as server.js) ----
 set "PORTS="
 for /f "delims=" %%P in ('node scripts\ports.js 2^>nul') do set "PORTS=%%P"
 if not defined PORTS (
@@ -33,7 +33,7 @@ echo Requesting stream stop through the local API on port !API_PORT!...
 node -e "const http=require('http'),fs=require('fs');let token='';try{token=fs.readFileSync('run/control.token','utf8').trim()}catch{};if(token.length===0){console.log('run/control.token missing: Node may not be running');process.exit(0)}const r=http.request({host:'127.0.0.1',port:%API_PORT%,path:'/api/stop',method:'POST',timeout:15000,headers:{'X-Control-Token':token,'Content-Length':0}},res=>{let d='';res.on('data',x=>d+=x);res.on('end',()=>console.log('HTTP '+res.statusCode+' '+d));});r.on('error',e=>console.log('API not responding: '+e.message));r.on('timeout',()=>{console.log('API timeout after 15s: stopping Node anyway');r.destroy()});r.end();"
 echo.
 
-rem ---- إيقاف Nginx الخاص بالمشروع فقط ----
+rem ---- Stop only this project's Nginx ----
 if not exist "nginx\nginx.exe" goto :node
 call "%ROOT%scripts\nginx-stop.bat"
 if errorlevel 1 (
@@ -41,7 +41,7 @@ if errorlevel 1 (
   set "STOP_FAILED=1"
 )
 
-rem ---- إيقاف خادم Node.js الخاص بالمشروع فقط ----
+rem ---- Stop only this project's Node.js server ----
 :node
 set "NODE_PID="
 for /f "delims=" %%P in ('node scripts\procs.js node-pid !API_PORT! 2^>nul') do set "NODE_PID=%%P"
@@ -67,7 +67,7 @@ echo Node.js stopped.
 
 :clean
 echo.
-rem ملفات HLS لم تعد تُعرض بعد الإيقاف: تُحذف حتى لا يظهر بث قديم كمباشر.
+rem HLS files are no longer served after a stop: delete them so an old stream cannot look live.
 if exist "srv\hls" (
   echo Cleaning srv\hls [stale HLS segments of stopped channels]...
   for /d %%D in ("srv\hls\*") do rd /s /q "%%D" >nul 2>&1
