@@ -111,7 +111,38 @@ else
   fi
 fi
 
-# ---- 4) تنظيف مقاطع HLS القديمة حتى لا يظهر بث متوقف كمباشر ----
+# ---- 4) عمليات FFmpeg المتبقية: خادم انهار أو أُغلق بالقوة يترك أبناءه يعملون ----
+# نداء /api/stop أعلاه يُنهي عادة كل عمليات FFmpeg؛ هنا تُقتل البقايا فقط، والخاصة
+# بالمشروع وحده (scripts/procs.js ffmpeg-pids) فلا تُمس عملية FFmpeg لبرنامج آخر.
+FF_PIDS=$(node scripts/procs.js ffmpeg-pids 2>/dev/null || true)
+if [ -z "$FF_PIDS" ]; then
+  echo "No leftover FFmpeg processes."
+else
+  echo "Stopping leftover FFmpeg processes..."
+  for _p in $FF_PIDS; do
+    echo "  [PID $_p]"
+    kill "$_p" 2>/dev/null || true
+  done
+  _tries=0
+  while [ "$_tries" -lt 5 ]; do
+    _tries=$((_tries + 1))
+    _left=""
+    for _p in $FF_PIDS; do pid_alive "$_p" && _left="$_left $_p"; done
+    [ -z "$_left" ] && break
+    sleep 1
+  done
+  for _p in $FF_PIDS; do pid_alive "$_p" && kill -9 "$_p" 2>/dev/null || true; done
+  _left=""
+  for _p in $FF_PIDS; do pid_alive "$_p" && _left="$_left $_p"; done
+  if [ -n "$_left" ]; then
+    echo "ERROR: Prince Live FFmpeg is still running [PID$_left]. Run this script with sudo."
+    STOP_FAILED=1
+  else
+    echo "FFmpeg stopped."
+  fi
+fi
+
+# ---- 5) تنظيف مقاطع HLS القديمة حتى لا يظهر بث متوقف كمباشر ----
 if [ -d srv/hls ]; then
   echo "Cleaning srv/hls [stale HLS segments of stopped channels]..."
   find srv/hls -mindepth 1 ! -name '.gitkeep' -delete 2>/dev/null || true

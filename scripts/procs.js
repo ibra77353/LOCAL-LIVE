@@ -6,6 +6,7 @@
 // Commands:
 //   node scripts\procs.js node-pid            <- PID of the PrinceLive server, or nothing
 //   node scripts\procs.js nginx-pids          <- PIDs of this project's Nginx, one per line
+//   node scripts\procs.js ffmpeg-pids         <- PIDs of this project's FFmpeg (orphans), one per line
 //   node scripts\procs.js port-owner <port>   <- who listens on the port: "PID <pid> <name>"
 //   node scripts\procs.js verify-node <pid>   <- exit 0 if the process is this project's server
 //   node scripts\procs.js verify-nginx <pid>  <- exit 0 if the process is this project's Nginx
@@ -40,6 +41,25 @@ function isOwnNginxPath(exePath, root) {
   return !!exe && exe === expected;
 }
 
+// Is this FFmpeg binary the copy that ships inside the project folder?
+function isOwnFfmpegPath(exePath, root) {
+  const exe = normalizePath(exePath);
+  const rootDir = normalizePath(root);
+  if (!exe || !rootDir) return false;
+  return exe.startsWith(`${rootDir}\\`) && /\\ffmpeg(\.exe)?$/.test(exe);
+}
+
+// Does the command line write into this project's srv folder (HLS output) or use the project's
+// FFmpeg? A system-wide FFmpeg that belongs to another program matches neither rule and is
+// never stopped, even when the user configured ffmpegPath outside the project.
+function isOwnFfmpegCommandLine(cmdline, root) {
+  const line = normalizePath(String(cmdline || '').replace(/"/g, ''));
+  const rootDir = normalizePath(root);
+  if (!line || !rootDir) return false;
+  if (!/ffmpeg/i.test(line)) return false;
+  return line.includes(`${rootDir}\\ffmpeg.exe`) || line.includes(`${rootDir}\\srv\\`);
+}
+
 function listProcessesWindows() {
   // Windows PowerShell writes to a pipe in the console code page (OEM: 850, 1256, ...), not
   // UTF-8, so a project path holding non-ASCII characters (accented or non-Latin user and
@@ -51,7 +71,7 @@ function listProcessesWindows() {
     '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;',
     '$OutputEncoding=[System.Text.Encoding]::UTF8;',
     'Get-CimInstance Win32_Process',
-    "| Where-Object { $_.Name -eq 'node.exe' -or $_.Name -eq 'nginx.exe' }",
+    "| Where-Object { $_.Name -eq 'node.exe' -or $_.Name -eq 'nginx.exe' -or $_.Name -eq 'ffmpeg.exe' }",
     '| ForEach-Object { "$($_.ProcessId)|$($_.Name)|$($_.ExecutablePath)|$($_.CommandLine)" }'
   ].join(' ');
   const result = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
@@ -78,7 +98,7 @@ function listProcessesPosix() {
     try { exePath = fs.readlinkSync(`/proc/${entry}/exe`); } catch {}
     let name = '';
     try { name = fs.readFileSync(`/proc/${entry}/comm`, 'utf8').trim(); } catch { name = path.basename(exePath || ''); }
-    if (!/^(node|nginx)/i.test(name)) continue;
+    if (!/^(node|nginx|ffmpeg)/i.test(name)) continue;
     out.push({ pid: Number(entry), name, path: exePath, cmdline });
   }
   return out;
@@ -143,6 +163,14 @@ function ownNginxProcesses(root = ROOT) {
   return listProcesses().filter(p => /^nginx/i.test(p.name) && isOwnNginxPath(p.path, root));
 }
 
+// FFmpeg processes of this project. When the server is closed with a forced kill, its FFmpeg
+// children can survive and keep writing into srv\hls; a normal stop.bat / stop.sh closes the
+// streams through the API first and this list only has leftovers to clear.
+function ownFfmpegProcesses(root = ROOT) {
+  return listProcesses().filter(p => /^ffmpeg/i.test(p.name)
+    && (isOwnFfmpegPath(p.path, root) || isOwnFfmpegCommandLine(p.cmdline, root)));
+}
+
 // The single server process: prefer whoever listens on the API port, then run\server.pid.
 function findServerPid(root = ROOT, port) {
   const candidates = ownServerProcesses(root).map(p => p.pid);
@@ -166,6 +194,10 @@ function main(argv) {
     for (const proc of ownNginxProcesses(ROOT)) process.stdout.write(`${proc.pid}\n`);
     return 0;
   }
+  if (command === 'ffmpeg-pids') {
+    for (const proc of ownFfmpegProcesses(ROOT)) process.stdout.write(`${proc.pid}\n`);
+    return 0;
+  }
   if (command === 'port-owner') {
     const owner = portOwner(Number(argv[1]));
     if (owner) process.stdout.write(`PID ${owner.pid} ${owner.name || 'unknown'}\n`);
@@ -179,7 +211,7 @@ function main(argv) {
     process.stdout.write(own ? 'PRINCELIVE\n' : 'FOREIGN\n');
     return own ? 0 : 1;
   }
-  process.stderr.write('usage: node scripts\\procs.js node-pid | nginx-pids | port-owner <port> | verify-node <pid> | verify-nginx <pid>\n');
+  process.stderr.write('usage: node scripts\\procs.js node-pid | nginx-pids | ffmpeg-pids | port-owner <port> | verify-node <pid> | verify-nginx <pid>\n');
   return 2;
 }
 
@@ -190,8 +222,11 @@ module.exports = {
   normalizePath,
   isOwnServerCommandLine,
   isOwnNginxPath,
+  isOwnFfmpegPath,
+  isOwnFfmpegCommandLine,
   listProcesses,
   portOwner,
   findServerPid,
-  ownNginxProcesses
+  ownNginxProcesses,
+  ownFfmpegProcesses
 };
