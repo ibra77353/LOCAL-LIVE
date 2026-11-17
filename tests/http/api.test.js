@@ -453,7 +453,7 @@ test('إعدادات الدقة ترفض الأبعاد الفردية وتقب�
 });
 
 // وضع الترميز اختيار صريح: CRF يستخدم القيمة المختارة (كانت 23 ثابتة)، وBitrate
-// يستخدم المعدّل الافتراضي المحفوظ في الإعدادات، دون تعارض مع الدقة أو FPS أو preset.
+// يستخدم معدّل المقاس المختار (الافتراضي العام يخص جودة «تلقائي»)، دون تعارض مع FPS أو preset.
 test('وضع الترميز Bitrate/CRF يغيّر وسائط FFmpeg ويطبّق قيمة CRF المختارة', async () => {
   const src = await api.post('/api/sources', { name: 'مصدر وضع الترميز', type: 'file', path: 'srv/uploads/quality-test.mp4' });
   assert.equal(src.status, 201);
@@ -480,7 +480,8 @@ test('وضع الترميز Bitrate/CRF يغيّر وسائط FFmpeg ويطبّ�
   assert.match(crfArgs, /fps=25/);
   assert.match(crfArgs, /-preset (superfast|veryfast)/);
 
-  await api.put('/api/settings', { encodingMode: 'bitrate', defaultBitrate: '800k' });
+  // المقاس المختار (360p) هو مصدر المعدّل، لا الرقم العام المحفوظ في الإعدادات
+  await api.put('/api/settings', { encodingMode: 'bitrate', defaultBitrate: '1200k' });
   const abrArgs = await argsFor();
   assert.match(abrArgs, /-b:v 800k/);
   assert.doesNotMatch(abrArgs, /-crf/);
@@ -497,6 +498,40 @@ test('وضع الترميز Bitrate/CRF يغيّر وسائط FFmpeg ويطبّ�
   await api.put('/api/settings', { encodingMode: 'bitrate', crfValue: 23, defaultBitrate: '', x264QualityMode: false });
   await api.del(`/api/channels/${id}`);
   await api.del(`/api/sources/${src.json.source.id}`);
+});
+
+// بِتريت القناة الفارغ يتبع المقاس المختار: 240p=500k، 360p=800k، 480p=1200k، 720p=2000k.
+// القيمة العامة في الإعدادات لا تتقدّم على المقاس، وتخصّ جودة «تلقائي» وحدها.
+test('بِتريت القناة الفارغ يتبع المقاس المختار لا الرقم العام', async () => {
+  const src = await api.post('/api/sources', { name: 'مصدر المقاسات', type: 'file', path: 'srv/uploads/quality-test.mp4' });
+  assert.equal(src.status, 201);
+  const sourceId = src.json.source.id;
+
+  const argsForQuality = async (quality) => {
+    const ch = await api.post('/api/channels', { name: 'قناة ' + quality, sourceId, quality, fps: 25 });
+    assert.equal(ch.status, 201);
+    const id = ch.json.channel.id;
+    await api.post(`/api/channels/${id}/start`);
+    const logs = await waitFor(async () => {
+      const res = await api.get('/api/logs');
+      const hit = res.json.logs.split(/\r?\n/).filter((l) => l.includes('FFmpeg args:')).pop();
+      return hit || null;
+    }, 5000);
+    await api.post(`/api/channels/${id}/stop`);
+    await api.del(`/api/channels/${id}`);
+    return logs || '';
+  };
+
+  await api.put('/api/settings', { encodingMode: 'bitrate', defaultBitrate: '1500k' });
+  assert.match(await argsForQuality('240p'), /-b:v 500k/);
+  assert.match(await argsForQuality('360p'), /-b:v 800k/);
+  assert.match(await argsForQuality('480p'), /-b:v 1200k/);
+  assert.match(await argsForQuality('720p'), /-b:v 2000k/);
+  // جودة «تلقائي» لا تختار مقاساً صريحاً، فتحترم الافتراضي العام
+  assert.match(await argsForQuality('auto'), /-b:v 1500k/);
+
+  await api.put('/api/settings', { defaultBitrate: '' });
+  await api.del(`/api/sources/${sourceId}`);
 });
 
 // كل قناة تستطيع تجاوز وضع الترميز العام (bitrate/CRF) ومستوى CRF، وترك الحقل
@@ -538,7 +573,7 @@ test('وضع الترميز لكل قناة يتقدّم على الإعدادا
   assert.match(channelCrfArgs, /-crf 26/);
   assert.doesNotMatch(channelCrfArgs, /-b:v/);
 
-  // الرجوع إلى «افتراضي» يعيد وراثة وضع الإعدادات (Bitrate 800k) بعد إفراغ بتريت القناة
+  // الرجوع إلى «افتراضي» يعيد وراثة وضع الإعدادات ومعدّل المقاس (360p = 800k)
   const inherit = await api.put(`/api/channels/${id}`, { encodingMode: '', crfValue: null, bitrate: '' });
   assert.equal(inherit.status, 200);
   assert.equal(inherit.json.channel.encodingMode, '');

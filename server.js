@@ -858,6 +858,15 @@ function normalizeVideoBitrate(value, fallback) {
   const text = String(value || '').trim();
   return /^\d{2,6}[kKmM]?$/.test(text) ? text : fallback;
 }
+// بِتريت تلقائي لكل مقاس خرج (نفس خطوات المعدّل المعروضة في اللوحة). كان الرقم ثابتاً
+// محسوباً بثلاث درجات فقط، فكان 240p و360p يتشاركان 500k؛ الآن كل مقاس له معدّله.
+const QUALITY_BITRATES = [[240, '500k'], [360, '800k'], [480, '1200k'], [720, '2000k']];
+function bitrateForHeight(height) {
+  const value = Number(height) || 0;
+  let rate = QUALITY_BITRATES[0][1];
+  for (const [minHeight, bitrate] of QUALITY_BITRATES) if (value >= minHeight) rate = bitrate;
+  return rate;
+}
 // يضمن أن preset وعدد الخيوط صالحان حتى لو عُدّلت data.json يدوياً.
 function resolveEncoderSettings(settings) {
   const warnings = [];
@@ -907,10 +916,12 @@ function buildArgs(channel, forceTranscode = false) {
   const derivedWidth=Math.max(160,Math.round((srcW||1280)*outputHeight/(srcH||720)/2)*2);
   const outputWidth=isCopyQuality(qualityValue)?(srcW||1280):(presetHeight?derivedWidth:settingsWidth);
   const outputFps = clampNumber(Number(channel.fps) || settings.outputFps, 1, 60, 20);
-  const tierBitrate = outputHeight >= 720 ? '2000k' : outputHeight >= 480 ? '1000k' : '500k';
-  // أولوية البِتريت: بِتريت القناة ← البِتريت الافتراضي في الإعدادات ← قيمة الجودة.
-  const defaultBitrate = normalizeVideoBitrate(settings.defaultBitrate, tierBitrate);
-  const videoBitrate = normalizeVideoBitrate(channel.bitrate, defaultBitrate);
+  // أولوية البِتريت: بِتريت القناة ← معدّل المقاس المختار (240p/360p/480p/720p)،
+  // ومعدّل الإعدادات العام يخصّ جودة «تلقائي» وحدها لأنها لا تختار مقاساً بنفسها.
+  const fallbackBitrate = presetHeight
+    ? bitrateForHeight(outputHeight)
+    : normalizeVideoBitrate(settings.defaultBitrate, bitrateForHeight(outputHeight));
+  const videoBitrate = normalizeVideoBitrate(channel.bitrate, fallbackBitrate);
   if (String(channel.bitrate || '').trim() && videoBitrate !== String(channel.bitrate).trim()) {
     logLine(`تنبيه إعدادات FFmpeg: بِتريت القناة «${channel.name}» غير صالح (${channel.bitrate})؛ سيُستخدم ${videoBitrate}`);
   }
