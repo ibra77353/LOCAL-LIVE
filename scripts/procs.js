@@ -15,8 +15,10 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 
+// Paths can arrive in different Unicode forms (composed / decomposed) on non-ASCII names,
+// so both sides of every comparison are normalised to NFC before matching.
 function normalizePath(value) {
-  return String(value || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+  return String(value || '').normalize('NFC').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
 
 // Does the process command line run server.js located in this project's root?
@@ -39,7 +41,15 @@ function isOwnNginxPath(exePath, root) {
 }
 
 function listProcessesWindows() {
+  // Windows PowerShell writes to a pipe in the console code page (OEM: 850, 1256, ...), not
+  // UTF-8, so a project path holding non-ASCII characters (accented or non-Latin user and
+  // folder names) came back garbled and the ownership match against this project's own path
+  // never succeeded. Both the
+  // console encoding and $OutputEncoding are switched to UTF-8 before the query, which matches
+  // the 'utf8' decoding of spawnSync below. A leading BOM is dropped for the same reason.
   const script = [
+    '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;',
+    '$OutputEncoding=[System.Text.Encoding]::UTF8;',
     'Get-CimInstance Win32_Process',
     "| Where-Object { $_.Name -eq 'node.exe' -or $_.Name -eq 'nginx.exe' }",
     '| ForEach-Object { "$($_.ProcessId)|$($_.Name)|$($_.ExecutablePath)|$($_.CommandLine)" }'
@@ -47,7 +57,7 @@ function listProcessesWindows() {
   const result = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
     { encoding: 'utf8', windowsHide: true, timeout: 15000 });
   if (result.status !== 0 || !result.stdout) return [];
-  return result.stdout.split(/\r?\n/).map(line => {
+  return String(result.stdout).replace(/^\uFEFF/, '').split(/\r?\n/).map(line => {
     const [pid, name, exePath, ...rest] = line.split('|');
     const id = Number(pid);
     if (!Number.isInteger(id) || id <= 0) return null;
